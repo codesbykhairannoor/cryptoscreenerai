@@ -42,19 +42,21 @@ import requests
 
 def get_current_price(symbol):
     try:
-        if symbol == "GC=F" or symbol == "XAUUSD":
-            import yfinance as yf
-            ticker = yf.Ticker("GC=F")
-            hist = ticker.history(period="1d", interval="1m")
-            if not hist.empty:
-                return float(hist['Close'].iloc[-1])
+        if symbol == "XAUUSD" or symbol == "GC=F":
+            # Use the same accurate OANDA Spot price from TradingView
+            tv_url = 'https://scanner.tradingview.com/cfd/scan'
+            tv_payload = {'symbols': {'tickers': ['OANDA:XAUUSD']}, 'columns': ['close']}
+            tv_res = requests.post(tv_url, json=tv_payload, timeout=5)
+            tv_data = tv_res.json()
+            if tv_data.get('data') and len(tv_data['data']) > 0:
+                return float(tv_data['data'][0]['d'][0])
         else:
             url = f"https://data-api.binance.vision/api/v3/ticker/price?symbol={symbol}"
             res = requests.get(url).json()
             if 'price' in res:
                 return float(res['price'])
-    except:
-        pass
+    except Exception as e:
+        print(f"Price check error for {symbol}: {e}")
     return None
 
 def check_pending_trades():
