@@ -62,32 +62,39 @@ def get_current_price(symbol):
 def check_pending_trades():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, symbol, tp_price, sl_price FROM trades WHERE status = 'PENDING'")
+    cursor.execute("SELECT id, symbol, entry_price, tp_price, sl_price, status FROM trades WHERE status IN ('PENDING', 'RUNNING')")
     pending_trades = cursor.fetchall()
     
     for trade in pending_trades:
-        trade_id, symbol, tp, sl = trade
+        trade_id, symbol, entry, tp, sl, current_status = trade
         try:
             current_price = get_current_price(symbol)
             if not current_price:
                 continue
                 
-            status = 'PENDING'
-            # Determine if it hit TP or SL (assuming a long position for now)
-            # If tp > entry (Long position)
-            if tp > sl:
+            status = current_status
+            
+            # Side detection
+            is_long = tp > sl
+            
+            if is_long:
+                # LONG: Entry is usually below last price (buy dip)
                 if current_price >= tp:
                     status = 'WIN'
                 elif current_price <= sl:
                     status = 'LOSS'
+                elif current_status == 'PENDING' and current_price <= entry:
+                    status = 'RUNNING'
             else:
-                # Short position
+                # SHORT: Entry is usually above last price (sell bounce)
                 if current_price <= tp:
                     status = 'WIN'
                 elif current_price >= sl:
                     status = 'LOSS'
+                elif current_status == 'PENDING' and current_price >= entry:
+                    status = 'RUNNING'
                     
-            if status != 'PENDING':
+            if status != current_status:
                 cursor.execute("UPDATE trades SET status = ? WHERE id = ?", (status, trade_id))
                 conn.commit()
         except Exception as e:

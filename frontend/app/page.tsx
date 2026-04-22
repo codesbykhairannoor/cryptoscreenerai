@@ -477,6 +477,7 @@ export default function Home() {
                       <span className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-tighter ${
                         trade.status === 'WIN' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' :
                         trade.status === 'LOSS' ? 'bg-red-500 text-white' :
+                        trade.status === 'RUNNING' ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20 animate-pulse' :
                         'bg-blue-500/20 text-blue-400 border border-blue-500/30'
                       }`}>
                         {trade.status}
