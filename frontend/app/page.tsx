@@ -74,7 +74,7 @@ export default function Home() {
     
     if (!allSymbols) return;
 
-    const wsUrl = `wss://stream.binance.com:9443/stream?streams=${allSymbols}`;
+    const wsUrl = `wss://stream.binance.vision:9443/stream?streams=${allSymbols}`;
 
     if (wsRef.current) {
         wsRef.current.close();
