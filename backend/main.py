@@ -53,51 +53,63 @@ def get_top_coins():
             
             rsi = tech['rsi']
             atr = tech['atr']
-            ema_50 = tech['ema_50']
-            ema_200 = tech['ema_200']
+            ema_200_15m = tech['ema_200']
+            ema_200_1h = tech['ema_200_1h']
             
             coin['rsi_15m'] = rsi
             coin['atr'] = atr
-            coin['ema_50'] = round(ema_50, 4)
-            coin['ema_200'] = round(ema_200, 4)
+            coin['ema_200'] = round(ema_200_15m, 4)
+            coin['ema_200_1h'] = round(ema_200_1h, 4)
             
             last_price = float(coin['lastPrice'])
             
-            is_uptrend = last_price > ema_200
-            coin['trend'] = "Bullish (Uptrend)" if is_uptrend else "Bearish (Downtrend)"
+            # Trend Detection (MTF)
+            is_uptrend_15m = last_price > ema_200_15m
+            is_uptrend_1h = last_price > ema_200_1h
             
-            # LOGIKA DAY TRADING (WR OPTIMIZED)
-            if ob['ratio'] > 1.5 and rsi < 45 and is_uptrend:
-                coin['trade_signal'] = "🔥 STRONG BUY (Uptrend Dip)"
+            coin['trend'] = "Bullish (MTF Confirmed)" if (is_uptrend_15m and is_uptrend_1h) else \
+                           "Bullish (Pullback)" if (is_uptrend_1h and not is_uptrend_15m) else \
+                           "Bearish (MTF Confirmed)" if (not is_uptrend_15m and not is_uptrend_1h) else \
+                           "Neutral/Transition"
+
+            # Volatility Check
+            volatility_ratio = (atr / last_price) * 100 if last_price > 0 else 0
+            is_volatile = volatility_ratio > 0.3 # Minimum 0.3% movement per candle
+
+            # LOGIKA DAY TRADING (SUPER SMART & AGGRESSIVE TP)
+            if not is_volatile:
+                coin['trade_signal'] = "⚖️ Low Volatility (Sideways)"
+                coin['entry_price'] = 0
+                coin['sl_price'] = 0
+                coin['tp_price'] = 0
+            elif ob['ratio'] > 1.5 and rsi < 40 and is_uptrend_1h:
+                # STRONG BUY with MTF Confirmation
+                coin['trade_signal'] = "🔥 STRONG BUY (MTF Trend)"
                 coin['entry_price'] = round(last_price, 4)
-                coin['sl_price'] = round(last_price - (1.5 * atr), 4) if atr else round(last_price * 0.98, 4)
-                coin['tp_price'] = round(last_price + (3.0 * atr), 4) if atr else round(last_price * 1.04, 4)
-                # Sinyal terdeteksi, tapi jangan auto-log ke DB. User harus klik tombol centang.
+                # SL: 2.0x ATR, TP: 5.0x ATR (High Risk/Reward)
+                coin['sl_price'] = round(last_price - (2.0 * atr), 4) if atr else round(last_price * 0.97, 4)
+                coin['tp_price'] = round(last_price + (5.0 * atr), 4) if atr else round(last_price * 1.08, 4)
                 pass
                 
-            elif ob['ratio'] > 2.0 and rsi < 30 and not is_uptrend:
-                coin['trade_signal'] = "⚠️ HIGH RISK SCALP (Downtrend)"
+            elif ob['ratio'] > 2.0 and rsi < 30:
+                # OVERSOLD SCALP
+                coin['trade_signal'] = "⚡ FAST SCALP (Oversold)"
                 coin['entry_price'] = round(last_price, 4)
-                coin['sl_price'] = round(last_price - (1.0 * atr), 4) if atr else round(last_price * 0.99, 4)
-                coin['tp_price'] = round(last_price + (2.0 * atr), 4) if atr else round(last_price * 1.02, 4)
+                coin['sl_price'] = round(last_price - (1.5 * atr), 4) if atr else round(last_price * 0.98, 4)
+                coin['tp_price'] = round(last_price + (3.5 * atr), 4) if atr else round(last_price * 1.05, 4)
                 
-            elif ob['ratio'] < 0.8 and rsi > 70 and not is_uptrend:
-                coin['trade_signal'] = "🩸 DANGER DUMP (Bearish Continuation)"
+            elif rsi > 75 and not is_uptrend_1h:
+                # SHORT OPPORTUNITY
+                coin['trade_signal'] = "🩸 DANGER DUMP (Overbought)"
                 coin['entry_price'] = round(last_price, 4)
-                coin['sl_price'] = round(last_price + (1.5 * atr), 4) if atr else round(last_price * 1.02, 4)
-                coin['tp_price'] = round(last_price - (3.0 * atr), 4) if atr else round(last_price * 0.96, 4)
+                coin['sl_price'] = round(last_price + (2.0 * atr), 4) if atr else round(last_price * 1.03, 4)
+                coin['tp_price'] = round(last_price - (5.0 * atr), 4) if atr else round(last_price * 0.92, 4)
                 
             else:
-                if is_uptrend:
-                    coin['trade_signal'] = "🐳 Whale Accumulating (Wait for Dip)" if ob['ratio'] > 1.2 else "⚖️ Neutral Uptrend (Limit Buy)"
-                    coin['entry_price'] = round(last_price - (1.0 * atr), 4) if atr else round(last_price * 0.99, 4)
-                    coin['sl_price'] = round(coin['entry_price'] - (1.5 * atr), 4) if atr else round(last_price * 0.98, 4)
-                    coin['tp_price'] = round(coin['entry_price'] + (3.0 * atr), 4) if atr else round(last_price * 1.04, 4)
-                else:
-                    coin['trade_signal'] = "📉 Bearish (Limit Short)"
-                    coin['entry_price'] = round(last_price + (1.0 * atr), 4) if atr else round(last_price * 1.01, 4)
-                    coin['sl_price'] = round(coin['entry_price'] + (1.5 * atr), 4) if atr else round(last_price * 1.02, 4)
-                    coin['tp_price'] = round(coin['entry_price'] - (3.0 * atr), 4) if atr else round(last_price * 0.96, 4)
+                coin['trade_signal'] = "👀 Waiting for Better Setup"
+                coin['entry_price'] = 0
+                coin['sl_price'] = 0
+                coin['tp_price'] = 0
 
         return {
             "status": "success",

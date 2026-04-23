@@ -45,51 +45,57 @@ def get_order_book_details(symbol):
     except:
         return {"ratio": 1.0, "bid_wall_price": 0, "bid_wall_usdt": 0, "ask_wall_price": 0, "ask_wall_usdt": 0}
 
-def get_technical_indicators(symbol, interval="15m", period=14):
+def get_technical_indicators(symbol, period=14):
     try:
-        url = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=250"
-        res = requests.get(url)
-        data = res.json()
+        # Fetch 15m data
+        url_15m = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=15m&limit=250"
+        res_15m = requests.get(url_15m)
+        data_15m = res_15m.json()
+        df_15m = pd.DataFrame(data_15m, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
+        df_15m['close'] = df_15m['close'].astype(float)
+        df_15m['high'] = df_15m['high'].astype(float)
+        df_15m['low'] = df_15m['low'].astype(float)
         
-        df = pd.DataFrame(data, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
-        df['close'] = df['close'].astype(float)
-        df['high'] = df['high'].astype(float)
-        df['low'] = df['low'].astype(float)
+        # Fetch 1h data for MTF Trend
+        url_1h = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=1h&limit=250"
+        res_1h = requests.get(url_1h)
+        data_1h = res_1h.json()
+        df_1h = pd.DataFrame(data_1h, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
+        df_1h['close'] = df_1h['close'].astype(float)
         
-        closes = df['close']
+        closes_15m = df_15m['close']
+        closes_1h = df_1h['close']
         
-        # RSI
-        delta = closes.diff()
+        # RSI 15m
+        delta = closes_15m.diff()
         gain = delta.clip(lower=0)
         loss = -1 * delta.clip(upper=0)
-        
         avg_gain = gain.ewm(com=period-1, adjust=False).mean()
         avg_loss = loss.ewm(com=period-1, adjust=False).mean()
-        
         rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
+        rsi_15m = 100 - (100 / (1 + rs))
         
-        # ATR
-        high_low = df['high'] - df['low']
-        high_close = (df['high'] - df['close'].shift()).abs()
-        low_close = (df['low'] - df['close'].shift()).abs()
+        # ATR 15m
+        high_low = df_15m['high'] - df_15m['low']
+        high_close = (df_15m['high'] - df_15m['close'].shift()).abs()
+        low_close = (df_15m['low'] - df_15m['close'].shift()).abs()
         ranges = pd.concat([high_low, high_close, low_close], axis=1)
         true_range = np.max(ranges, axis=1)
-        atr = true_range.rolling(period).mean()
+        atr_15m = true_range.rolling(period).mean()
 
-        # EMA 50 & EMA 200
-        ema_50 = closes.ewm(span=50, adjust=False).mean()
-        ema_200 = closes.ewm(span=200, adjust=False).mean()
+        # EMA 200 (15m & 1h)
+        ema_200_15m = closes_15m.ewm(span=200, adjust=False).mean()
+        ema_200_1h = closes_1h.ewm(span=200, adjust=False).mean()
         
         return {
-            "rsi": round(rsi.iloc[-1], 2),
-            "atr": atr.iloc[-1],
-            "ema_50": ema_50.iloc[-1],
-            "ema_200": ema_200.iloc[-1]
+            "rsi": round(rsi_15m.iloc[-1], 2),
+            "atr": atr_15m.iloc[-1],
+            "ema_200": ema_200_15m.iloc[-1],
+            "ema_200_1h": ema_200_1h.iloc[-1]
         }
     except Exception as e:
         print(f"Error indicators: {e}")
-        return {"rsi": 50.0, "atr": 0.0, "ema_50": 0.0, "ema_200": 0.0}
+        return {"rsi": 50.0, "atr": 0.0, "ema_200": 0.0, "ema_200_1h": 0.0}
 
 def get_forex_data(symbol="XAUUSD"):
     try:
