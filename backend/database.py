@@ -29,7 +29,7 @@ def log_trade(symbol, entry, tp, sl):
     cursor.execute("SELECT id FROM trades WHERE symbol = ? AND status = 'PENDING'", (symbol,))
     if cursor.fetchone():
         conn.close()
-        return
+        return False
 
     cursor.execute('''
         INSERT INTO trades (symbol, entry_price, tp_price, sl_price, status, timestamp)
@@ -37,6 +37,7 @@ def log_trade(symbol, entry, tp, sl):
     ''', (symbol, entry, tp, sl, int(time.time())))
     conn.commit()
     conn.close()
+    return True
 
 import requests
 

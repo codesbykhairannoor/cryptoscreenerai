@@ -128,7 +128,8 @@ export default function Home() {
       });
 
       if (res.ok) {
-        alert(`Berhasil mengambil trade ${asset.symbol}! Pantau di Trading Journal.`);
+        const result = await res.json();
+        alert(result.message);
         fetchData(); // Refresh history
       }
     } catch (err) {

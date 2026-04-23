@@ -72,8 +72,8 @@ def get_top_coins():
                 coin['entry_price'] = round(last_price, 4)
                 coin['sl_price'] = round(last_price - (1.5 * atr), 4) if atr else round(last_price * 0.98, 4)
                 coin['tp_price'] = round(last_price + (3.0 * atr), 4) if atr else round(last_price * 1.04, 4)
-                # Log to DB
-                log_trade(coin['symbol'], coin['entry_price'], coin['tp_price'], coin['sl_price'])
+                # Sinyal terdeteksi, tapi jangan auto-log ke DB. User harus klik tombol centang.
+                pass
                 
             elif ob['ratio'] > 2.0 and rsi < 30 and not is_uptrend:
                 coin['trade_signal'] = "⚠️ HIGH RISK SCALP (Downtrend)"
@@ -128,14 +128,16 @@ def get_forex():
             entry_price = round(last_price, 2)
             sl_price = round(last_price - (1.5 * atr), 2) if atr else round(last_price * 0.99, 2)
             tp_price = round(last_price + (3.0 * atr), 2) if atr else round(last_price * 1.02, 2)
-            log_trade("XAUUSD", entry_price, tp_price, sl_price)
+            # Sinyal terdeteksi, tapi jangan auto-log ke DB.
+            pass
             
         elif rsi > 70 and not is_uptrend:
             signal = "⚠️ OVERBOUGHT (Sell/Short Opportunity)"
             entry_price = round(last_price, 2)
             sl_price = round(last_price + (1.5 * atr), 2) if atr else round(last_price * 1.01, 2)
             tp_price = round(last_price - (3.0 * atr), 2) if atr else round(last_price * 0.98, 2)
-            log_trade("XAUUSD", entry_price, tp_price, sl_price)
+            # Sinyal terdeteksi, tapi jangan auto-log ke DB.
+            pass
             
         else:
             signal = "⚖️ Neutral (Limit Setup)"
@@ -175,13 +177,16 @@ def get_performance():
 def select_trade(trade: dict):
     # trade expect: {symbol, entry, tp, sl}
     try:
-        log_trade(
+        success = log_trade(
             trade.get('symbol'), 
             float(trade.get('entry')), 
             float(trade.get('tp')), 
             float(trade.get('sl'))
         )
-        return {"status": "success", "message": "Trade picked and saved!"}
+        if success:
+            return {"status": "success", "message": f"Trade {trade.get('symbol')} berhasil disimpan ke journal!"}
+        else:
+            return {"status": "warning", "message": f"Trade {trade.get('symbol')} sudah ada di journal (Pending)."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
