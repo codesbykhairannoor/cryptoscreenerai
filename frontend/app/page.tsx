@@ -180,7 +180,7 @@ export default function Home() {
         <header className="border-b border-gray-800 pb-4 flex flex-col md:flex-row justify-between items-start md:items-end gap-4">
           <div>
             <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-emerald-400">
-              AI Crypto & Forex Screener Pro
+              Chetilization AI Pro
             </h1>
             <p className="text-gray-400 mt-2 flex items-center gap-2">
               <span>Live WebSockets</span> 
