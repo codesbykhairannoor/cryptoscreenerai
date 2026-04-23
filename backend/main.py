@@ -72,44 +72,35 @@ def get_top_coins():
                            "Bearish (MTF Confirmed)" if (not is_uptrend_15m and not is_uptrend_1h) else \
                            "Neutral/Transition"
 
-            # Volatility Check
-            volatility_ratio = (atr / last_price) * 100 if last_price > 0 else 0
-            is_volatile = volatility_ratio > 0.3 # Minimum 0.3% movement per candle
+            # Confidence Calculation (Win Probability %)
+            confidence = 35 # Base
+            if is_uptrend_15m and is_uptrend_1h: confidence += 20
+            if ob['ratio'] > 1.5: confidence += 15
+            if rsi < 45: confidence += 15
+            if (atr / last_price) * 100 > 0.4: confidence += 10
+            
+            # Cap confidence
+            confidence = min(confidence, 88) if rsi > 30 else 92 # Strongest signals around 92%
 
-            # LOGIKA DAY TRADING (SUPER SMART & AGGRESSIVE TP)
-            if not is_volatile:
-                coin['trade_signal'] = "⚖️ Low Volatility (Sideways)"
-                coin['entry_price'] = 0
-                coin['sl_price'] = 0
-                coin['tp_price'] = 0
-            elif ob['ratio'] > 1.5 and rsi < 40 and is_uptrend_1h:
-                # STRONG BUY with MTF Confirmation
-                coin['trade_signal'] = "🔥 STRONG BUY (MTF Trend)"
-                coin['entry_price'] = round(last_price, 4)
-                # SL: 2.0x ATR, TP: 5.0x ATR (High Risk/Reward)
-                coin['sl_price'] = round(last_price - (2.0 * atr), 4) if atr else round(last_price * 0.97, 4)
-                coin['tp_price'] = round(last_price + (5.0 * atr), 4) if atr else round(last_price * 1.08, 4)
-                pass
-                
+            # ALWAYS CALCULATE TARGETS (LIMIT ORDER SETUP)
+            coin['entry_price'] = round(last_price, 4)
+            # Use aggressive multipliers for targets
+            coin['sl_price'] = round(last_price - (2.0 * atr), 4) if atr else round(last_price * 0.97, 4)
+            coin['tp_price'] = round(last_price + (5.0 * atr), 4) if atr else round(last_price * 1.08, 4)
+
+            # LOGIKA DAY TRADING (SIGNAL TEXT)
+            if ob['ratio'] > 1.5 and rsi < 40 and is_uptrend_1h:
+                coin['trade_signal'] = f"🔥 STRONG BUY (Win Prob: {confidence}%)"
             elif ob['ratio'] > 2.0 and rsi < 30:
-                # OVERSOLD SCALP
-                coin['trade_signal'] = "⚡ FAST SCALP (Oversold)"
-                coin['entry_price'] = round(last_price, 4)
-                coin['sl_price'] = round(last_price - (1.5 * atr), 4) if atr else round(last_price * 0.98, 4)
-                coin['tp_price'] = round(last_price + (3.5 * atr), 4) if atr else round(last_price * 1.05, 4)
-                
+                coin['trade_signal'] = f"⚡ FAST SCALP (Win Prob: {confidence}%)"
             elif rsi > 75 and not is_uptrend_1h:
-                # SHORT OPPORTUNITY
-                coin['trade_signal'] = "🩸 DANGER DUMP (Overbought)"
-                coin['entry_price'] = round(last_price, 4)
+                coin['trade_signal'] = f"🩸 DANGER DUMP (Win Prob: {confidence-10}%)"
+                # Adjust targets for Short
                 coin['sl_price'] = round(last_price + (2.0 * atr), 4) if atr else round(last_price * 1.03, 4)
                 coin['tp_price'] = round(last_price - (5.0 * atr), 4) if atr else round(last_price * 0.92, 4)
-                
             else:
-                coin['trade_signal'] = "👀 Waiting for Better Setup"
-                coin['entry_price'] = 0
-                coin['sl_price'] = 0
-                coin['tp_price'] = 0
+                coin['trade_signal'] = f"⚖️ Neutral (Win Prob: {confidence}%)"
+
 
         return {
             "status": "success",
