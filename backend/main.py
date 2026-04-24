@@ -217,32 +217,32 @@ def get_performance():
 
 @app.post("/api/select-trade")
 def select_trade(trade: dict):
-    # trade expect: {symbol, entry, tp, sl}
+    # trade expect: {symbol, entry, tp, sl, market}
     try:
         success = log_trade(
             trade.get('symbol'), 
             float(trade.get('entry')), 
             float(trade.get('tp')), 
-            float(trade.get('sl'))
+            float(trade.get('sl')),
+            market=trade.get('market', 'crypto')
         )
         if success:
-            return {"status": "success", "message": f"Trade {trade.get('symbol')} berhasil disimpan ke journal!"}
+            return {"status": "success", "message": f"Trade {trade.get('symbol')} ({trade.get('market')}) berhasil disimpan!"}
         else:
-            return {"status": "warning", "message": f"Trade {trade.get('symbol')} sudah ada di journal (Pending)."}
+            return {"status": "warning", "message": f"Trade {trade.get('symbol')} sudah ada di journal."}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/trade-history")
 def get_history():
     try:
-        from database import DB_PATH
-        import sqlite3
-        conn = sqlite3.connect(DB_PATH)
-        conn.row_factory = sqlite3.Row
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM trades ORDER BY timestamp DESC LIMIT 20")
-        rows = cursor.fetchall()
-        history = [dict(row) for row in rows]
+        from database import get_connection
+        from psycopg2.extras import RealDictCursor
+        conn = get_connection()
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute("SELECT * FROM trades ORDER BY timestamp DESC LIMIT 30")
+        history = cursor.fetchall()
+        cursor.close()
         conn.close()
         return {"status": "success", "data": history}
     except Exception as e:

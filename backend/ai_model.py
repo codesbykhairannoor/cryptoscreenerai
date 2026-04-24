@@ -1,15 +1,27 @@
-import pandas as pd
-from sklearn.ensemble import IsolationForest
+import os
+import google.generativeai as genai
+from dotenv import load_dotenv
 
-def analyze_and_sort(df):
-    features = ['priceChangePercent', 'quoteVolume']
-    X = df[features]
+load_dotenv()
 
-    model = IsolationForest(contamination=0.25, random_state=42)
-    df['anomaly'] = model.fit_predict(X)
+# Configure the Gemini API with the provided key
+api_key = os.getenv("GEMINI_API_KEY")
+genai.configure(api_key=api_key)
 
-    potential_coins = df[(df['anomaly'] == -1) & (df['priceChangePercent'] > 0)]
-    sorted_coins = potential_coins.sort_values(by='quoteVolume', ascending=False)
-
-    top_20 = sorted_coins.head(20)[['symbol', 'lastPrice', 'priceChangePercent', 'quoteVolume']]
-    return top_20.to_dict(orient='records')
+def analyze_market_data(data_json):
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        prompt = f"""
+        Analyze this crypto/market data and provide 3 hot trading recommendations.
+        Focus on whale activity, RSI momentum, and MTF trend confirmation.
+        Data: {data_json}
+        Format your response in professional Indonesian, use emojis, and be concise.
+        Include Entry, TP, and SL for each recommendation.
+        """
+        
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        print(f"AI Analysis Error: {e}")
+        return "Gagal melakukan analisis AI. Silakan cek koneksi atau API Key Anda."

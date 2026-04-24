@@ -1,41 +1,53 @@
-import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import os
 import time
+from dotenv import load_dotenv
 
-DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "trades.db"))
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+def get_connection():
+    return psycopg2.connect(DATABASE_URL)
 
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cursor = conn.cursor()
+    # Create table with market column if it doesn't exist
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS trades (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            symbol TEXT,
-            entry_price REAL,
-            tp_price REAL,
-            sl_price REAL,
-            status TEXT,
-            timestamp INTEGER
+            id SERIAL PRIMARY KEY,
+            symbol TEXT NOT NULL,
+            entry_price DOUBLE PRECISION,
+            tp_price DOUBLE PRECISION,
+            sl_price DOUBLE PRECISION,
+            status TEXT DEFAULT 'PENDING',
+            market TEXT DEFAULT 'crypto',
+            timestamp BIGINT
         )
     ''')
     conn.commit()
+    cursor.close()
     conn.close()
 
-def log_trade(symbol, entry, tp, sl):
-    conn = sqlite3.connect(DB_PATH)
+def log_trade(symbol, entry, tp, sl, market='crypto'):
+    conn = get_connection()
     cursor = conn.cursor()
     
-    # Check if a pending trade for this symbol already exists to avoid spamming
-    cursor.execute("SELECT id FROM trades WHERE symbol = ? AND status = 'PENDING'", (symbol,))
+    # Check if a pending trade for this symbol already exists in this market
+    cursor.execute("SELECT id FROM trades WHERE symbol = %s AND status = 'PENDING' AND market = %s", (symbol, market))
     if cursor.fetchone():
+        cursor.close()
         conn.close()
         return False
 
     cursor.execute('''
-        INSERT INTO trades (symbol, entry_price, tp_price, sl_price, status, timestamp)
-        VALUES (?, ?, ?, ?, 'PENDING', ?)
-    ''', (symbol, entry, tp, sl, int(time.time())))
+        INSERT INTO trades (symbol, entry_price, tp_price, sl_price, status, market, timestamp)
+        VALUES (%s, %s, %s, %s, 'PENDING', %s, %s)
+    ''', (symbol, entry, tp, sl, market, int(time.time() * 1000)))
     conn.commit()
+    cursor.close()
     conn.close()
     return True
 
@@ -44,9 +56,16 @@ import requests
 def get_current_price(symbol):
     try:
         if symbol == "XAUUSD" or symbol == "GC=F":
-            # Use the same accurate OANDA Spot price from TradingView
             tv_url = 'https://scanner.tradingview.com/cfd/scan'
             tv_payload = {'symbols': {'tickers': ['OANDA:XAUUSD']}, 'columns': ['close']}
+            tv_res = requests.post(tv_url, json=tv_payload, timeout=5)
+            tv_data = tv_res.json()
+            if tv_data.get('data') and len(tv_data['data']) > 0:
+                return float(tv_data['data'][0]['d'][0])
+        elif "." in symbol: # Likely IDX stock (e.g. BBCA.JK) or TradingView format
+            # Fetch IDX from TV
+            tv_url = 'https://scanner.tradingview.com/indonesia/scan'
+            tv_payload = {'symbols': {'tickers': [f'IDX:{symbol.replace(".JK","")}']}, 'columns': ['close']}
             tv_res = requests.post(tv_url, json=tv_payload, timeout=5)
             tv_data = tv_res.json()
             if tv_data.get('data') and len(tv_data['data']) > 0:
@@ -61,25 +80,28 @@ def get_current_price(symbol):
     return None
 
 def check_pending_trades():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+    conn = get_connection()
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
     cursor.execute("SELECT id, symbol, entry_price, tp_price, sl_price, status FROM trades WHERE status IN ('PENDING', 'RUNNING')")
     pending_trades = cursor.fetchall()
     
     for trade in pending_trades:
-        trade_id, symbol, entry, tp, sl, current_status = trade
+        trade_id = trade['id']
+        symbol = trade['symbol']
+        entry = trade['entry_price']
+        tp = trade['tp_price']
+        sl = trade['sl_price']
+        current_status = trade['status']
+        
         try:
             current_price = get_current_price(symbol)
             if not current_price:
                 continue
                 
             status = current_status
-            
-            # Side detection
             is_long = tp > sl
             
             if is_long:
-                # LONG: Entry is usually below last price (buy dip)
                 if current_price >= tp:
                     status = 'WIN'
                 elif current_price <= sl:
@@ -87,7 +109,6 @@ def check_pending_trades():
                 elif current_status == 'PENDING' and current_price <= entry:
                     status = 'RUNNING'
             else:
-                # SHORT: Entry is usually above last price (sell bounce)
                 if current_price <= tp:
                     status = 'WIN'
                 elif current_price >= sl:
@@ -96,15 +117,16 @@ def check_pending_trades():
                     status = 'RUNNING'
                     
             if status != current_status:
-                cursor.execute("UPDATE trades SET status = ? WHERE id = ?", (status, trade_id))
+                cursor.execute("UPDATE trades SET status = %s WHERE id = %s", (status, trade_id))
                 conn.commit()
         except Exception as e:
             print(f"Error checking trade {trade_id}: {e}")
             
+    cursor.close()
     conn.close()
 
 def get_performance_stats():
-    conn = sqlite3.connect(DB_PATH)
+    conn = get_connection()
     cursor = conn.cursor()
     
     cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'WIN'")
@@ -113,9 +135,10 @@ def get_performance_stats():
     cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'LOSS'")
     losses = cursor.fetchone()[0]
     
-    cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'PENDING'")
+    cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'PENDING' OR status = 'RUNNING'")
     pending = cursor.fetchone()[0]
     
+    cursor.close()
     conn.close()
     
     total_closed = wins + losses
