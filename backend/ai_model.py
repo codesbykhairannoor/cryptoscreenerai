@@ -8,6 +8,18 @@ load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=api_key) if api_key else None
 
+def analyze_and_sort(df):
+    # Filter for active coins with positive momentum
+    df_filtered = df[(df['quoteVolume'] > 1000000) & (df['priceChangePercent'] > 0)]
+    # Sort by highest momentum
+    df_sorted = df_filtered.sort_values(by='priceChangePercent', ascending=False).head(10)
+    
+    # Fallback to highest volume if not enough positive momentum coins
+    if len(df_sorted) < 5:
+        df_sorted = df.sort_values(by='quoteVolume', ascending=False).head(10)
+        
+    return df_sorted.to_dict('records')
+
 def analyze_market_data(data_json):
     if not client:
         return "API Key Gemini belum diset di .env"
