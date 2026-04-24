@@ -60,7 +60,7 @@ export default function TradingChart({
                 }
 
                 // Add Price Lines if they exist
-                if (entryPrice > 0) {
+                if (entryPrice && entryPrice > 0) {
                     candlestickSeries.createPriceLine({
                         price: entryPrice,
                         color: '#FCD34D',
@@ -70,7 +70,7 @@ export default function TradingChart({
                         title: 'ENTRY',
                     });
                 }
-                if (tpPrice > 0) {
+                if (tpPrice && tpPrice > 0) {
                     candlestickSeries.createPriceLine({
                         price: tpPrice,
                         color: '#10B981',
@@ -80,7 +80,7 @@ export default function TradingChart({
                         title: 'TP',
                     });
                 }
-                if (slPrice > 0) {
+                if (slPrice && slPrice > 0) {
                     candlestickSeries.createPriceLine({
                         price: slPrice,
                         color: '#EF4444',
