@@ -189,18 +189,23 @@ def get_idx_data(interval="15m"):
                 # Calculate buying demand score
                 bid_size = cols[10] or 0
                 ask_size = cols[11] or 0
-                bid_ask_ratio = bid_size / ask_size if ask_size > 0 else 1
+                
+                # If market is closed, bid/ask are 0. We use a more balanced proxy.
+                if bid_size == 0 and ask_size == 0:
+                    bid_ask_ratio = 1.0
+                else:
+                    bid_ask_ratio = bid_size / ask_size if ask_size > 0 else 2.0
+                    
                 rel_vol = cols[13] or 0
                 cmf = cols[14] or 0
                 
-                # A stock has high "Whale Demand" if:
-                # 1. Bid Size > Ask Size (Big Buy Wall)
-                # 2. Relative Volume > 1.2 (Higher than average activity)
-                # 3. CMF > 0 (Money flowing IN)
                 demand_score = 0
                 if bid_ask_ratio > 1.5: demand_score += 40
+                elif bid_ask_ratio > 1.0: demand_score += 20
+                
                 if rel_vol > 1.2: demand_score += 30
-                if cmf > 0: demand_score += 30
+                if cmf > 0.05: demand_score += 30
+                elif cmf > 0: demand_score += 15
                 
                 results.append({
                     "symbol": symbol,

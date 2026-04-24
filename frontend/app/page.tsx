@@ -232,6 +232,7 @@ export default function Home() {
                           )}
                         </td>
                         <td className="px-6 py-5 font-mono text-[11px]">
+                          <p className="text-blue-400 font-bold">Entry: {asset.entry_price}</p>
                           <p className="text-emerald-400 font-bold">TP: {asset.tp_price}</p>
                           <p className="text-red-400 font-bold">SL: {asset.sl_price}</p>
                         </td>
