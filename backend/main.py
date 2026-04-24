@@ -36,14 +36,26 @@ def read_root():
     return {"message": "Mesin AI Crypto Aktif! Siap mendeteksi cuan."}
 
 @app.get("/api/top-coins")
-def get_top_coins():
+def get_top_coins(timeframe: str = "15m"):
     try:
         raw_data = fetch_all_tickers()
         top_coins = analyze_and_sort(raw_data)
+        
+        # ENSURE BTC IS ALWAYS INCLUDED
+        btc_exists = any(c['symbol'] == 'BTCUSDT' for c in top_coins)
+        if not btc_exists:
+            btc_row = raw_data[raw_data['symbol'] == 'BTCUSDT'].to_dict('records')
+            if btc_row:
+                top_coins.insert(0, btc_row[0])
+        else:
+            # Move BTC to top
+            btc_idx = next(i for i, c in enumerate(top_coins) if c['symbol'] == 'BTCUSDT')
+            btc_coin = top_coins.pop(btc_idx)
+            top_coins.insert(0, btc_coin)
 
         for coin in top_coins:
             ob = get_order_book_details(coin['symbol'])
-            tech = get_technical_indicators(coin['symbol']) 
+            tech = get_technical_indicators(coin['symbol'], interval=timeframe) 
             
             coin['whale_ratio'] = ob['ratio']
             coin['bid_wall_price'] = ob['bid_wall_price']
@@ -53,54 +65,49 @@ def get_top_coins():
             
             rsi = tech['rsi']
             atr = tech['atr']
-            ema_200_15m = tech['ema_200']
-            ema_200_1h = tech['ema_200_1h']
+            ema_200_cur = tech['ema_200']
+            ema_200_htf = tech['ema_200_htf']
             
             coin['rsi_15m'] = rsi
             coin['atr'] = atr
-            coin['ema_200'] = round(ema_200_15m, 4)
-            coin['ema_200_1h'] = round(ema_200_1h, 4)
+            coin['ema_200'] = round(ema_200_cur, 4)
+            coin['ema_200_htf'] = round(ema_200_htf, 4)
+            coin['htf'] = tech['htf']
             
             last_price = float(coin['lastPrice'])
             
             # Trend Detection (MTF)
-            is_uptrend_15m = last_price > ema_200_15m
-            is_uptrend_1h = last_price > ema_200_1h
+            is_uptrend_cur = last_price > ema_200_cur
+            is_uptrend_htf = last_price > ema_200_htf
             
-            coin['trend'] = "Bullish (MTF Confirmed)" if (is_uptrend_15m and is_uptrend_1h) else \
-                           "Bullish (Pullback)" if (is_uptrend_1h and not is_uptrend_15m) else \
-                           "Bearish (MTF Confirmed)" if (not is_uptrend_15m and not is_uptrend_1h) else \
+            coin['trend'] = f"Bullish ({coin['htf']} Confirmed)" if (is_uptrend_cur and is_uptrend_htf) else \
+                           f"Bullish ({coin['htf']} Pullback)" if (is_uptrend_htf and not is_uptrend_cur) else \
+                           f"Bearish ({coin['htf']} Confirmed)" if (not is_uptrend_cur and not is_uptrend_htf) else \
                            "Neutral/Transition"
 
-            # Confidence Calculation (Win Probability %)
-            confidence = 35 # Base
-            if is_uptrend_15m and is_uptrend_1h: confidence += 20
+            # Confidence Calculation
+            confidence = 35 
+            if is_uptrend_cur and is_uptrend_htf: confidence += 20
             if ob['ratio'] > 1.5: confidence += 15
             if rsi < 45: confidence += 15
             if (atr / last_price) * 100 > 0.4: confidence += 10
-            
-            # Cap confidence
-            confidence = min(confidence, 88) if rsi > 30 else 92 # Strongest signals around 92%
+            confidence = min(confidence, 88) if rsi > 30 else 92
 
-            # ALWAYS CALCULATE TARGETS (LIMIT ORDER SETUP)
+            # ALWAYS CALCULATE TARGETS
             coin['entry_price'] = round(last_price, 4)
-            # Use aggressive multipliers for targets
             coin['sl_price'] = round(last_price - (2.0 * atr), 4) if atr else round(last_price * 0.97, 4)
             coin['tp_price'] = round(last_price + (5.0 * atr), 4) if atr else round(last_price * 1.08, 4)
 
-            # LOGIKA DAY TRADING (SIGNAL TEXT)
-            if ob['ratio'] > 1.5 and rsi < 40 and is_uptrend_1h:
-                coin['trade_signal'] = f"🔥 STRONG BUY (Win Prob: {confidence}%)"
+            if ob['ratio'] > 1.5 and rsi < 40 and is_uptrend_htf:
+                coin['trade_signal'] = f"🔥 STRONG BUY ({timeframe} Prob: {confidence}%)"
             elif ob['ratio'] > 2.0 and rsi < 30:
-                coin['trade_signal'] = f"⚡ FAST SCALP (Win Prob: {confidence}%)"
-            elif rsi > 75 and not is_uptrend_1h:
-                coin['trade_signal'] = f"🩸 DANGER DUMP (Win Prob: {confidence-10}%)"
-                # Adjust targets for Short
+                coin['trade_signal'] = f"⚡ FAST SCALP ({timeframe} Prob: {confidence}%)"
+            elif rsi > 75 and not is_uptrend_htf:
+                coin['trade_signal'] = f"🩸 DANGER DUMP ({timeframe} Prob: {confidence-10}%)"
                 coin['sl_price'] = round(last_price + (2.0 * atr), 4) if atr else round(last_price * 1.03, 4)
                 coin['tp_price'] = round(last_price - (5.0 * atr), 4) if atr else round(last_price * 0.92, 4)
             else:
-                coin['trade_signal'] = f"⚖️ Neutral (Win Prob: {confidence}%)"
-
+                coin['trade_signal'] = f"⚖️ Neutral ({timeframe} Prob: {confidence}%)"
 
         return {
             "status": "success",
@@ -111,56 +118,48 @@ def get_top_coins():
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/forex")
-def get_forex():
+def get_forex(timeframe: str = "15m"):
     try:
-        # Fetch XAUUSD (Gold proxy)
-        gold_data = get_forex_data("XAUUSD")
-        if not gold_data:
+        asset_data = get_forex_data("XAUUSD", interval=timeframe)
+        if not asset_data:
             return {"status": "error", "message": "Failed to fetch XAUUSD data."}
             
-        rsi = gold_data['rsi_15m']
-        atr = gold_data['atr']
-        ema_200 = gold_data.get('ema_200', 0)
-        last_price = float(gold_data['lastPrice'])
-        is_uptrend = last_price > ema_200
+        rsi = asset_data['rsi']
+        atr = asset_data['atr']
+        ema_200_cur = asset_data['ema_200']
+        ema_200_htf = asset_data['ema_200_htf']
+        last_price = float(asset_data['lastPrice'])
         
-        gold_data['trend'] = "Bullish (Uptrend)" if is_uptrend else "Bearish (Downtrend)"
+        is_uptrend_cur = last_price > ema_200_cur
+        is_uptrend_htf = last_price > ema_200_htf
         
-        if rsi < 35 and is_uptrend:
-            signal = "🔥 OVERSOLD (Buy Opportunity)"
-            entry_price = round(last_price, 2)
-            sl_price = round(last_price - (1.5 * atr), 2) if atr else round(last_price * 0.99, 2)
-            tp_price = round(last_price + (3.0 * atr), 2) if atr else round(last_price * 1.02, 2)
-            # Sinyal terdeteksi, tapi jangan auto-log ke DB.
-            pass
-            
-        elif rsi > 70 and not is_uptrend:
-            signal = "⚠️ OVERBOUGHT (Sell/Short Opportunity)"
-            entry_price = round(last_price, 2)
-            sl_price = round(last_price + (1.5 * atr), 2) if atr else round(last_price * 1.01, 2)
-            tp_price = round(last_price - (3.0 * atr), 2) if atr else round(last_price * 0.98, 2)
-            # Sinyal terdeteksi, tapi jangan auto-log ke DB.
-            pass
-            
+        asset_data['trend'] = f"Bullish ({asset_data['htf']} Confirmed)" if (is_uptrend_cur and is_uptrend_htf) else \
+                             f"Bearish ({asset_data['htf']} Confirmed)" if (not is_uptrend_cur and not is_uptrend_htf) else \
+                             "Neutral/Transition"
+        
+        # Confidence logic for Gold
+        confidence = 40
+        if is_uptrend_cur and is_uptrend_htf: confidence += 25
+        if rsi < 35: confidence += 20
+        
+        asset_data['entry_price'] = round(last_price, 2)
+        asset_data['sl_price'] = round(last_price - (2.0 * atr), 2) if atr else round(last_price * 0.99, 2)
+        asset_data['tp_price'] = round(last_price + (5.0 * atr), 2) if atr else round(last_price * 1.02, 2)
+        
+        if rsi < 35 and is_uptrend_htf:
+            asset_data['trade_signal'] = f"🔥 OVERSOLD (Win Prob: {confidence}%)"
+        elif rsi > 70 and not is_uptrend_htf:
+            asset_data['trade_signal'] = f"⚠️ OVERBOUGHT (Win Prob: {confidence-10}%)"
+            asset_data['sl_price'] = round(last_price + (2.0 * atr), 2) if atr else round(last_price * 1.01, 2)
+            asset_data['tp_price'] = round(last_price - (5.0 * atr), 2) if atr else round(last_price * 0.98, 2)
         else:
-            signal = "⚖️ Neutral (Limit Setup)"
-            if is_uptrend:
-                entry_price = round(last_price - (1.0 * atr), 2) if atr else round(last_price * 0.99, 2)
-                sl_price = round(entry_price - (1.5 * atr), 2) if atr else round(last_price * 0.98, 2)
-                tp_price = round(entry_price + (3.0 * atr), 2) if atr else round(last_price * 1.02, 2)
-            else:
-                entry_price = round(last_price + (1.0 * atr), 2) if atr else round(last_price * 1.01, 2)
-                sl_price = round(entry_price + (1.5 * atr), 2) if atr else round(last_price * 1.02, 2)
-                tp_price = round(entry_price - (3.0 * atr), 2) if atr else round(last_price * 0.98, 2)
+            asset_data['trade_signal'] = f"⚖️ Neutral (Win Prob: {confidence}%)"
         
-        gold_data['trade_signal'] = signal
-        gold_data['entry_price'] = entry_price
-        gold_data['sl_price'] = sl_price
-        gold_data['tp_price'] = tp_price
+        asset_data['rsi_15m'] = rsi # Keep legacy key for UI
         
         return {
             "status": "success",
-            "data": [gold_data]
+            "data": [asset_data]
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}

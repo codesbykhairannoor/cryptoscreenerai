@@ -14,6 +14,7 @@ export default function Home() {
   const [aiAnalysis, setAiAnalysis] = useState<string>("Menunggu data untuk dianalisis...");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
+  const [timeframe, setTimeframe] = useState<string>('15m');
 
   // WEBSOCKET STATES
   const [livePrices, setLivePrices] = useState<Record<string, number>>({});
@@ -23,14 +24,14 @@ export default function Home() {
   const fetchData = useCallback(async () => {
     try {
       // Fetch Crypto Data
-      const resCrypto = await fetch(`${backendUrl}/api/top-coins`, { cache: 'no-store' });
+      const resCrypto = await fetch(`${backendUrl}/api/top-coins?timeframe=${timeframe}`, { cache: 'no-store' });
       if (resCrypto.ok) {
         const json = await resCrypto.json();
         setCryptoData(json.data || []);
       }
 
       // Fetch Forex Data
-      const resForex = await fetch(`${backendUrl}/api/forex`, { cache: 'no-store' });
+      const resForex = await fetch(`${backendUrl}/api/forex?timeframe=${timeframe}`, { cache: 'no-store' });
       if (resForex.ok) {
         const json = await resForex.json();
         setForexData(json.data || []);
@@ -54,7 +55,7 @@ export default function Home() {
     } catch (error) {
       console.error("Gagal konek ke Python Backend:", error);
     }
-  }, [backendUrl]);
+  }, [backendUrl, timeframe]);
 
   // Initial Fetch & Heavy Polling Setup
   useEffect(() => {
@@ -189,26 +190,42 @@ export default function Home() {
             </p>
           </div>
           
-          <div className="flex items-center gap-6">
+          <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6 w-full md:w-auto">
+              <div className="flex bg-gray-900/80 p-1 rounded-lg border border-gray-700 shadow-inner w-full sm:w-auto overflow-x-auto">
+                {['15m', '1h', '4h', '1d'].map((tf) => (
+                  <button
+                    key={tf}
+                    onClick={() => setTimeframe(tf)}
+                    className={`px-4 py-1.5 rounded-md text-xs font-bold transition-all whitespace-nowrap flex-1 sm:flex-none ${
+                      timeframe === tf 
+                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/30 scale-105' 
+                        : 'text-gray-500 hover:text-gray-300'
+                    }`}
+                  >
+                    {tf.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+
               {performance && (
-                <div className="bg-gray-900 border border-gray-700 px-4 py-2 rounded-lg flex gap-4 text-sm shadow-xl">
+                <div className="bg-gray-900 border border-gray-700 px-4 py-2 rounded-lg flex gap-4 text-sm shadow-xl w-full sm:w-auto justify-center">
                     <div className="flex flex-col items-center">
-                        <span className="text-gray-400 text-xs uppercase tracking-wider">Win Rate</span>
-                        <span className={`font-bold text-lg ${performance.win_rate > 50 ? 'text-emerald-400' : 'text-yellow-400'}`}>
+                        <span className="text-gray-400 text-[10px] uppercase tracking-wider">Win Rate</span>
+                        <span className={`font-bold text-base ${performance.win_rate > 50 ? 'text-emerald-400' : 'text-yellow-400'}`}>
                             {performance.win_rate}%
                         </span>
                     </div>
                     <div className="w-px bg-gray-700"></div>
                     <div className="flex flex-col items-center">
-                        <span className="text-gray-400 text-xs uppercase tracking-wider">W / L</span>
-                        <span className="font-bold text-lg text-white">
+                        <span className="text-gray-400 text-[10px] uppercase tracking-wider">W / L</span>
+                        <span className="font-bold text-base text-white">
                             <span className="text-emerald-400">{performance.wins}</span> - <span className="text-red-400">{performance.losses}</span>
                         </span>
                     </div>
                     <div className="w-px bg-gray-700"></div>
                     <div className="flex flex-col items-center">
-                        <span className="text-gray-400 text-xs uppercase tracking-wider">Pending</span>
-                        <span className="font-bold text-lg text-blue-400">{performance.pending}</span>
+                        <span className="text-gray-400 text-[10px] uppercase tracking-wider">Pending</span>
+                        <span className="font-bold text-base text-blue-400">{performance.pending}</span>
                     </div>
                 </div>
               )}
@@ -232,13 +249,13 @@ export default function Home() {
             <table className="w-full text-left text-sm text-gray-400 whitespace-nowrap">
               <thead className="text-xs text-gray-400 uppercase bg-gray-900 border-b border-gray-800">
                 <tr>
-                  <th className="px-4 py-4 font-medium">Symbol</th>
-                  <th className="px-4 py-4 font-medium">Live Price</th>
-                  <th className="px-4 py-4 font-medium text-emerald-400">Whale Support</th>
-                  <th className="px-4 py-4 font-medium">RSI (15m)</th>
-                  <th className="px-4 py-4 font-medium text-orange-300">Target (TP) & Risk (SL)</th>
-                  <th className="px-4 py-4 font-medium text-blue-300">Trade Signal</th>
-                  <th className="px-4 py-4 font-medium text-center">Action</th>
+                  <th className="px-4 py-4 font-medium">Asset</th>
+                  <th className="px-4 py-4 font-medium">Price</th>
+                  <th className="px-4 py-4 font-medium hidden sm:table-cell text-emerald-400">Whale</th>
+                  <th className="px-4 py-4 font-medium hidden md:table-cell">RSI</th>
+                  <th className="px-4 py-4 font-medium text-orange-300">Targets</th>
+                  <th className="px-4 py-4 font-medium text-blue-300">Signal</th>
+                  <th className="px-4 py-4 font-medium text-center">Trade</th>
                 </tr>
               </thead>
               <tbody>
@@ -275,23 +292,22 @@ export default function Home() {
                           <span className="text-emerald-400 text-xs">+{parseFloat(coin.priceChangePercent).toFixed(2)}%</span>
                         </td>
                         
-                        <td onClick={() => setExpandedRow(isExpanded ? null : coin.symbol)} className="px-4 py-4 bg-emerald-900/5 border-l border-emerald-900/20">
-                          <span className="font-semibold text-emerald-300">${Math.round(coin.bid_wall_usdt).toLocaleString()}</span><br/>
-                          <span className="text-xs text-gray-500">di ${parseFloat(coin.bid_wall_price).toFixed(4)}</span>
+                        <td onClick={() => setExpandedRow(isExpanded ? null : coin.symbol)} className="px-4 py-4 bg-emerald-900/5 border-l border-emerald-900/20 hidden sm:table-cell">
+                          <span className="font-semibold text-emerald-300">${Math.round(coin.bid_wall_usdt / 1000)}k</span><br/>
+                          <span className="text-[10px] text-gray-500">at ${parseFloat(coin.bid_wall_price).toFixed(2)}</span>
                         </td>
                         
-                        <td onClick={() => setExpandedRow(isExpanded ? null : coin.symbol)} className="px-4 py-4">
+                        <td onClick={() => setExpandedRow(isExpanded ? null : coin.symbol)} className="px-4 py-4 hidden md:table-cell">
                           <span className={`font-bold ${coin.rsi_15m < 45 ? 'text-emerald-400' : coin.rsi_15m > 70 ? 'text-red-400' : 'text-yellow-400'}`}>
                             {coin.rsi_15m}
                           </span>
                         </td>
 
-                        <td onClick={() => setExpandedRow(isExpanded ? null : coin.symbol)} className="px-4 py-4 text-xs">
+                        <td onClick={() => setExpandedRow(isExpanded ? null : coin.symbol)} className="px-4 py-4 text-[10px]">
                           {coin.entry_price > 0 ? (
-                            <div className="flex flex-col gap-1">
-                               <span className="text-gray-300">Entry: <span className="font-semibold text-white">${coin.entry_price}</span></span>
-                               <span className="text-emerald-400">TP: <span className="font-semibold">${coin.tp_price}</span></span>
-                               <span className="text-red-400">SL: <span className="font-semibold">${coin.sl_price}</span></span>
+                            <div className="flex flex-col gap-0.5">
+                               <span className="text-emerald-400">TP: ${coin.tp_price}</span>
+                               <span className="text-red-400">SL: ${coin.sl_price}</span>
                             </div>
                           ) : (
                             <span className="text-gray-600">-</span>
@@ -299,11 +315,10 @@ export default function Home() {
                         </td>
 
                         <td onClick={() => setExpandedRow(isExpanded ? null : coin.symbol)} className="px-4 py-4">
-                          <span className={`px-3 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-wider ${
-                            coin.trade_signal.includes('STRONG BUY') ? 'bg-gradient-to-r from-emerald-600 to-emerald-400 text-white shadow-lg shadow-emerald-500/20' : 
-                            coin.trade_signal.includes('HIGH RISK') ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 
-                            coin.trade_signal.includes('DANGER') ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 
-                            coin.trade_signal.includes('Whale') ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 
+                          <span className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider block text-center ${
+                            coin.trade_signal.includes('STRONG BUY') ? 'bg-emerald-600 text-white' : 
+                            coin.trade_signal.includes('FAST SCALP') ? 'bg-orange-500/20 text-orange-400' : 
+                            coin.trade_signal.includes('DANGER') ? 'bg-red-500/20 text-red-400' : 
                             'bg-gray-800 text-gray-500'
                           }`}>
                             {coin.trade_signal}
@@ -313,7 +328,7 @@ export default function Home() {
                         <td className="px-4 py-4 text-center">
                             <button 
                                 onClick={(e) => { e.stopPropagation(); handlePickTrade(coin); }}
-                                className="bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-400 p-2 rounded-full border border-emerald-500/30 transition-all"
+                                className="bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-400 p-2 rounded-full border border-emerald-500/30 transition-all text-xs"
                                 title="Ambil Trade Ini"
                             >
                                 ✅
