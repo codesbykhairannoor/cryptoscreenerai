@@ -117,6 +117,15 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
         except Exception as e:
             print("Failed to fetch exact TV price, using indicators proxy price:", e)
         
+        return {
+            "symbol": symbol,
+            "lastPrice": exact_price if exact_price > 0 else indicators.get("ema_200", 0),
+            **indicators
+        }
+    except Exception as e:
+        print(f"Forex fetch error: {e}")
+        return {}
+
 def get_idx_market_status():
     from datetime import datetime, time
     import pytz
