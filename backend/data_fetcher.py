@@ -160,8 +160,9 @@ def get_idx_data(interval="15m"):
         tv_url = 'https://scanner.tradingview.com/indonesia/scan'
         payload = {
             "filter": [
-                {"left": "market_cap_basic", "operation": "nempty"},
-                {"left": "type", "operation": "in_range", "right": ["stock", "dr", "fund"]}
+                {"left": "volume", "operation": "nempty"},
+                {"left": "type", "operation": "in_range", "right": ["stock", "dr", "fund"]},
+                {"left": "close", "operation": "greater", "right": 50} # Avoid penny stocks below 50
             ],
             "options": {"lang": "en"},
             "markets": ["indonesia"],
@@ -169,10 +170,11 @@ def get_idx_data(interval="15m"):
             "columns": [
                 "logoid", "name", "close", "change", "change_abs", 
                 "RTC_RSI", "ATR", "EMA200", "description", "volume",
-                "bid_size", "ask_size", "average_volume_10d_calc"
+                "bid_size", "ask_size", "average_volume_10d_calc",
+                "relative_volume_10d_calc", "ChaikinMoneyFlow", "MoneyFlow"
             ],
-            "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"},
-            "range": [0, 20]
+            "sort": {"sortBy": "volume", "sortOrder": "desc"},
+            "range": [0, 100] # Scan more stocks to find gems
         }
         
         res = requests.post(tv_url, json=payload, timeout=5)
@@ -184,9 +186,25 @@ def get_idx_data(interval="15m"):
                 symbol = item['s'].split(':')[-1]
                 cols = item['d']
                 
+                # Calculate buying demand score
+                bid_size = cols[10] or 0
+                ask_size = cols[11] or 0
+                bid_ask_ratio = bid_size / ask_size if ask_size > 0 else 1
+                rel_vol = cols[13] or 0
+                cmf = cols[14] or 0
+                
+                # A stock has high "Whale Demand" if:
+                # 1. Bid Size > Ask Size (Big Buy Wall)
+                # 2. Relative Volume > 1.2 (Higher than average activity)
+                # 3. CMF > 0 (Money flowing IN)
+                demand_score = 0
+                if bid_ask_ratio > 1.5: demand_score += 40
+                if rel_vol > 1.2: demand_score += 30
+                if cmf > 0: demand_score += 30
+                
                 results.append({
                     "symbol": symbol,
-                    "name": cols[8],
+                    "name": cols[1],
                     "lastPrice": cols[2],
                     "change": cols[3],
                     "rsi": cols[5] or 50.0,
@@ -194,13 +212,18 @@ def get_idx_data(interval="15m"):
                     "ema_200": cols[7] or cols[2],
                     "ema_200_htf": cols[7] or cols[2],
                     "volume": cols[9] or 0,
-                    "bid_size": cols[10] or 0,
-                    "ask_size": cols[11] or 0,
+                    "bid_size": bid_size,
+                    "ask_size": ask_size,
                     "avg_volume": cols[12] or 1,
+                    "relative_volume": rel_vol,
+                    "cmf": cmf,
+                    "demand_score": demand_score,
                     "htf": "1h"
                 })
         
-        return results
+        # Sort by demand score to show the "Best" stocks first
+        results.sort(key=lambda x: x['demand_score'], reverse=True)
+        return results[:30] # Return top 30 highest demand stocks
     except Exception as e:
         print(f"Error fetching IDX data: {e}")
         return []

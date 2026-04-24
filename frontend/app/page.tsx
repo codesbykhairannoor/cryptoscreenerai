@@ -207,16 +207,37 @@ export default function Home() {
                           <p className="text-[10px] text-emerald-400 font-bold">+{asset.change || asset.priceChangePercent}%</p>
                         </td>
                         <td className="px-6 py-5 hidden md:table-cell">
-                          <p className="text-emerald-300 font-bold">{asset.whale_ratio ? `${asset.whale_ratio}x Ratio` : 'Strong Trend'}</p>
-                          <p className="text-[10px] text-gray-500">RSI: {asset.rsi_15m}</p>
+                          {activeTab === 'idx' ? (
+                            <div className="flex flex-col gap-1.5">
+                              <div className="flex justify-between items-center w-full">
+                                <span className="text-[10px] font-black text-blue-400">WHALE DEMAND</span>
+                                <span className="text-[10px] font-black text-white">{asset.demand_score}%</span>
+                              </div>
+                              <div className="h-1.5 w-32 bg-gray-800 rounded-full overflow-hidden border border-gray-700">
+                                <div 
+                                  className={`h-full transition-all duration-1000 bg-gradient-to-r from-blue-600 to-cyan-400`}
+                                  style={{ width: `${asset.demand_score}%` }}
+                                />
+                              </div>
+                              <div className="flex gap-2 mt-0.5">
+                                <span className="text-[9px] px-1.5 py-0.5 bg-blue-500/10 text-blue-300 rounded font-bold border border-blue-500/10">Vol: {asset.relative_volume?.toFixed(1)}x</span>
+                                <span className="text-[9px] px-1.5 py-0.5 bg-cyan-500/10 text-cyan-300 rounded font-bold border border-cyan-500/10">RSI: {asset.rsi?.toFixed(0)}</span>
+                              </div>
+                            </div>
+                          ) : (
+                            <>
+                              <p className="text-emerald-300 font-bold">{asset.whale_ratio ? `${asset.whale_ratio}x Ratio` : 'Strong Trend'}</p>
+                              <p className="text-[10px] text-gray-500">RSI: {asset.rsi_15m || asset.rsi?.toFixed(0)}</p>
+                            </>
+                          )}
                         </td>
                         <td className="px-6 py-5 font-mono text-[11px]">
                           <p className="text-emerald-400 font-bold">TP: {asset.tp_price}</p>
                           <p className="text-red-400 font-bold">SL: {asset.sl_price}</p>
                         </td>
                         <td className="px-6 py-5">
-                          <span className={`px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tighter shadow-sm ${asset.trade_signal.includes('BUY') ? 'bg-emerald-600 text-white' : asset.trade_signal.includes('DANGER') ? 'bg-red-600 text-white' : 'bg-gray-800 text-gray-400'}`}>
-                            {asset.trade_signal}
+                          <span className={`px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-tighter shadow-sm ${asset.trade_signal.includes('BUY') || (asset.demand_score > 70) ? 'bg-emerald-600 text-white' : asset.trade_signal.includes('DANGER') ? 'bg-red-600 text-white' : 'bg-gray-800 text-gray-400'}`}>
+                            {asset.demand_score > 70 ? `🔥 WHALE BUY (${asset.demand_score}%)` : asset.trade_signal}
                           </span>
                         </td>
                         <td className="px-6 py-5 text-center">

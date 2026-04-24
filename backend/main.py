@@ -189,30 +189,28 @@ def get_idx(timeframe: str = "15m"):
                             f"Bearish ({stock['htf']} Confirmed)" if (not is_uptrend_cur and not is_uptrend_htf) else \
                             "Neutral/Transition"
             
-            # Demand Calculation (Bid Wall for IDX)
-            # Bid size is in number of shares (lot x 100), Avg Vol is 10d avg
-            # Let's normalize it
-            demand_ratio = (bid_size / (avg_vol / 400)) # Simple proxy for 'unusual demand' in current snapshot
-            stock['whale_ratio'] = round(demand_ratio, 2)
+            # Use the advanced demand score from get_idx_data
+            demand_score = stock.get('demand_score', 0)
+            stock['whale_ratio'] = round(stock.get('relative_volume', 1.0), 2)
             
             # Confidence Logic for IDX
             confidence = 40
             if is_uptrend_cur and is_uptrend_htf: confidence += 20
-            if demand_ratio > 1.5: confidence += 20 # Strong Demand
-            if rsi < 45: confidence += 10
+            if demand_score > 60: confidence += 20 
+            if stock.get('cmf', 0) > 0.1: confidence += 10
             
             stock['entry_price'] = round(last_price, 0)
             stock['sl_price'] = round(last_price - (2.0 * atr), 0) if atr else round(last_price * 0.95, 0)
             stock['tp_price'] = round(last_price + (5.0 * atr), 0) if atr else round(last_price * 1.10, 0)
             
-            if demand_ratio > 2.0 and rsi < 50:
-                stock['trade_signal'] = f"🔥 WHALE BUY (Win Prob: {confidence}%)"
+            if demand_score > 70:
+                stock['trade_signal'] = f"🔥 WHALE ACCUMULATION ({confidence}% Win)"
             elif rsi < 40 and is_uptrend_htf:
-                stock['trade_signal'] = f"🔥 BUY ACCUMULATION (Win Prob: {confidence}%)"
+                stock['trade_signal'] = f"📈 TREND BUY ({confidence}% Win)"
             elif rsi > 70:
-                stock['trade_signal'] = f"⚠️ OVERBOUGHT (Win Prob: {confidence-20}%)"
+                stock['trade_signal'] = f"⚠️ OVERBOUGHT ({confidence-20}% Win)"
             else:
-                stock['trade_signal'] = f"⚖️ Neutral (Win Prob: {confidence}%)"
+                stock['trade_signal'] = f"⚖️ Neutral ({confidence}% Win)"
 
             stock['rsi_15m'] = rsi
             
