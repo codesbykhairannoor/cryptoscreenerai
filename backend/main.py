@@ -160,7 +160,9 @@ def get_forex(timeframe: str = "15m"):
 @app.get("/api/idx-stocks")
 def get_idx(timeframe: str = "15m"):
     try:
+        from data_fetcher import get_idx_market_status
         stocks = get_idx_data(interval=timeframe)
+        market_status = get_idx_market_status()
         
         for stock in stocks:
             rsi = stock['rsi']
@@ -168,6 +170,8 @@ def get_idx(timeframe: str = "15m"):
             ema_200_cur = stock['ema_200']
             ema_200_htf = stock['ema_200_htf']
             last_price = float(stock['lastPrice'])
+            bid_size = stock.get('bid_size', 0)
+            avg_vol = stock.get('avg_volume', 1)
             
             is_uptrend_cur = last_price > ema_200_cur
             is_uptrend_htf = last_price > ema_200_htf
@@ -176,29 +180,36 @@ def get_idx(timeframe: str = "15m"):
                             f"Bearish ({stock['htf']} Confirmed)" if (not is_uptrend_cur and not is_uptrend_htf) else \
                             "Neutral/Transition"
             
+            # Demand Calculation (Bid Wall for IDX)
+            # Bid size is in number of shares (lot x 100), Avg Vol is 10d avg
+            # Let's normalize it
+            demand_ratio = (bid_size / (avg_vol / 400)) # Simple proxy for 'unusual demand' in current snapshot
+            stock['whale_ratio'] = round(demand_ratio, 2)
+            
             # Confidence Logic for IDX
             confidence = 40
-            if is_uptrend_cur and is_uptrend_htf: confidence += 25
-            if rsi < 45: confidence += 15
+            if is_uptrend_cur and is_uptrend_htf: confidence += 20
+            if demand_ratio > 1.5: confidence += 20 # Strong Demand
+            if rsi < 45: confidence += 10
             
             stock['entry_price'] = round(last_price, 0)
-            # Stocks use smaller ATR multiples usually, but we'll stick to 2x/5x for consistency
             stock['sl_price'] = round(last_price - (2.0 * atr), 0) if atr else round(last_price * 0.95, 0)
             stock['tp_price'] = round(last_price + (5.0 * atr), 0) if atr else round(last_price * 1.10, 0)
             
-            if rsi < 40 and is_uptrend_htf:
+            if demand_ratio > 2.0 and rsi < 50:
+                stock['trade_signal'] = f"🔥 WHALE BUY (Win Prob: {confidence}%)"
+            elif rsi < 40 and is_uptrend_htf:
                 stock['trade_signal'] = f"🔥 BUY ACCUMULATION (Win Prob: {confidence}%)"
             elif rsi > 70:
                 stock['trade_signal'] = f"⚠️ OVERBOUGHT (Win Prob: {confidence-20}%)"
-                stock['sl_price'] = round(last_price + (2.0 * atr), 0) if atr else round(last_price * 1.05, 0)
-                stock['tp_price'] = round(last_price - (5.0 * atr), 0) if atr else round(last_price * 0.90, 0)
             else:
                 stock['trade_signal'] = f"⚖️ Neutral (Win Prob: {confidence}%)"
 
-            stock['rsi_15m'] = rsi # UI mapping
+            stock['rsi_15m'] = rsi
             
         return {
             "status": "success",
+            "market_status": market_status,
             "data": stocks
         }
     except Exception as e:

@@ -10,6 +10,7 @@ export default function Home() {
   const [cryptoData, setCryptoData] = useState<any[]>([]);
   const [forexData, setForexData] = useState<any[]>([]);
   const [idxData, setIdxData] = useState<any[]>([]);
+  const [idxStatus, setIdxStatus] = useState<string>("UNKNOWN");
   const [tradeHistory, setTradeHistory] = useState<any[]>([]);
   const [performance, setPerformance] = useState<{wins: number, losses: number, pending: number, win_rate: number} | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<string>("Menunggu data untuk dianalisis...");
@@ -32,7 +33,11 @@ export default function Home() {
         if (res.ok) setForexData((await res.json()).data || []);
       } else if (activeTab === 'idx') {
         const res = await fetch(`${backendUrl}/api/idx-stocks?timeframe=${timeframe}`);
-        if (res.ok) setIdxData((await res.json()).data || []);
+        if (res.ok) {
+          const json = await res.json();
+          setIdxData(json.data || []);
+          setIdxStatus(json.market_status || "UNKNOWN");
+        }
       }
       
       const [resPerf, resHistory] = await Promise.all([
@@ -147,7 +152,16 @@ export default function Home() {
           ].map(tab => (
             <button key={tab.id} onClick={() => {setActiveTab(tab.id); setExpandedRow(null);}}
               className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl font-black text-xs md:text-sm transition-all ${activeTab === tab.id ? 'bg-blue-600 text-white shadow-2xl scale-[1.02]' : 'text-gray-500 hover:text-gray-300'}`}>
-              <span>{tab.icon}</span> <span className="hidden sm:inline">{tab.label.toUpperCase()}</span>
+              <div className="flex flex-col items-center">
+                <div className="flex items-center gap-2">
+                  <span>{tab.icon}</span> <span>{tab.label.toUpperCase()}</span>
+                </div>
+                {tab.id === 'idx' && (
+                  <span className={`text-[8px] mt-0.5 px-1.5 py-0.5 rounded ${idxStatus.includes('OPEN') ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                    {idxStatus}
+                  </span>
+                )}
+              </div>
             </button>
           ))}
         </nav>

@@ -117,11 +117,38 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
         except Exception as e:
             print("Failed to fetch exact TV price, using indicators proxy price:", e)
         
+def get_idx_market_status():
+    from datetime import datetime, time
+    import pytz
+    
+    jakarta_tz = pytz.timezone('Asia/Jakarta')
+    now = datetime.now(jakarta_tz)
+    
+    # Monday = 0, Sunday = 6
+    if now.weekday() >= 5: # Weekend
+        return "CLOSED (Weekend)"
+        
+    current_time = now.time()
+    
+    # Session 1: 09:00 - 11:30
+    # Session 2: 13:30 - 16:00 (Fri 14:00 - 16:00)
+    s1_start = time(9, 0)
+    s1_end = time(11, 30)
+    s2_start = time(13, 30) if now.weekday() != 4 else time(14, 0)
+    s2_end = time(16, 0)
+    
+    if s1_start <= current_time <= s1_end:
+        return "OPEN (Session 1)"
+    elif s1_end < current_time < s2_start:
+        return "CLOSED (Break)"
+    elif s2_start <= current_time <= s2_end:
+        return "OPEN (Session 2)"
+    else:
+        return "CLOSED"
+
 def get_idx_data(interval="15m"):
     try:
-        # Use TradingView Scanner for Indonesia (IDX)
         tv_url = 'https://scanner.tradingview.com/indonesia/scan'
-        # We want top liquid stocks
         payload = {
             "filter": [
                 {"left": "market_cap_basic", "operation": "nempty"},
@@ -130,15 +157,14 @@ def get_idx_data(interval="15m"):
             "options": {"lang": "en"},
             "markets": ["indonesia"],
             "symbols": {"query": {"types": []}, "tickers": []},
-            "columns": ["logoid", "name", "close", "change", "change_abs", "RTC_RSI", "ATR", "EMA200", "description", "volume"],
+            "columns": [
+                "logoid", "name", "close", "change", "change_abs", 
+                "RTC_RSI", "ATR", "EMA200", "description", "volume",
+                "bid_size", "ask_size", "average_volume_10d_calc"
+            ],
             "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"},
-            "range": [0, 15]
+            "range": [0, 20]
         }
-        
-        # Adjust column names based on interval if needed (TradingView defaults to 1d usually in simple scanner)
-        # For simplicity, we use the scanner's default and approximate for other TFs if needed, 
-        # or just fetch the klines for the top ones to be super accurate.
-        # Let's fetch the klines for the top 10 stocks found to maintain MTF accuracy.
         
         res = requests.post(tv_url, json=payload, timeout=5)
         data = res.json()
@@ -149,10 +175,6 @@ def get_idx_data(interval="15m"):
                 symbol = item['s'].split(':')[-1]
                 cols = item['d']
                 
-                # We need MTF confirmation, so we'll call get_technical_indicators for each (cached/efficiently)
-                # But since we have many, let's just use the scanner data for now to avoid 15 separate requests
-                # unless we want to be "Super Smart". Let's fetch for the top 5 only.
-                
                 results.append({
                     "symbol": symbol,
                     "name": cols[8],
@@ -161,7 +183,11 @@ def get_idx_data(interval="15m"):
                     "rsi": cols[5] or 50.0,
                     "atr": cols[6] or (cols[2] * 0.01),
                     "ema_200": cols[7] or cols[2],
-                    "ema_200_htf": cols[7] or cols[2], # Fallback
+                    "ema_200_htf": cols[7] or cols[2],
+                    "volume": cols[9] or 0,
+                    "bid_size": cols[10] or 0,
+                    "ask_size": cols[11] or 0,
+                    "avg_volume": cols[12] or 1,
                     "htf": "1h"
                 })
         
