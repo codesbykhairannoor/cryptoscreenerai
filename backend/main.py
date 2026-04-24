@@ -145,16 +145,23 @@ def get_forex(timeframe: str = "15m"):
         if is_uptrend_cur and is_uptrend_htf: confidence += 25
         if rsi < 35: confidence += 20
         
+        # Tighten TP/SL for Gold (Tighter for Scalping)
+        # 15m: Tighter SL (~10-20 pips)
+        # 1h: Medium SL
+        # 1d: Standard Swing SL
+        sl_mult = 0.8 if timeframe == "15m" else 1.5 if timeframe == "1h" else 2.5
+        tp_mult = 2.0 if timeframe == "15m" else 4.0 if timeframe == "1h" else 6.0
+        
         asset_data['entry_price'] = round(last_price, 2)
-        asset_data['sl_price'] = round(last_price - (2.0 * atr), 2) if atr else round(last_price * 0.99, 2)
-        asset_data['tp_price'] = round(last_price + (5.0 * atr), 2) if atr else round(last_price * 1.02, 2)
+        asset_data['sl_price'] = round(last_price - (sl_mult * atr), 2) if atr else round(last_price - 1.5, 2)
+        asset_data['tp_price'] = round(last_price + (tp_mult * atr), 2) if atr else round(last_price + 4.0, 2)
         
         if rsi < 35 and is_uptrend_htf:
             asset_data['trade_signal'] = f"🔥 OVERSOLD (Win Prob: {confidence}%)"
         elif rsi > 70 and not is_uptrend_htf:
             asset_data['trade_signal'] = f"⚠️ OVERBOUGHT (Win Prob: {confidence-10}%)"
-            asset_data['sl_price'] = round(last_price + (2.0 * atr), 2) if atr else round(last_price * 1.01, 2)
-            asset_data['tp_price'] = round(last_price - (5.0 * atr), 2) if atr else round(last_price * 0.98, 2)
+            asset_data['sl_price'] = round(last_price + (sl_mult * atr), 2) if atr else round(last_price + 1.5, 2)
+            asset_data['tp_price'] = round(last_price - (tp_mult * atr), 2) if atr else round(last_price - 4.0, 2)
         else:
             asset_data['trade_signal'] = f"⚖️ Neutral (Win Prob: {confidence}%)"
         

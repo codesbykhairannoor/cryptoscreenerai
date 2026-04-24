@@ -160,9 +160,8 @@ def get_idx_data(interval="15m"):
         tv_url = 'https://scanner.tradingview.com/indonesia/scan'
         payload = {
             "filter": [
-                {"left": "volume", "operation": "nempty"},
                 {"left": "type", "operation": "in_range", "right": ["stock", "dr", "fund"]},
-                {"left": "close", "operation": "greater", "right": 50} # Avoid penny stocks below 50
+                {"left": "close", "operation": "greater", "right": 50} 
             ],
             "options": {"lang": "en"},
             "markets": ["indonesia"],
@@ -173,12 +172,13 @@ def get_idx_data(interval="15m"):
                 "bid_size", "ask_size", "average_volume_10d_calc",
                 "relative_volume_10d_calc", "ChaikinMoneyFlow", "MoneyFlow"
             ],
-            "sort": {"sortBy": "volume", "sortOrder": "desc"},
-            "range": [0, 100] # Scan more stocks to find gems
+            "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"}, # More reliable sort for general listing
+            "range": [0, 100] 
         }
         
         res = requests.post(tv_url, json=payload, timeout=5)
         data = res.json()
+        print(f"IDX Fetch: Found {len(data.get('data', []))} stocks")
         
         results = []
         if data.get('data'):
