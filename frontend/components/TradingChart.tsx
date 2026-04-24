@@ -9,9 +9,9 @@ export default function TradingChart({
     slPrice 
 }: { 
     symbol: string, 
-    entryPrice: number, 
-    tpPrice: number, 
-    slPrice: number 
+    entryPrice?: number, 
+    tpPrice?: number, 
+    slPrice?: number 
 }) {
     const chartContainerRef = useRef<HTMLDivElement>(null);
 

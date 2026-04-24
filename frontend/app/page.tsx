@@ -224,7 +224,16 @@ export default function Home() {
                         </td>
                       </tr>
                       {isExp && (
-                        <tr className="bg-black/60"><td colSpan={6} className="p-6 border-b border-gray-800"><TradingChart symbol={asset.symbol} /></td></tr>
+                        <tr className="bg-black/60">
+                          <td colSpan={6} className="p-6 border-b border-gray-800">
+                            <TradingChart 
+                              symbol={asset.symbol} 
+                              entryPrice={asset.entry_price || 0} 
+                              tpPrice={asset.tp_price || 0} 
+                              slPrice={asset.sl_price || 0} 
+                            />
+                          </td>
+                        </tr>
                       )}
                     </React.Fragment>
                   )
