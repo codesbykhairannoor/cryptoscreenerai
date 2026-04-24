@@ -1,6 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from data_fetcher import fetch_all_tickers, get_order_book_details, get_technical_indicators, get_forex_data
+from data_fetcher import (
+    fetch_all_tickers, get_order_book_details, get_technical_indicators, 
+    get_forex_data, get_idx_data, get_idx_market_status
+)
 from ai_model import analyze_and_sort
 from database import init_db, log_trade, check_pending_trades, get_performance_stats
 import threading
@@ -157,10 +160,16 @@ def get_forex(timeframe: str = "15m"):
         
         asset_data['rsi_15m'] = rsi # Keep legacy key for UI
         
+        return {
+            "status": "success",
+            "data": [asset_data]
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @app.get("/api/idx-stocks")
 def get_idx(timeframe: str = "15m"):
     try:
-        from data_fetcher import get_idx_market_status
         stocks = get_idx_data(interval=timeframe)
         market_status = get_idx_market_status()
         
