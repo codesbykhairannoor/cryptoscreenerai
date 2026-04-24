@@ -9,6 +9,7 @@ export default function Home() {
   
   const [cryptoData, setCryptoData] = useState<any[]>([]);
   const [forexData, setForexData] = useState<any[]>([]);
+  const [idxData, setIdxData] = useState<any[]>([]);
   const [tradeHistory, setTradeHistory] = useState<any[]>([]);
   const [performance, setPerformance] = useState<{wins: number, losses: number, pending: number, win_rate: number} | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<string>("Menunggu data untuk dianalisis...");
@@ -35,6 +36,13 @@ export default function Home() {
       if (resForex.ok) {
         const json = await resForex.json();
         setForexData(json.data || []);
+      }
+
+      // Fetch IDX Data
+      const resIdx = await fetch(`${backendUrl}/api/idx-stocks?timeframe=${timeframe}`, { cache: 'no-store' });
+      if (resIdx.ok) {
+        const json = await resIdx.json();
+        setIdxData(json.data || []);
       }
       
       // Fetch Performance Data
@@ -456,6 +464,65 @@ export default function Home() {
                 )})}
               </tbody>
             </table>
+          </div>
+        </section>
+
+        {/* INDONESIA STOCKS (IDX) SCREENER */}
+        <section className="bg-gray-900/50 rounded-2xl border border-gray-800 overflow-hidden shadow-2xl backdrop-blur-sm mb-10">
+          <div className="px-6 py-5 bg-gradient-to-r from-gray-900 to-gray-800 border-b border-gray-800 flex justify-between items-center">
+            <div>
+              <h2 className="text-xl font-bold text-white flex items-center gap-2">
+                <span className="text-red-500">🇮🇩</span> Indonesia Stocks (IDX)
+              </h2>
+              <p className="text-gray-500 text-[10px] mt-0.5">Top Blue Chips • 15m Delay</p>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm text-gray-400">
+                  <thead className="text-xs text-gray-400 uppercase bg-gray-900 border-b border-gray-800">
+                      <tr>
+                          <th className="px-4 py-4 font-medium">Stock</th>
+                          <th className="px-4 py-4 font-medium">Price</th>
+                          <th className="px-4 py-4 font-medium text-blue-300">Signal</th>
+                          <th className="px-4 py-4 text-center">Trade</th>
+                      </tr>
+                  </thead>
+                  <tbody>
+                      {idxData.map((stock) => (
+                          <tr key={stock.symbol} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
+                              <td className="px-4 py-4">
+                                  <div className="font-bold text-white">{stock.symbol}</div>
+                                  <div className="text-[9px] text-gray-500 truncate max-w-[100px]">{stock.name}</div>
+                              </td>
+                              <td className="px-4 py-4">
+                                  <div className="font-mono font-bold text-white text-base">
+                                      Rp {parseFloat(stock.lastPrice).toLocaleString()}
+                                  </div>
+                                  <span className={`text-[10px] ${parseFloat(stock.change) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                      {parseFloat(stock.change) >= 0 ? '▲' : '▼'} {Math.abs(parseFloat(stock.change)).toFixed(2)}%
+                                  </span>
+                              </td>
+                              <td className="px-4 py-4">
+                                  <span className={`px-2 py-1 rounded text-[9px] font-bold uppercase tracking-wider block text-center ${
+                                      stock.trade_signal.includes('BUY') ? 'bg-emerald-600 text-white' : 
+                                      stock.trade_signal.includes('OVERBOUGHT') ? 'bg-red-600 text-white' : 
+                                      'bg-gray-800 text-gray-500'
+                                  }`}>
+                                      {stock.trade_signal}
+                                  </span>
+                              </td>
+                              <td className="px-4 py-4 text-center">
+                                  <button 
+                                      onClick={() => handlePickTrade(stock)}
+                                      className="bg-emerald-500/20 hover:bg-emerald-500/40 text-emerald-400 p-2 rounded-full border border-emerald-500/30 transition-all text-xs"
+                                  >
+                                      ✅
+                                  </button>
+                              </td>
+                          </tr>
+                      ))}
+                  </tbody>
+              </table>
           </div>
         </section>
 

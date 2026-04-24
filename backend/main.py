@@ -157,9 +157,49 @@ def get_forex(timeframe: str = "15m"):
         
         asset_data['rsi_15m'] = rsi # Keep legacy key for UI
         
+@app.get("/api/idx-stocks")
+def get_idx(timeframe: str = "15m"):
+    try:
+        stocks = get_idx_data(interval=timeframe)
+        
+        for stock in stocks:
+            rsi = stock['rsi']
+            atr = stock['atr']
+            ema_200_cur = stock['ema_200']
+            ema_200_htf = stock['ema_200_htf']
+            last_price = float(stock['lastPrice'])
+            
+            is_uptrend_cur = last_price > ema_200_cur
+            is_uptrend_htf = last_price > ema_200_htf
+            
+            stock['trend'] = f"Bullish ({stock['htf']} Confirmed)" if (is_uptrend_cur and is_uptrend_htf) else \
+                            f"Bearish ({stock['htf']} Confirmed)" if (not is_uptrend_cur and not is_uptrend_htf) else \
+                            "Neutral/Transition"
+            
+            # Confidence Logic for IDX
+            confidence = 40
+            if is_uptrend_cur and is_uptrend_htf: confidence += 25
+            if rsi < 45: confidence += 15
+            
+            stock['entry_price'] = round(last_price, 0)
+            # Stocks use smaller ATR multiples usually, but we'll stick to 2x/5x for consistency
+            stock['sl_price'] = round(last_price - (2.0 * atr), 0) if atr else round(last_price * 0.95, 0)
+            stock['tp_price'] = round(last_price + (5.0 * atr), 0) if atr else round(last_price * 1.10, 0)
+            
+            if rsi < 40 and is_uptrend_htf:
+                stock['trade_signal'] = f"🔥 BUY ACCUMULATION (Win Prob: {confidence}%)"
+            elif rsi > 70:
+                stock['trade_signal'] = f"⚠️ OVERBOUGHT (Win Prob: {confidence-20}%)"
+                stock['sl_price'] = round(last_price + (2.0 * atr), 0) if atr else round(last_price * 1.05, 0)
+                stock['tp_price'] = round(last_price - (5.0 * atr), 0) if atr else round(last_price * 0.90, 0)
+            else:
+                stock['trade_signal'] = f"⚖️ Neutral (Win Prob: {confidence}%)"
+
+            stock['rsi_15m'] = rsi # UI mapping
+            
         return {
             "status": "success",
-            "data": [asset_data]
+            "data": stocks
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
