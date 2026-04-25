@@ -167,10 +167,9 @@ def get_idx_data(interval="15m"):
             "markets": ["indonesia"],
             "symbols": {"query": {"types": []}, "tickers": []},
             "columns": [
-                "logoid", "name", "close", "change", "change_abs", 
-                "RTC_RSI", "ATR", "EMA200", "description", "volume",
-                "bid_size", "ask_size", "average_volume_10d_calc",
-                "relative_volume_10d_calc", "ChaikinMoneyFlow", "MoneyFlow"
+                "name", "close", "change", "RSI", "ATR", "EMA200", 
+                "description", "volume", "bid_size", "ask_size", 
+                "average_volume_10d_calc", "relative_volume_10d_calc", "ChaikinMoneyFlow"
             ],
             "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"}, # More reliable sort for general listing
             "range": [0, 100] 
@@ -178,53 +177,57 @@ def get_idx_data(interval="15m"):
         
         res = requests.post(tv_url, json=payload, timeout=5)
         data = res.json()
-        print(f"IDX Fetch: Found {len(data.get('data', []))} stocks")
+        
+        # Null-safe data retrieval
+        raw_stocks = data.get('data') or []
+        print(f"IDX Fetch: Found {len(raw_stocks)} stocks")
         
         results = []
-        if data.get('data'):
-            for item in data['data']:
-                symbol = item['s'].split(':')[-1]
-                cols = item['d']
+        for item in raw_stocks:
+            symbol = item['s'].split(':')[-1]
+            cols = item['d']
+            
+            # Defensive check for column length
+            if len(cols) < 12: continue
+            
+            # Calculate buying demand score
+            bid_size = cols[8] or 0
+            ask_size = cols[9] or 0
+            
+            if bid_size == 0 and ask_size == 0:
+                bid_ask_ratio = 1.0
+            else:
+                bid_ask_ratio = bid_size / ask_size if ask_size > 0 else 2.0
                 
-                # Calculate buying demand score
-                bid_size = cols[10] or 0
-                ask_size = cols[11] or 0
-                
-                # If market is closed, bid/ask are 0. We use a more balanced proxy.
-                if bid_size == 0 and ask_size == 0:
-                    bid_ask_ratio = 1.0
-                else:
-                    bid_ask_ratio = bid_size / ask_size if ask_size > 0 else 2.0
-                    
-                rel_vol = cols[13] or 0
-                cmf = cols[14] or 0
-                
-                demand_score = 0
-                if bid_ask_ratio > 1.5: demand_score += 40
-                elif bid_ask_ratio > 1.0: demand_score += 20
-                
-                if rel_vol > 1.2: demand_score += 30
-                if cmf > 0.05: demand_score += 30
-                elif cmf > 0: demand_score += 15
-                
-                results.append({
-                    "symbol": symbol,
-                    "name": cols[1],
-                    "lastPrice": cols[2],
-                    "change": cols[3],
-                    "rsi": cols[5] or 50.0,
-                    "atr": cols[6] or (cols[2] * 0.01),
-                    "ema_200": cols[7] or cols[2],
-                    "ema_200_htf": cols[7] or cols[2],
-                    "volume": cols[9] or 0,
-                    "bid_size": bid_size,
-                    "ask_size": ask_size,
-                    "avg_volume": cols[12] or 1,
-                    "relative_volume": rel_vol,
-                    "cmf": cmf,
-                    "demand_score": demand_score,
-                    "htf": "1h"
-                })
+            rel_vol = cols[11] or 0
+            cmf = cols[12] or 0
+            
+            demand_score = 0
+            if bid_ask_ratio > 1.5: demand_score += 40
+            elif bid_ask_ratio > 1.0: demand_score += 20
+            
+            if rel_vol > 1.2: demand_score += 30
+            if cmf > 0.05: demand_score += 30
+            elif cmf > 0: demand_score += 15
+            
+            results.append({
+                "symbol": symbol,
+                "name": cols[0], # "name"
+                "lastPrice": cols[1], # "close"
+                "change": cols[2], # "change"
+                "rsi": cols[3] or 50.0, # "RSI"
+                "atr": cols[4] or (cols[1] * 0.01) if cols[1] else 0, # "ATR"
+                "ema_200": cols[5] or cols[1], # "EMA200"
+                "ema_200_htf": cols[5] or cols[1],
+                "volume": cols[7] or 0, # "volume"
+                "bid_size": bid_size,
+                "ask_size": ask_size,
+                "avg_volume": cols[10] or 1, # "average_volume_10d_calc"
+                "relative_volume": rel_vol,
+                "cmf": cmf,
+                "demand_score": demand_score,
+                "htf": "1h"
+            })
         
         # Sort by demand score to show the "Best" stocks first
         results.sort(key=lambda x: x['demand_score'], reverse=True)
