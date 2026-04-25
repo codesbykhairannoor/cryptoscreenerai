@@ -184,28 +184,36 @@ def get_idx_data(interval="15m"):
             symbol = item['s'].split(':')[-1]
             cols = item['d']
             
-            # Map columns safely (Ultra Compatible Indexing)
-            # 0: name, 1: close, 2: change, 3: volume, 4: rel_vol, 5: mkt_cap, 6: desc
-            
+            # Map columns: 0: name, 1: close, 2: change, 3: volume, 4: rel_vol, 5: mkt_cap, 6: desc
             last_price = cols[1] or 0
             if last_price == 0: continue
             
             rel_vol = cols[4] or 0
+            change = cols[2] or 0
+            mkt_cap = cols[5] or 0
             
-            # Baseline Technicals (Calculated locally if API fails)
-            rsi = 50.0 # Neutral baseline
+            # Smart Analysis: Weighted Demand Score
+            # High Volume Spike + Positive Momentum + Solid Market Cap
+            demand_score = 0
+            if rel_vol > 2.0: demand_score += 40
+            elif rel_vol > 1.2: demand_score += 20
+            
+            if change > 3.0: demand_score += 40
+            elif change > 0: demand_score += 20
+            
+            if mkt_cap > 1e12: demand_score += 20 # Prefer stocks with Cap > 1 Trillion IDR
+            
+            # Local technical estimates
+            rsi = 50 + (change * 2) # Synthetic RSI proxy
+            rsi = max(min(rsi, 85), 15)
             atr = last_price * 0.02
             ema_200 = last_price
-            
-            demand_score = 0
-            if rel_vol > 1.5: demand_score += 50
-            if cols[2] > 0: demand_score += 50 # Positive Momentum
             
             results.append({
                 "symbol": symbol,
                 "name": cols[0],
                 "lastPrice": last_price,
-                "change": cols[2],
+                "change": change,
                 "rsi": rsi,
                 "atr": atr,
                 "ema_200": ema_200,
@@ -220,8 +228,9 @@ def get_idx_data(interval="15m"):
                 "htf": "1h"
             })
         
+        # Sort by the new smart demand score
         results.sort(key=lambda x: x['demand_score'], reverse=True)
-        return results[:40]
+        return results[:15] # Return only the Top 15 Best Stocks
     except Exception as e:
         print(f"Error fetching IDX data (Ultra Compatible): {e}")
         return []
