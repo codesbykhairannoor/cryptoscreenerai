@@ -2,6 +2,10 @@ import requests
 import pandas as pd
 import yfinance as yf
 import numpy as np
+import json
+from datetime import datetime, time
+import pytz
+from patterns import detect_candle_patterns
 
 def fetch_all_tickers():
     url = "https://data-api.binance.vision/api/v3/ticker/24hr"
@@ -89,11 +93,22 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         ema_200_cur = closes_cur.ewm(span=200, adjust=False).mean()
         ema_200_htf = closes_htf.ewm(span=200, adjust=False).mean()
         
+        # Pattern Detection
+        pattern = "NONE"
+        if len(df_cur) >= 2:
+            last = df_cur.iloc[-1]
+            prev = df_cur.iloc[-2]
+            pattern = detect_candle_patterns(
+                last['open'], last['high'], last['low'], last['close'],
+                prev['open'], prev['high'], prev['low'], prev['close']
+            )
+            
         return {
             "rsi": round(rsi_cur.iloc[-1], 2),
             "atr": atr_cur.iloc[-1],
             "ema_200": ema_200_cur.iloc[-1],
             "ema_200_htf": ema_200_htf.iloc[-1],
+            "candle_pattern": pattern,
             "htf": htf
         }
     except Exception as e:
@@ -161,7 +176,7 @@ def get_idx_data(interval="15m"):
         payload = {
             "columns": [
                 "name", "close", "change", "volume", "relative_volume_10d_calc", 
-                "market_cap_basic", "description"
+                "market_cap_basic", "description", "open", "high", "low"
             ],
             "filter": [
                 {"left": "is_primary", "operation": "equal", "right": True}
@@ -184,16 +199,25 @@ def get_idx_data(interval="15m"):
             symbol = item['s'].split(':')[-1]
             cols = item['d']
             
-            # Map columns: 0: name, 1: close, 2: change, 3: volume, 4: rel_vol, 5: mkt_cap, 6: desc
+            # Map columns: 0: name, 1: close, 2: change, 3: volume, 4: rel_vol, 5: mkt_cap, 6: desc, 7: open, 8: high, 9: low
             last_price = cols[1] or 0
             if last_price == 0: continue
+            
+            open_price = cols[7] or last_price
+            high_price = cols[8] or last_price
+            low_price = cols[9] or last_price
+            
+            # Detect Patterns (Current Candle Focus)
+            candle_pattern = detect_candle_patterns(
+                open_price, high_price, low_price, last_price,
+                open_price, high_price, low_price, last_price # Fallback same candle
+            )
             
             rel_vol = cols[4] or 0
             change = cols[2] or 0
             mkt_cap = cols[5] or 0
             
             # Smart Analysis: Weighted Demand Score
-            # High Volume Spike + Positive Momentum + Solid Market Cap
             demand_score = 0
             if rel_vol > 2.0: demand_score += 40
             elif rel_vol > 1.2: demand_score += 20
@@ -201,7 +225,9 @@ def get_idx_data(interval="15m"):
             if change > 3.0: demand_score += 40
             elif change > 0: demand_score += 20
             
-            if mkt_cap > 1e12: demand_score += 20 # Prefer stocks with Cap > 1 Trillion IDR
+            if candle_pattern != "NONE": demand_score += 10 # Bonus for technical patterns
+            
+            if mkt_cap > 1e12: demand_score += 10 # Prefer stocks with Cap > 1 Trillion IDR
             
             # Local technical estimates
             rsi = 50 + (change * 2) # Synthetic RSI proxy
@@ -225,6 +251,7 @@ def get_idx_data(interval="15m"):
                 "relative_volume": rel_vol,
                 "cmf": 0,
                 "demand_score": demand_score,
+                "candle_pattern": candle_pattern,
                 "htf": "1h"
             })
         

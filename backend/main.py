@@ -101,7 +101,12 @@ def get_top_coins(timeframe: str = "15m"):
             coin['sl_price'] = round(last_price - (2.0 * atr), 4) if atr else round(last_price * 0.97, 4)
             coin['tp_price'] = round(last_price + (5.0 * atr), 4) if atr else round(last_price * 1.08, 4)
 
-            if ob['ratio'] > 1.5 and rsi < 40 and is_uptrend_htf:
+            pattern = tech.get('candle_pattern', "NONE")
+            coin['candle_pattern'] = pattern
+
+            if pattern != "NONE":
+                coin['trade_signal'] = f"✨ {pattern} ({confidence}% Win)"
+            elif ob['ratio'] > 1.5 and rsi < 40 and is_uptrend_htf:
                 coin['trade_signal'] = f"🔥 STRONG BUY ({timeframe} Prob: {confidence}%)"
             elif ob['ratio'] > 2.0 and rsi < 30:
                 coin['trade_signal'] = f"⚡ FAST SCALP ({timeframe} Prob: {confidence}%)"
@@ -156,14 +161,18 @@ def get_forex(timeframe: str = "15m"):
         asset_data['sl_price'] = round(last_price - (sl_mult * atr), 2) if atr else round(last_price - 1.5, 2)
         asset_data['tp_price'] = round(last_price + (tp_mult * atr), 2) if atr else round(last_price + 4.0, 2)
         
-        if rsi < 35 and is_uptrend_htf:
-            asset_data['trade_signal'] = f"🔥 OVERSOLD (Win Prob: {confidence}%)"
+        pattern = asset_data.get('candle_pattern', "NONE")
+        
+        if pattern != "NONE":
+            asset_data['trade_signal'] = f"✨ {pattern} ({confidence}% Win)"
+        elif rsi < 35 and is_uptrend_htf:
+            asset_data['trade_signal'] = f"🔥 OVERSOLD ({confidence}% Win)"
         elif rsi > 70 and not is_uptrend_htf:
-            asset_data['trade_signal'] = f"⚠️ OVERBOUGHT (Win Prob: {confidence-10}%)"
+            asset_data['trade_signal'] = f"⚠️ OVERBOUGHT ({confidence-10}% Win)"
             asset_data['sl_price'] = round(last_price + (sl_mult * atr), 2) if atr else round(last_price + 1.5, 2)
             asset_data['tp_price'] = round(last_price - (tp_mult * atr), 2) if atr else round(last_price - 4.0, 2)
         else:
-            asset_data['trade_signal'] = f"⚖️ Neutral (Win Prob: {confidence}%)"
+            asset_data['trade_signal'] = f"⚖️ Neutral ({confidence}% Win)"
         
         asset_data['rsi_15m'] = rsi # Keep legacy key for UI
         
@@ -210,12 +219,16 @@ def get_idx(timeframe: str = "15m"):
             stock['sl_price'] = round(last_price - (2.0 * atr), 0) if atr else round(last_price * 0.95, 0)
             stock['tp_price'] = round(last_price + (5.0 * atr), 0) if atr else round(last_price * 1.10, 0)
             
-            if demand_score > 70:
+            pattern = stock.get('candle_pattern', "NONE")
+            
+            if pattern != "NONE":
+                stock['trade_signal'] = f"✨ {pattern} ({confidence}% Win)"
+            elif demand_score > 70:
                 stock['trade_signal'] = f"🔥 WHALE ACCUMULATION ({confidence}% Win)"
-            elif rsi < 40 and is_uptrend_htf:
-                stock['trade_signal'] = f"📈 TREND BUY ({confidence}% Win)"
-            elif rsi > 70:
-                stock['trade_signal'] = f"⚠️ OVERBOUGHT ({confidence-20}% Win)"
+            elif is_uptrend_cur and is_uptrend_htf and rsi < 60:
+                stock['trade_signal'] = f"🚀 HIGH DEMAND ({confidence}% Win)"
+            elif rsi < 35:
+                stock['trade_signal'] = f"🔥 OVERSOLD ({confidence}% Win)"
             else:
                 stock['trade_signal'] = f"⚖️ Neutral ({confidence}% Win)"
 
