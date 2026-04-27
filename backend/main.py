@@ -176,15 +176,22 @@ def get_performance(market: str = None):
 @app.post("/api/select-trade")
 def select_trade(trade: dict):
     try:
-        success = log_trade(
-            trade.get('symbol'), 
-            float(trade.get('entry_price')), 
-            float(trade.get('tp_price')), 
-            float(trade.get('sl_price')),
-            market=trade.get('market', 'crypto')
-        )
+        # Robust property extraction with fallbacks
+        symbol = trade.get('symbol')
+        entry = trade.get('entry_price') or trade.get('entry') or 0
+        tp = trade.get('tp_price') or trade.get('tp') or 0
+        sl = trade.get('sl_price') or trade.get('sl') or 0
+        market = trade.get('market', 'crypto')
+
+        # Convert to float safely
+        entry_f = float(entry) if entry is not None else 0.0
+        tp_f = float(tp) if tp is not None else 0.0
+        sl_f = float(sl) if sl is not None else 0.0
+
+        success = log_trade(symbol, entry_f, tp_f, sl_f, market=market)
         return {"status": "success" if success else "error"}
     except Exception as e:
+        print(f"Select trade error: {e}")
         return {"status": "error", "message": str(e)}
 
 @app.get("/api/trade-history")
