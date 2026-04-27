@@ -5,7 +5,7 @@ import numpy as np
 import json
 from datetime import datetime, time
 import pytz
-from patterns import detect_candle_patterns
+from patterns import detect_candle_patterns, detect_smart_money_concepts
 
 def fetch_all_tickers():
     url = "https://data-api.binance.vision/api/v3/ticker/24hr"
@@ -95,13 +95,16 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         
         # Pattern Detection
         pattern = "NONE"
-        if len(df_cur) >= 2:
+        smc = {"ob": "NONE", "fvg": "NONE"}
+        
+        if len(df_cur) >= 3:
             last = df_cur.iloc[-1]
             prev = df_cur.iloc[-2]
             pattern = detect_candle_patterns(
                 last['open'], last['high'], last['low'], last['close'],
                 prev['open'], prev['high'], prev['low'], prev['close']
             )
+            smc = detect_smart_money_concepts(df_cur)
             
         return {
             "rsi": round(rsi_cur.iloc[-1], 2),
@@ -109,6 +112,8 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             "ema_200": ema_200_cur.iloc[-1],
             "ema_200_htf": ema_200_htf.iloc[-1],
             "candle_pattern": pattern,
+            "order_block": smc['ob'],
+            "fvg": smc['fvg'],
             "htf": htf
         }
     except Exception as e:

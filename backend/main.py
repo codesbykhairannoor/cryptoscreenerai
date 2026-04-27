@@ -101,10 +101,19 @@ def get_top_coins(timeframe: str = "15m"):
             coin['sl_price'] = round(last_price - (2.0 * atr), 4) if atr else round(last_price * 0.97, 4)
             coin['tp_price'] = round(last_price + (5.0 * atr), 4) if atr else round(last_price * 1.08, 4)
 
+            ob = tech.get('order_block', "NONE")
+            fvg = tech.get('fvg', "NONE")
             pattern = tech.get('candle_pattern', "NONE")
+            
             coin['candle_pattern'] = pattern
+            coin['order_block'] = ob
+            coin['fvg'] = fvg
 
-            if pattern != "NONE":
+            if ob != "NONE":
+                coin['trade_signal'] = f"🏦 {ob} ({confidence+10}% Win)"
+            elif fvg != "NONE":
+                coin['trade_signal'] = f"🌪️ {fvg} ({confidence+5}% Win)"
+            elif pattern != "NONE":
                 coin['trade_signal'] = f"✨ {pattern} ({confidence}% Win)"
             elif ob['ratio'] > 1.5 and rsi < 40 and is_uptrend_htf:
                 coin['trade_signal'] = f"🔥 STRONG BUY ({timeframe} Prob: {confidence}%)"
@@ -161,9 +170,15 @@ def get_forex(timeframe: str = "15m"):
         asset_data['sl_price'] = round(last_price - (sl_mult * atr), 2) if atr else round(last_price - 1.5, 2)
         asset_data['tp_price'] = round(last_price + (tp_mult * atr), 2) if atr else round(last_price + 4.0, 2)
         
+        ob = asset_data.get('order_block', "NONE")
+        fvg = asset_data.get('fvg', "NONE")
         pattern = asset_data.get('candle_pattern', "NONE")
         
-        if pattern != "NONE":
+        if ob != "NONE":
+            asset_data['trade_signal'] = f"🏦 {ob} ({confidence+10}% Win)"
+        elif fvg != "NONE":
+            asset_data['trade_signal'] = f"🌪️ {fvg} ({confidence+5}% Win)"
+        elif pattern != "NONE":
             asset_data['trade_signal'] = f"✨ {pattern} ({confidence}% Win)"
         elif rsi < 35 and is_uptrend_htf:
             asset_data['trade_signal'] = f"🔥 OVERSOLD ({confidence}% Win)"
