@@ -46,7 +46,7 @@ def smart_trade_decision(symbol, technicals, news):
         """
         
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.0-flash',
             contents=prompt
         )
         text = response.text
@@ -68,7 +68,7 @@ def analyze_market_data(data_json):
         """
         
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model='gemini-2.0-flash',
             contents=prompt
         )
         return response.text
