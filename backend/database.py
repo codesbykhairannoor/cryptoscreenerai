@@ -125,18 +125,24 @@ def check_pending_trades():
     cursor.close()
     conn.close()
 
-def get_performance_stats():
+def get_performance_stats(market=None):
     conn = get_connection()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'WIN'")
-    wins = cursor.fetchone()[0]
-    
-    cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'LOSS'")
-    losses = cursor.fetchone()[0]
-    
-    cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'PENDING' OR status = 'RUNNING'")
-    pending = cursor.fetchone()[0]
+    if market:
+        cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'WIN' AND market = %s", (market,))
+        wins = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'LOSS' AND market = %s", (market,))
+        losses = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM trades WHERE status IN ('PENDING', 'RUNNING') AND market = %s", (market,))
+        pending = cursor.fetchone()[0]
+    else:
+        cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'WIN'")
+        wins = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM trades WHERE status = 'LOSS'")
+        losses = cursor.fetchone()[0]
+        cursor.execute("SELECT COUNT(*) FROM trades WHERE status IN ('PENDING', 'RUNNING')")
+        pending = cursor.fetchone()[0]
     
     cursor.close()
     conn.close()

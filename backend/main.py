@@ -26,11 +26,15 @@ def auto_trade_engine():
     Runs 24/7 on Railway - Laptop/HP can be OFF.
     """
     executor = BitgetExecutor()
+    from database import check_pending_trades
     print("🚀 [SYSTEM] Auto-Trading Engine AKTIF!")
-    print("🚀 [INFO] Bot berjalan 24/7 di Cloud. Laptop/HP mati tetap cuan!")
     
     while True:
         try:
+            # 1. Update existing trades (WIN/LOSS)
+            check_pending_trades()
+            
+            # 2. Scan for new trades
             print("🔍 [SCAN] Memantau sinyal institusi...")
             raw_data = fetch_all_tickers()
             candidates = analyze_and_sort(raw_data)
@@ -38,36 +42,21 @@ def auto_trade_engine():
             for coin in candidates[:5]:
                 symbol = coin['symbol']
                 tech = get_technical_indicators(symbol)
-                
-                # Intelligence Check
                 ob = tech.get('order_block', "NONE")
                 fvg = tech.get('fvg', "NONE")
-                pattern = tech.get('candle_pattern', "NONE")
                 rsi = tech.get('rsi', 50)
                 
-                # Criteria: Trend + Structure + Momentum
-                is_uptrend = coin.get('trend', '').startswith('Bullish')
-                
-                print(f"👀 [ANALYSIS] {symbol}: Trend={is_uptrend}, OB={ob}, FVG={fvg}, RSI={rsi}")
-                
-                # Smart Decision Logic
-                if (ob != "NONE" or fvg != "NONE") and rsi < 40:
-                    print(f"🎯 [EXECUTE] Sinyal GG ditemukan di {symbol}! Struktur: {ob}/{fvg}")
-                    
-                    # Entry strategy: Pullback limit for better R:R
+                # Criteria: Structure + Momentum
+                if (ob != "NONE" or fvg != "NONE") and rsi < 45: # Relaxed from 40
+                    print(f"🎯 [EXECUTE] Sinyal GG ditemukan di {symbol}!")
                     success, res = executor.place_futures_order(symbol, 'buy', leverage=5, amount_usdt=10)
                     if success:
-                        log_trade(symbol, "BUY_AUTO", coin['lastPrice'], 0, 0, f"STRUCT: {ob}/{fvg}")
+                        log_trade(symbol, coin['lastPrice'], coin['tp_price'], coin['sl_price'], market='crypto')
                         print(f"💰 [SUCCESS] Trade Berhasil! {res}")
-                    else:
-                        print(f"⚠️ [FAILED] Gagal eksekusi {symbol}: {res}")
-                else:
-                    print(f"⏭️ [SKIP] {symbol}: Sinyal belum cukup kuat.")
-                    
         except Exception as e:
             print(f"❌ [CRITICAL] Engine Error: {e}")
         
-        time.sleep(300) # Re-scan every 5 minutes
+        time.sleep(300)
 
 @app.on_event("startup")
 def startup_event():
@@ -101,64 +90,29 @@ def get_top_coins(timeframe: str = "15m"):
                 tech = {"rsi": 50, "atr": 0, "ema_200": 0, "ema_200_htf": 0, "candle_pattern": "NONE", "order_block": "NONE", "fvg": "NONE", "htf": "1h"}
 
             coin['whale_ratio'] = ob['ratio']
-            coin['bid_wall_price'] = ob['bid_wall_price']
-            coin['bid_wall_usdt'] = ob['bid_wall_usdt']
-            coin['ask_wall_price'] = ob['ask_wall_price']
-            coin['ask_wall_usdt'] = ob['ask_wall_usdt']
-            
-            rsi = tech.get('rsi', 50)
-            atr = tech.get('atr', 0)
-            ema_200_cur = tech.get('ema_200', 0)
-            ema_200_htf = tech.get('ema_200_htf', 0)
-            
-            coin['rsi_15m'] = rsi
-            coin['atr'] = atr
-            coin['ema_200'] = round(ema_200_cur, 4) if isinstance(ema_200_cur, (int, float)) else 0
-            coin['ema_200_htf'] = round(ema_200_htf, 4) if isinstance(ema_200_htf, (int, float)) else 0
+            coin['rsi_15m'] = tech.get('rsi', 50)
+            coin['atr'] = tech.get('atr', 0)
             coin['candle_pattern'] = tech.get('candle_pattern', "NONE")
             coin['order_block'] = tech.get('order_block', "NONE")
             coin['fvg'] = tech.get('fvg', "NONE")
             coin['htf'] = tech.get('htf', "1h")
             
-            last_price = float(coin['lastPrice'])
-            is_uptrend_cur = last_price > ema_200_cur if ema_200_cur > 0 else True
-            is_uptrend_htf = last_price > ema_200_htf if ema_200_htf > 0 else True
+            # Trend calculation
+            lp = float(coin['lastPrice'])
+            ema = tech.get('ema_200', 0)
+            coin['trend'] = "Bullish" if lp > ema else "Bearish"
             
-            coin['trend'] = f"Bullish ({coin['htf']} Confirmed)" if (is_uptrend_cur and is_uptrend_htf) else \
-                           f"Bearish ({coin['htf']} Confirmed)" if (not is_uptrend_cur and not is_uptrend_htf) else \
-                           "Neutral/Transition"
-
-            confidence = 35 
-            if is_uptrend_cur and is_uptrend_htf: confidence += 20
-            if coin['whale_ratio'] > 1.5: confidence += 15
-            if rsi < 45: confidence += 15
-            confidence = min(confidence, 92)
-
             # SMARTER ENTRY LOGIC
-            last_price = float(coin['lastPrice'])
-            atr = tech.get('atr', 0)
-            ob = tech.get('order_block', "NONE")
-            fvg = tech.get('fvg', "NONE")
-            
-            # Default: Pullback Entry (Limit Order)
-            entry_price = last_price - (0.1 * atr) if atr else last_price
-            
-            # If Bullish Structure found, entry at the structure
-            if "BULLISH OB" in ob:
-                # Set entry at the top of the Order Block
-                entry_price = last_price * 0.998 # Small discount
-            elif "BULLISH FVG" in fvg:
-                entry_price = last_price * 0.999 # Very small discount
-            
+            atr = coin['atr']
+            entry_price = lp - (0.1 * atr) if atr else lp
             coin['entry_price'] = round(entry_price, 4)
             coin['sl_price'] = round(entry_price - (2.0 * atr), 4) if atr else round(entry_price * 0.97, 4)
             coin['tp_price'] = round(entry_price + (4.0 * atr), 4) if atr else round(entry_price * 1.08, 4)
             
-            # If price is already near or below entry, signal "ENTRY NOW"
-            if last_price <= entry_price * 1.001:
-                coin['trade_signal'] = f"🚀 ENTRY NOW ({confidence}%)"
+            if lp <= entry_price * 1.001:
+                coin['trade_signal'] = f"🚀 ENTRY NOW"
             else:
-                coin['trade_signal'] = f"⏳ LIMIT ORDER ({confidence}%)"
+                coin['trade_signal'] = f"⏳ LIMIT ORDER"
 
         return {"status": "success", "data": top_coins}
     except Exception as e:
@@ -170,21 +124,17 @@ def get_forex(timeframe: str = "15m"):
         asset_data = get_forex_data("XAUUSD", interval=timeframe)
         if not asset_data: return {"status": "error", "message": "Failed to fetch data."}
         
-        # Add Trend and Signal
         lp = float(asset_data.get('lastPrice', 0))
         ema = float(asset_data.get('ema_200', 0))
         atr = float(asset_data.get('atr', 0))
         asset_data['trend'] = "Bullish" if lp > ema else "Bearish"
-        asset_data['trade_signal'] = "Neutral"
         
-        # Add Targets (Smarter Entry)
         entry_price = lp - (0.1 * atr) if atr else lp
         asset_data['entry_price'] = round(entry_price, 2)
         asset_data['sl_price'] = round(entry_price - (1.5 * atr), 2) if atr else round(entry_price - 2, 2)
         asset_data['tp_price'] = round(entry_price + (3.0 * atr), 2) if atr else round(entry_price + 5, 2)
         
-        if asset_data.get('rsi', 50) < 30: asset_data['trade_signal'] = "🔥 BUY (ENTRY NOW)"
-        elif lp <= entry_price * 1.001: asset_data['trade_signal'] = "🚀 ENTRY NOW"
+        if lp <= entry_price * 1.001: asset_data['trade_signal'] = "🚀 ENTRY NOW"
         else: asset_data['trade_signal'] = "⏳ LIMIT ORDER"
         
         return {"status": "success", "data": [asset_data]}
@@ -197,31 +147,43 @@ def get_idx(timeframe: str = "15m"):
         stocks = get_idx_data(interval=timeframe)
         status = get_idx_market_status()
         
-        # Add Trend, Signal, and Targets for frontend compatibility
         for s in stocks:
             lp = float(s.get('lastPrice', 0))
             ema = float(s.get('ema_200', 0))
             atr = float(s.get('atr', 0))
             s['trend'] = "Bullish" if lp > ema else "Bearish"
             
-            # Targets (Smarter Entry)
             entry_price = lp - (0.1 * atr) if atr else lp
             s['entry_price'] = round(entry_price, 0)
             s['sl_price'] = round(entry_price - (2.0 * atr), 0) if atr else round(entry_price * 0.96, 0)
             s['tp_price'] = round(entry_price + (4.0 * atr), 0) if atr else round(entry_price * 1.08, 0)
             
-            if s.get('demand_score', 0) > 70: s['trade_signal'] = "🔥 WHALE (ENTRY NOW)"
-            elif lp <= entry_price * 1.001: s['trade_signal'] = "🚀 ENTRY NOW"
+            if lp <= entry_price * 1.001: s['trade_signal'] = "🚀 ENTRY NOW"
             else: s['trade_signal'] = "⏳ LIMIT ORDER"
             
         return {"status": "success", "market_status": status, "data": stocks}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+
 @app.get("/api/performance")
-def get_performance():
+def get_performance(market: str = None):
     try:
-        return {"status": "success", "data": get_performance_stats()}
+        return {"status": "success", "data": get_performance_stats(market)}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.post("/api/select-trade")
+def select_trade(trade: dict):
+    try:
+        success = log_trade(
+            trade.get('symbol'), 
+            float(trade.get('entry_price')), 
+            float(trade.get('tp_price')), 
+            float(trade.get('sl_price')),
+            market=trade.get('market', 'crypto')
+        )
+        return {"status": "success" if success else "error"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
