@@ -107,22 +107,29 @@ def get_top_coins(timeframe: str = "15m"):
             ob = get_order_book_details(coin['symbol'])
             tech = get_technical_indicators(coin['symbol'], interval=timeframe) 
             
+            # Default values if tech is empty
+            if not tech:
+                tech = {"rsi": 50, "atr": 0, "ema_200": 0, "ema_200_htf": 0, "candle_pattern": "NONE", "order_block": "NONE", "fvg": "NONE", "htf": "Unknown"}
+
             coin['whale_ratio'] = ob['ratio']
             coin['bid_wall_price'] = ob['bid_wall_price']
             coin['bid_wall_usdt'] = ob['bid_wall_usdt']
             coin['ask_wall_price'] = ob['ask_wall_price']
             coin['ask_wall_usdt'] = ob['ask_wall_usdt']
             
-            rsi = tech['rsi']
-            atr = tech['atr']
-            ema_200_cur = tech['ema_200']
-            ema_200_htf = tech['ema_200_htf']
+            rsi = tech.get('rsi', 50)
+            atr = tech.get('atr', 0)
+            ema_200_cur = tech.get('ema_200', 0)
+            ema_200_htf = tech.get('ema_200_htf', 0)
             
             coin['rsi_15m'] = rsi
             coin['atr'] = atr
-            coin['ema_200'] = round(ema_200_cur, 4)
-            coin['ema_200_htf'] = round(ema_200_htf, 4)
-            coin['htf'] = tech['htf']
+            coin['ema_200'] = round(ema_200_cur, 4) if isinstance(ema_200_cur, (int, float)) else 0
+            coin['ema_200_htf'] = round(ema_200_htf, 4) if isinstance(ema_200_htf, (int, float)) else 0
+            coin['candle_pattern'] = tech.get('candle_pattern', "NONE")
+            coin['order_block'] = tech.get('order_block', "NONE")
+            coin['fvg'] = tech.get('fvg', "NONE")
+            coin['htf'] = tech.get('htf', "Unknown")
             
             last_price = float(coin['lastPrice'])
             
