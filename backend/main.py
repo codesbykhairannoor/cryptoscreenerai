@@ -1,45 +1,34 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from data_fetcher import (
-    fetch_all_tickers, get_order_book_details, get_technical_indicators, 
-    get_forex_data, get_idx_data, get_idx_market_status
+    fetch_all_tickers, get_order_book_details, 
+    get_technical_indicators, get_forex_data, 
+    get_idx_data, get_idx_market_status
 )
+from ai_model import analyze_and_sort
+from database import log_trade, get_performance_stats
 from bitget_executor import BitgetExecutor
-from sentiment import get_crypto_news
-from ai_model import analyze_and_sort, smart_trade_decision
-from database import init_db, log_trade, check_pending_trades, get_performance_stats
 import threading
 import time
 
-app = FastAPI(title="Crypto AI Screener API")
+app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], 
-    allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-def trade_checker_loop():
-    while True:
-        try:
-            check_pending_trades()
-        except Exception as e:
-            print(f"Trade checker error: {e}")
-        time.sleep(60) # Check every minute
-
 def auto_trade_engine():
     """
     The 'GG' Engine: Direct Execution based on Technical Signals.
-    (AI Confirmation disabled to prevent Quota Exhaustion)
     """
     executor = BitgetExecutor()
     print("🚀 Auto-Trading Engine AKTIF! Eksekusi Langsung Berdasarkan Sinyal Teknis...")
     
     while True:
         try:
-            # 1. Cari koin potensial
             raw_data = fetch_all_tickers()
             candidates = analyze_and_sort(raw_data)
             
@@ -47,35 +36,34 @@ def auto_trade_engine():
                 tech = get_technical_indicators(coin['symbol'])
                 signal = tech.get('candle_pattern', "NONE")
                 ob = tech.get('order_block', "NONE")
-                fvg = tech.get('fvg', "NONE")
                 
-                # Filter: Langsung eksekusi jika ada sinyal Teknis Kuat (OB atau Engulfing)
                 if ob != "NONE" or "ENGULFING" in signal:
                     print(f"🎯 Sinyal Valid di {coin['symbol']} ({ob}/{signal}). Menyiapkan eksekusi...")
-                    
-                    # LANGSUNG EKSEKUSI DI BITGET (Tanpa AI)
                     success, res = executor.place_futures_order(coin['symbol'], 'buy', leverage=5, amount_usdt=10)
                     if success:
                         log_trade(coin['symbol'], "BUY", coin['lastPrice'], 0, 0, "AUTO_TECH")
                         print(f"💰 PROFIT MISSION STARTED: {res}")
-                    else:
-                        print(f"⚠️ Gagal Eksekusi {coin['symbol']}: {res}")
-                        
         except Exception as e:
             print(f"Auto-trade engine error: {e}")
-        time.sleep(300) # Scan ulang tiap 5 menit
+        time.sleep(300)
 
 @app.on_event("startup")
 def startup_event():
-    init_db()
-    # Checker TP/SL existing
-    threading.Thread(target=trade_checker_loop, daemon=True).start()
-    # GG Engine: Auto-Trading
-    threading.Thread(target=auto_trade_engine, daemon=True).start()
+    thread = threading.Thread(target=auto_trade_engine, daemon=True)
+    thread.start()
 
 @app.get("/")
 def read_root():
-    return {"message": "Mesin AI Crypto Aktif! Siap mendeteksi cuan."}
+    return {"message": "CryptoScreener AI Backend is running"}
+
+@app.get("/api/bitget-status")
+def get_bitget_status():
+    try:
+        executor = BitgetExecutor()
+        success, message = executor.test_connection()
+        return {"connected": success, "message": message}
+    except Exception as e:
+        return {"connected": False, "message": str(e)}
 
 @app.get("/api/top-coins")
 def get_top_coins(timeframe: str = "15m"):
@@ -83,25 +71,12 @@ def get_top_coins(timeframe: str = "15m"):
         raw_data = fetch_all_tickers()
         top_coins = analyze_and_sort(raw_data)
         
-        # ENSURE BTC IS ALWAYS INCLUDED
-        btc_exists = any(c['symbol'] == 'BTCUSDT' for c in top_coins)
-        if not btc_exists:
-            btc_row = raw_data[raw_data['symbol'] == 'BTCUSDT'].to_dict('records')
-            if btc_row:
-                top_coins.insert(0, btc_row[0])
-        else:
-            # Move BTC to top
-            btc_idx = next(i for i, c in enumerate(top_coins) if c['symbol'] == 'BTCUSDT')
-            btc_coin = top_coins.pop(btc_idx)
-            top_coins.insert(0, btc_coin)
-
         for coin in top_coins:
             ob = get_order_book_details(coin['symbol'])
             tech = get_technical_indicators(coin['symbol'], interval=timeframe) 
             
-            # Default values if tech is empty
             if not tech:
-                tech = {"rsi": 50, "atr": 0, "ema_200": 0, "ema_200_htf": 0, "candle_pattern": "NONE", "order_block": "NONE", "fvg": "NONE", "htf": "Unknown"}
+                tech = {"rsi": 50, "atr": 0, "ema_200": 0, "ema_200_htf": 0, "candle_pattern": "NONE", "order_block": "NONE", "fvg": "NONE", "htf": "1h"}
 
             coin['whale_ratio'] = ob['ratio']
             coin['bid_wall_price'] = ob['bid_wall_price']
@@ -121,62 +96,28 @@ def get_top_coins(timeframe: str = "15m"):
             coin['candle_pattern'] = tech.get('candle_pattern', "NONE")
             coin['order_block'] = tech.get('order_block', "NONE")
             coin['fvg'] = tech.get('fvg', "NONE")
-            coin['htf'] = tech.get('htf', "Unknown")
+            coin['htf'] = tech.get('htf', "1h")
             
             last_price = float(coin['lastPrice'])
-            
-            # Trend Detection (MTF)
-            is_uptrend_cur = last_price > ema_200_cur
-            is_uptrend_htf = last_price > ema_200_htf
+            is_uptrend_cur = last_price > ema_200_cur if ema_200_cur > 0 else True
+            is_uptrend_htf = last_price > ema_200_htf if ema_200_htf > 0 else True
             
             coin['trend'] = f"Bullish ({coin['htf']} Confirmed)" if (is_uptrend_cur and is_uptrend_htf) else \
-                           f"Bullish ({coin['htf']} Pullback)" if (is_uptrend_htf and not is_uptrend_cur) else \
                            f"Bearish ({coin['htf']} Confirmed)" if (not is_uptrend_cur and not is_uptrend_htf) else \
                            "Neutral/Transition"
 
-            # Confidence Calculation
             confidence = 35 
             if is_uptrend_cur and is_uptrend_htf: confidence += 20
-            if ob['ratio'] > 1.5: confidence += 15
+            if coin['whale_ratio'] > 1.5: confidence += 15
             if rsi < 45: confidence += 15
-            if (atr / last_price) * 100 > 0.4: confidence += 10
-            confidence = min(confidence, 88) if rsi > 30 else 92
+            confidence = min(confidence, 92)
 
-            # ALWAYS CALCULATE TARGETS
             coin['entry_price'] = round(last_price, 4)
             coin['sl_price'] = round(last_price - (2.0 * atr), 4) if atr else round(last_price * 0.97, 4)
             coin['tp_price'] = round(last_price + (5.0 * atr), 4) if atr else round(last_price * 1.08, 4)
+            coin['trade_signal'] = f"⚖️ Signal ({confidence}%)"
 
-            ob = tech.get('order_block', "NONE")
-            fvg = tech.get('fvg', "NONE")
-            pattern = tech.get('candle_pattern', "NONE")
-            
-            coin['candle_pattern'] = pattern
-            coin['order_block'] = ob
-            coin['fvg'] = fvg
-
-            if ob != "NONE":
-                coin['trade_signal'] = f"🏦 {ob} ({confidence+10}% Win)"
-            elif fvg != "NONE":
-                coin['trade_signal'] = f"🌪️ {fvg} ({confidence+5}% Win)"
-            elif pattern != "NONE":
-                coin['trade_signal'] = f"✨ {pattern} ({confidence}% Win)"
-            elif ob['ratio'] > 1.5 and rsi < 40 and is_uptrend_htf:
-                coin['trade_signal'] = f"🔥 STRONG BUY ({timeframe} Prob: {confidence}%)"
-            elif ob['ratio'] > 2.0 and rsi < 30:
-                coin['trade_signal'] = f"⚡ FAST SCALP ({timeframe} Prob: {confidence}%)"
-            elif rsi > 75 and not is_uptrend_htf:
-                coin['trade_signal'] = f"🩸 DANGER DUMP ({timeframe} Prob: {confidence-10}%)"
-                coin['sl_price'] = round(last_price + (2.0 * atr), 4) if atr else round(last_price * 1.03, 4)
-                coin['tp_price'] = round(last_price - (5.0 * atr), 4) if atr else round(last_price * 0.92, 4)
-            else:
-                coin['trade_signal'] = f"⚖️ Neutral ({timeframe} Prob: {confidence}%)"
-
-        return {
-            "status": "success",
-            "total_analyzed": len(raw_data),
-            "data": top_coins
-        }
+        return {"status": "success", "data": top_coins}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -184,63 +125,8 @@ def get_top_coins(timeframe: str = "15m"):
 def get_forex(timeframe: str = "15m"):
     try:
         asset_data = get_forex_data("XAUUSD", interval=timeframe)
-        if not asset_data:
-            return {"status": "error", "message": "Failed to fetch XAUUSD data."}
-            
-        rsi = asset_data['rsi']
-        atr = asset_data['atr']
-        ema_200_cur = asset_data['ema_200']
-        ema_200_htf = asset_data['ema_200_htf']
-        last_price = float(asset_data['lastPrice'])
-        
-        is_uptrend_cur = last_price > ema_200_cur
-        is_uptrend_htf = last_price > ema_200_htf
-        
-        asset_data['trend'] = f"Bullish ({asset_data['htf']} Confirmed)" if (is_uptrend_cur and is_uptrend_htf) else \
-                             f"Bearish ({asset_data['htf']} Confirmed)" if (not is_uptrend_cur and not is_uptrend_htf) else \
-                             "Neutral/Transition"
-        
-        # Confidence logic for Gold
-        confidence = 40
-        if is_uptrend_cur and is_uptrend_htf: confidence += 25
-        if rsi < 35: confidence += 20
-        
-        # Tighten TP/SL for Gold (Tighter for Scalping)
-        # 15m: Tighter SL (~10-20 pips)
-        # 1h: Medium SL
-        # 1d: Standard Swing SL
-        sl_mult = 0.8 if timeframe == "15m" else 1.5 if timeframe == "1h" else 2.5
-        tp_mult = 2.0 if timeframe == "15m" else 4.0 if timeframe == "1h" else 6.0
-        
-        asset_data['entry_price'] = round(last_price, 2)
-        asset_data['sl_price'] = round(last_price - (sl_mult * atr), 2) if atr else round(last_price - 1.5, 2)
-        asset_data['tp_price'] = round(last_price + (tp_mult * atr), 2) if atr else round(last_price + 4.0, 2)
-        
-        ob = asset_data.get('order_block', "NONE")
-        fvg = asset_data.get('fvg', "NONE")
-        pattern = asset_data.get('candle_pattern', "NONE")
-        
-        if ob != "NONE":
-            asset_data['trade_signal'] = f"🏦 {ob} ({confidence+10}% Win)"
-        elif fvg != "NONE":
-            asset_data['trade_signal'] = f"🌪️ {fvg} ({confidence+5}% Win)"
-        elif pattern != "NONE":
-            asset_data['trade_signal'] = f"✨ {pattern} ({confidence}% Win)"
-        elif rsi < 35 and is_uptrend_htf:
-            asset_data['trade_signal'] = f"🔥 OVERSOLD ({confidence}% Win)"
-        elif rsi > 70 and not is_uptrend_htf:
-            asset_data['trade_signal'] = f"⚠️ OVERBOUGHT ({confidence-10}% Win)"
-            asset_data['sl_price'] = round(last_price + (sl_mult * atr), 2) if atr else round(last_price + 1.5, 2)
-            asset_data['tp_price'] = round(last_price - (tp_mult * atr), 2) if atr else round(last_price - 4.0, 2)
-        else:
-            asset_data['trade_signal'] = f"⚖️ Neutral ({confidence}% Win)"
-        
-        asset_data['rsi_15m'] = rsi # Keep legacy key for UI
-        
-        return {
-            "status": "success",
-            "data": [asset_data]
-        }
+        if not asset_data: return {"status": "error", "message": "Failed to fetch data."}
+        return {"status": "success", "data": [asset_data]}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -248,100 +134,15 @@ def get_forex(timeframe: str = "15m"):
 def get_idx(timeframe: str = "15m"):
     try:
         stocks = get_idx_data(interval=timeframe)
-        market_status = get_idx_market_status()
-        
-        for stock in stocks:
-            rsi = stock['rsi']
-            atr = stock['atr']
-            ema_200_cur = stock['ema_200']
-            ema_200_htf = stock['ema_200_htf']
-            last_price = float(stock['lastPrice'])
-            bid_size = stock.get('bid_size', 0)
-            avg_vol = stock.get('avg_volume', 1)
-            
-            is_uptrend_cur = last_price > ema_200_cur
-            is_uptrend_htf = last_price > ema_200_htf
-            
-            stock['trend'] = f"Bullish ({stock['htf']} Confirmed)" if (is_uptrend_cur and is_uptrend_htf) else \
-                            f"Bearish ({stock['htf']} Confirmed)" if (not is_uptrend_cur and not is_uptrend_htf) else \
-                            "Neutral/Transition"
-            
-            # Use the advanced demand score from get_idx_data
-            demand_score = stock.get('demand_score', 0)
-            stock['whale_ratio'] = round(stock.get('relative_volume', 1.0), 2)
-            
-            # Confidence Logic for IDX
-            confidence = 40
-            if is_uptrend_cur and is_uptrend_htf: confidence += 20
-            if demand_score > 60: confidence += 20 
-            if stock.get('cmf', 0) > 0.1: confidence += 10
-            
-            stock['entry_price'] = round(last_price, 0)
-            stock['sl_price'] = round(last_price - (2.0 * atr), 0) if atr else round(last_price * 0.95, 0)
-            stock['tp_price'] = round(last_price + (5.0 * atr), 0) if atr else round(last_price * 1.10, 0)
-            
-            pattern = stock.get('candle_pattern', "NONE")
-            
-            if pattern != "NONE":
-                stock['trade_signal'] = f"✨ {pattern} ({confidence}% Win)"
-            elif demand_score > 70:
-                stock['trade_signal'] = f"🔥 WHALE ACCUMULATION ({confidence}% Win)"
-            elif is_uptrend_cur and is_uptrend_htf and rsi < 60:
-                stock['trade_signal'] = f"🚀 HIGH DEMAND ({confidence}% Win)"
-            elif rsi < 35:
-                stock['trade_signal'] = f"🔥 OVERSOLD ({confidence}% Win)"
-            else:
-                stock['trade_signal'] = f"⚖️ Neutral ({confidence}% Win)"
-
-            stock['rsi_15m'] = rsi
-            
-        return {
-            "status": "success",
-            "market_status": market_status,
-            "data": stocks
-        }
+        status = get_idx_market_status()
+        return {"status": "success", "market_status": status, "data": stocks}
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
-@app.get("/api/bitget-status")
-def get_bitget_status():
-    try:
-        executor = BitgetExecutor()
-        success, message = executor.test_connection()
-        return {
-            "status": "success" if success else "error",
-            "message": message,
-            "connected": success
-        }
-    except Exception as e:
-        return {"status": "error", "message": str(e), "connected": False}
 
 @app.get("/api/performance")
 def get_performance():
     try:
-        stats = get_performance_stats()
-        return {
-            "status": "success",
-            "data": stats
-        }
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
-
-@app.post("/api/select-trade")
-def select_trade(trade: dict):
-    # trade expect: {symbol, entry, tp, sl, market}
-    try:
-        success = log_trade(
-            trade.get('symbol'), 
-            float(trade.get('entry')), 
-            float(trade.get('tp')), 
-            float(trade.get('sl')),
-            market=trade.get('market', 'crypto')
-        )
-        if success:
-            return {"status": "success", "message": f"Trade {trade.get('symbol')} ({trade.get('market')}) berhasil disimpan!"}
-        else:
-            return {"status": "warning", "message": f"Trade {trade.get('symbol')} sudah ada di journal."}
+        return {"status": "success", "data": get_performance_stats()}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

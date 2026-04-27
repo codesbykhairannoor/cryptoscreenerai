@@ -10,6 +10,7 @@ def fetch_all_tickers():
         data = res.json()
         if isinstance(data, list):
             df = pd.DataFrame(data)
+            # Ensure numeric
             for col in ['quoteVolume', 'priceChangePercent', 'lastPrice']:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             return df
@@ -20,51 +21,55 @@ def fetch_all_tickers():
 
 def get_order_book_details(symbol):
     try:
-        url = f"https://data-api.binance.vision/api/v3/depth?symbol={symbol}&limit=50"
+        url = f"https://data-api.binance.vision/api/v3/depth?symbol={symbol}&limit=5"
         res = requests.get(url)
         data = res.json()
         
-        bids = np.array(data.get('bids', []), dtype=float)
-        asks = np.array(data.get('asks', []), dtype=float)
+        bids = data.get('bids', [])
+        asks = data.get('asks', [])
         
-        if len(bids) == 0 or len(asks) == 0:
+        if not bids or not asks:
             return {"ratio": 1.0, "bid_wall_price": 0, "bid_wall_usdt": 0, "ask_wall_price": 0, "ask_wall_usdt": 0}
 
-        bid_vol = np.sum(bids[:, 1])
-        ask_vol = np.sum(asks[:, 1])
-        ratio = bid_vol / ask_vol if ask_vol > 0 else 1.0
+        top_bid = bids[0]
+        top_ask = asks[0]
         
-        bid_wall_idx = np.argmax(bids[:, 1])
-        ask_wall_idx = np.argmax(asks[:, 1])
+        bid_vol = sum(float(b[1]) for b in bids)
+        ask_vol = sum(float(a[1]) for a in asks)
+        ratio = bid_vol / ask_vol if ask_vol > 0 else 1.0
         
         return {
             "ratio": round(ratio, 2),
-            "bid_wall_price": bids[bid_wall_idx, 0],
-            "bid_wall_usdt": bids[bid_wall_idx, 0] * bids[bid_wall_idx, 1],
-            "ask_wall_price": asks[ask_wall_idx, 0],
-            "ask_wall_usdt": asks[ask_wall_idx, 0] * asks[ask_wall_idx, 1]
+            "bid_wall_price": float(top_bid[0]),
+            "bid_wall_usdt": float(top_bid[0]) * float(top_bid[1]),
+            "ask_wall_price": float(top_ask[0]),
+            "ask_wall_usdt": float(top_ask[0]) * float(top_ask[1])
         }
-    except Exception:
+    except:
         return {"ratio": 1.0, "bid_wall_price": 0, "bid_wall_usdt": 0, "ask_wall_price": 0, "ask_wall_usdt": 0}
 
 def get_technical_indicators(symbol, interval="15m", period=14):
     try:
+        # Determine Higher Timeframe (HTF) for confirmation
         htf_map = {"15m": "1h", "1h": "4h", "4h": "1d", "1d": "1w"}
         htf = htf_map.get(interval, "1h")
         
+        # Fetch Current Interval data
         url_cur = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=200"
         res_cur = requests.get(url_cur)
         data_cur = res_cur.json()
         if not isinstance(data_cur, list) or len(data_cur) < period: return {}
-        
+
         df_cur = pd.DataFrame(data_cur, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
         for col in ['open', 'high', 'low', 'close']:
             df_cur[col] = pd.to_numeric(df_cur[col], errors='coerce')
         
+        # Fetch HTF data for MTF Trend
         url_htf = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={htf}&limit=200"
         res_htf = requests.get(url_htf)
         data_htf = res_htf.json()
-        if not isinstance(data_htf, list): df_htf = df_cur.copy()
+        if not isinstance(data_htf, list): 
+            df_htf = df_cur.copy()
         else:
             df_htf = pd.DataFrame(data_htf, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
             for col in ['open', 'high', 'low', 'close']:
@@ -73,26 +78,27 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         closes_cur = df_cur['close']
         closes_htf = df_htf['close']
         
-        # RSI
+        # RSI Current
         delta = closes_cur.diff()
         gain = delta.clip(lower=0)
         loss = -1 * delta.clip(upper=0)
         avg_gain = gain.ewm(com=period-1, adjust=False).mean()
         avg_loss = loss.ewm(com=period-1, adjust=False).mean()
         rs = avg_gain / avg_loss
-        rsi_cur = 100 - (100 / (1 + rs.replace(0, np.nan))).fillna(100)
+        rsi_cur = 100 - (100 / (1 + rs))
         
-        # ATR
+        # ATR Current (Robust calc to avoid ufunc error)
         high_low = (df_cur['high'] - df_cur['low']).values
         high_close = np.abs(df_cur['high'] - df_cur['close'].shift()).values
         low_close = np.abs(df_cur['low'] - df_cur['close'].shift()).values
         true_range = np.nanmax([high_low, high_close, low_close], axis=0)
         atr_cur = pd.Series(true_range).rolling(period).mean()
 
-        # EMA 200
+        # EMA 200 (Current & HTF)
         ema_200_cur = closes_cur.ewm(span=200, adjust=False).mean()
         ema_200_htf = closes_htf.ewm(span=200, adjust=False).mean()
         
+        # Smart detection
         pattern = detect_candle_patterns(df_cur)
         smc = detect_smart_money_concepts(df_cur)
         
@@ -110,51 +116,128 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         print(f"Error indicators for {symbol}: {e}")
         return {}
 
-def get_forex_data(timeframe="15m"):
+def get_forex_data(symbol="XAUUSD", interval="15m"):
     try:
-        pairs = ["EURUSDT", "GBPUSDT", "JPYUSDT", "AUDUSDT", "XAUUSDT"]
-        results = []
-        for p in pairs:
-            url = f"https://data-api.binance.vision/api/v3/ticker/24hr?symbol={p}"
-            res = requests.get(url).json()
-            if 'lastPrice' in res:
-                results.append({
-                    "symbol": p.replace("USDT", ""),
-                    "lastPrice": float(res['lastPrice']),
-                    "priceChangePercent": float(res['priceChangePercent']),
-                    "quoteVolume": float(res['quoteVolume'])
-                })
-        return results
-    except Exception:
-        return []
+        # Use PAXGUSDT as momentum proxy for Gold
+        indicators = get_technical_indicators("PAXGUSDT", interval=interval)
+        
+        # Fetch EXACT Spot Price from TradingView (OANDA)
+        exact_price = 0
+        try:
+            tv_url = 'https://scanner.tradingview.com/cfd/scan'
+            tv_payload = {'symbols': {'tickers': [f'OANDA:{symbol}']}, 'columns': ['close']}
+            tv_res = requests.post(tv_url, json=tv_payload, timeout=5)
+            tv_data = tv_res.json()
+            if tv_data.get('data') and len(tv_data['data']) > 0:
+                exact_price = float(tv_data['data'][0]['d'][0])
+        except Exception as e:
+            print("Failed to fetch exact TV price, using indicators proxy price:", e)
+        
+        if not indicators:
+            indicators = {"rsi": 50, "atr": 0, "ema_200": exact_price, "ema_200_htf": exact_price, "htf": "1h"}
 
-def get_idx_data():
-    try:
-        url = "https://scanner.tradingview.com/indonesia/scanner"
-        # Ultra Compatible Payload based on user's browser capture
-        payload = {
-            "columns": ["ticker-view", "close", "change", "volume", "market_cap_basic"],
-            "filter": [{"left": "is_primary", "operation": "equal", "right": True}],
-            "ignore_unknown_fields": False,
-            "options": {"lang": "id_ID"},
-            "range": [0, 15],
-            "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"}
+        return {
+            "symbol": symbol,
+            "lastPrice": exact_price if exact_price > 0 else indicators.get("ema_200", 0),
+            **indicators
         }
-        res = requests.post(url, json=payload, timeout=10).json()
-        stocks = []
-        for item in res.get('data', []):
-            d = item['d']
-            stocks.append({
-                "ticker": item['s'].split(':')[1],
-                "close": d[1],
-                "change": d[2],
-                "volume": d[3],
-                "mcap": d[4]
-            })
-        return stocks
     except Exception as e:
-        print(f"IDX Fetch Error: {e}")
-        return []
+        print(f"Forex fetch error: {e}")
+        return {}
 
 def get_idx_market_status():
-    return "OPEN"
+    from datetime import datetime, time
+    import pytz
+    
+    jakarta_tz = pytz.timezone('Asia/Jakarta')
+    now = datetime.now(jakarta_tz)
+    
+    if now.weekday() >= 5: # Weekend
+        return "CLOSED (Weekend)"
+        
+    current_time = now.time()
+    s1_start = time(9, 0)
+    s1_end = time(11, 30)
+    s2_start = time(13, 30) if now.weekday() != 4 else time(14, 0)
+    s2_end = time(16, 0)
+    
+    if s1_start <= current_time <= s1_end:
+        return "OPEN (Session 1)"
+    elif s1_end < current_time < s2_start:
+        return "CLOSED (Break)"
+    elif s2_start <= current_time <= s2_end:
+        return "OPEN (Session 2)"
+    else:
+        return "CLOSED"
+
+def get_idx_data(interval="15m"):
+    try:
+        tv_url = 'https://scanner.tradingview.com/indonesia/scan'
+        payload = {
+            "columns": [
+                "name", "close", "change", "volume", "relative_volume_10d_calc", 
+                "market_cap_basic", "description"
+            ],
+            "filter": [
+                {"left": "is_primary", "operation": "equal", "right": True}
+            ],
+            "ignore_unknown_fields": False,
+            "options": {"lang": "id_ID"},
+            "range": [0, 100],
+            "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"},
+            "markets": ["indonesia"]
+        }
+        
+        res = requests.post(tv_url, json=payload, timeout=5)
+        data = res.json()
+        
+        raw_stocks = data.get('data') or []
+        print(f"IDX Fetch: Found {len(raw_stocks)} stocks")
+        
+        results = []
+        for item in raw_stocks:
+            symbol = item['s'].split(':')[-1]
+            cols = item['d']
+            
+            last_price = cols[1] or 0
+            if last_price == 0: continue
+            
+            rel_vol = cols[4] or 0
+            change = cols[2] or 0
+            mkt_cap = cols[5] or 0
+            
+            demand_score = 0
+            if rel_vol > 2.0: demand_score += 40
+            elif rel_vol > 1.2: demand_score += 20
+            
+            if change > 3.0: demand_score += 40
+            elif change > 0: demand_score += 20
+            
+            if mkt_cap > 1e12: demand_score += 20
+            
+            rsi = 50 + (change * 2) 
+            rsi = max(min(rsi, 85), 15)
+            
+            results.append({
+                "symbol": symbol,
+                "name": cols[0],
+                "lastPrice": last_price,
+                "change": change,
+                "rsi": rsi,
+                "atr": last_price * 0.02,
+                "ema_200": last_price,
+                "ema_200_htf": last_price,
+                "volume": cols[3] or 0,
+                "relative_volume": rel_vol,
+                "demand_score": demand_score,
+                "htf": "1h",
+                "candle_pattern": "NONE",
+                "order_block": "NONE",
+                "fvg": "NONE"
+            })
+        
+        results.sort(key=lambda x: x['demand_score'], reverse=True)
+        return results[:15] 
+    except Exception as e:
+        print(f"Error fetching IDX data: {e}")
+        return []
