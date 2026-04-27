@@ -24,6 +24,9 @@ class BitgetExecutor:
 
     def test_connection(self):
         try:
+            if not self.api_key:
+                return False, "API Key Bitget tidak ditemukan di .env"
+            
             print(f"Testing connection with Key: {self.api_key[:10]}...")
             # Try a direct Futures ticker fetch
             ticker = self.exchange.fetch_ticker('BTC/USDT:USDT')

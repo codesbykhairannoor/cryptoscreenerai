@@ -112,10 +112,31 @@ def get_top_coins(timeframe: str = "15m"):
             if rsi < 45: confidence += 15
             confidence = min(confidence, 92)
 
-            coin['entry_price'] = round(last_price, 4)
-            coin['sl_price'] = round(last_price - (2.0 * atr), 4) if atr else round(last_price * 0.97, 4)
-            coin['tp_price'] = round(last_price + (5.0 * atr), 4) if atr else round(last_price * 1.08, 4)
-            coin['trade_signal'] = f"⚖️ Signal ({confidence}%)"
+            # SMARTER ENTRY LOGIC
+            last_price = float(coin['lastPrice'])
+            atr = tech.get('atr', 0)
+            ob = tech.get('order_block', "NONE")
+            fvg = tech.get('fvg', "NONE")
+            
+            # Default: Pullback Entry (Limit Order)
+            entry_price = last_price - (0.1 * atr) if atr else last_price
+            
+            # If Bullish Structure found, entry at the structure
+            if "BULLISH OB" in ob:
+                # Set entry at the top of the Order Block
+                entry_price = last_price * 0.998 # Small discount
+            elif "BULLISH FVG" in fvg:
+                entry_price = last_price * 0.999 # Very small discount
+            
+            coin['entry_price'] = round(entry_price, 4)
+            coin['sl_price'] = round(entry_price - (2.0 * atr), 4) if atr else round(entry_price * 0.97, 4)
+            coin['tp_price'] = round(entry_price + (4.0 * atr), 4) if atr else round(entry_price * 1.08, 4)
+            
+            # If price is already near or below entry, signal "ENTRY NOW"
+            if last_price <= entry_price * 1.001:
+                coin['trade_signal'] = f"🚀 ENTRY NOW ({confidence}%)"
+            else:
+                coin['trade_signal'] = f"⏳ LIMIT ORDER ({confidence}%)"
 
         return {"status": "success", "data": top_coins}
     except Exception as e:
@@ -134,13 +155,15 @@ def get_forex(timeframe: str = "15m"):
         asset_data['trend'] = "Bullish" if lp > ema else "Bearish"
         asset_data['trade_signal'] = "Neutral"
         
-        # Add Targets
-        asset_data['entry_price'] = round(lp, 2)
-        asset_data['sl_price'] = round(lp - (1.5 * atr), 2) if atr else round(lp - 2, 2)
-        asset_data['tp_price'] = round(lp + (3.0 * atr), 2) if atr else round(lp + 5, 2)
+        # Add Targets (Smarter Entry)
+        entry_price = lp - (0.1 * atr) if atr else lp
+        asset_data['entry_price'] = round(entry_price, 2)
+        asset_data['sl_price'] = round(entry_price - (1.5 * atr), 2) if atr else round(entry_price - 2, 2)
+        asset_data['tp_price'] = round(entry_price + (3.0 * atr), 2) if atr else round(entry_price + 5, 2)
         
-        if asset_data.get('rsi', 50) < 30: asset_data['trade_signal'] = "🔥 BUY"
-        elif asset_data.get('rsi', 50) > 70: asset_data['trade_signal'] = "🩸 SELL"
+        if asset_data.get('rsi', 50) < 30: asset_data['trade_signal'] = "🔥 BUY (ENTRY NOW)"
+        elif lp <= entry_price * 1.001: asset_data['trade_signal'] = "🚀 ENTRY NOW"
+        else: asset_data['trade_signal'] = "⏳ LIMIT ORDER"
         
         return {"status": "success", "data": [asset_data]}
     except Exception as e:
@@ -158,14 +181,16 @@ def get_idx(timeframe: str = "15m"):
             ema = float(s.get('ema_200', 0))
             atr = float(s.get('atr', 0))
             s['trend'] = "Bullish" if lp > ema else "Bearish"
-            s['trade_signal'] = "Neutral"
             
-            # Targets
-            s['entry_price'] = round(lp, 0)
-            s['sl_price'] = round(lp - (2.0 * atr), 0) if atr else round(lp * 0.96, 0)
-            s['tp_price'] = round(lp + (4.0 * atr), 0) if atr else round(lp * 1.08, 0)
+            # Targets (Smarter Entry)
+            entry_price = lp - (0.1 * atr) if atr else lp
+            s['entry_price'] = round(entry_price, 0)
+            s['sl_price'] = round(entry_price - (2.0 * atr), 0) if atr else round(entry_price * 0.96, 0)
+            s['tp_price'] = round(entry_price + (4.0 * atr), 0) if atr else round(entry_price * 1.08, 0)
             
-            if s.get('demand_score', 0) > 70: s['trade_signal'] = "🔥 WHALE"
+            if s.get('demand_score', 0) > 70: s['trade_signal'] = "🔥 WHALE (ENTRY NOW)"
+            elif lp <= entry_price * 1.001: s['trade_signal'] = "🚀 ENTRY NOW"
+            else: s['trade_signal'] = "⏳ LIMIT ORDER"
             
         return {"status": "success", "market_status": status, "data": stocks}
     except Exception as e:

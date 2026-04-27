@@ -13,11 +13,11 @@ def fetch_all_tickers():
             filtered_data = [
                 d for d in data 
                 if d['symbol'].endswith('USDT') 
-                and not any(x in d['symbol'] for x in ['UPUSDT', 'DOWNUSDT', 'RUB', 'GBP', 'EUR', 'AUD', 'FDUSD', 'TUSD'])
+                and not any(x in d['symbol'] for x in ['UPUSDT', 'DOWNUSDT', 'RUB', 'GBP', 'EUR', 'AUD', 'FDUSD', 'TUSD', 'BUSD', 'DAI'])
             ]
             df = pd.DataFrame(filtered_data)
             for col in ['quoteVolume', 'priceChangePercent', 'lastPrice']:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
+                df[col] = pd.to_numeric(df[col], errors='coerce').astype(float)
             return df
         return pd.DataFrame()
     except Exception as e:
@@ -67,7 +67,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
 
         df_cur = pd.DataFrame(data_cur, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
         for col in ['open', 'high', 'low', 'close']:
-            df_cur[col] = pd.to_numeric(df_cur[col], errors='coerce')
+            df_cur[col] = pd.to_numeric(df_cur[col], errors='coerce').astype(float)
         
         # Fetch HTF data for MTF Trend
         url_htf = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={htf}&limit=200"
@@ -78,7 +78,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         else:
             df_htf = pd.DataFrame(data_htf, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
             for col in ['open', 'high', 'low', 'close']:
-                df_htf[col] = pd.to_numeric(df_htf[col], errors='coerce')
+                df_htf[col] = pd.to_numeric(df_htf[col], errors='coerce').astype(float)
         
         closes_cur = df_cur['close']
         closes_htf = df_htf['close']
@@ -90,14 +90,15 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         avg_gain = gain.ewm(com=period-1, adjust=False).mean()
         avg_loss = loss.ewm(com=period-1, adjust=False).mean()
         rs = avg_gain / avg_loss
-        rsi_cur = 100 - (100 / (1 + rs))
+        rsi_cur = 100 - (100 / (1 + rs.replace(0, np.nan))).fillna(100)
         
         # ATR Current (Robust calc to avoid ufunc error)
-        high_low = (df_cur['high'] - df_cur['low']).values
-        high_close = np.abs(df_cur['high'] - df_cur['close'].shift()).values
-        low_close = np.abs(df_cur['low'] - df_cur['close'].shift()).values
+        high_low = (df_cur['high'].values - df_cur['low'].values)
+        high_close = np.abs(df_cur['high'].values - df_cur['close'].shift().values)
+        low_close = np.abs(df_cur['low'].values - df_cur['close'].shift().values)
         true_range = np.nanmax([high_low, high_close, low_close], axis=0)
         atr_cur = pd.Series(true_range).rolling(period).mean()
+
 
         # EMA 200 (Current & HTF)
         ema_200_cur = closes_cur.ewm(span=200, adjust=False).mean()
