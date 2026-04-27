@@ -9,8 +9,13 @@ def fetch_all_tickers():
         res = requests.get(url)
         data = res.json()
         if isinstance(data, list):
-            df = pd.DataFrame(data)
-            # Ensure numeric
+            # FILTER: Only USDT pairs and exclude leveraged tokens/fiat pairs
+            filtered_data = [
+                d for d in data 
+                if d['symbol'].endswith('USDT') 
+                and not any(x in d['symbol'] for x in ['UPUSDT', 'DOWNUSDT', 'RUB', 'GBP', 'EUR', 'AUD', 'FDUSD', 'TUSD'])
+            ]
+            df = pd.DataFrame(filtered_data)
             for col in ['quoteVolume', 'priceChangePercent', 'lastPrice']:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
             return df

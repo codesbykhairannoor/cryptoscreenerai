@@ -128,10 +128,17 @@ def get_forex(timeframe: str = "15m"):
         if not asset_data: return {"status": "error", "message": "Failed to fetch data."}
         
         # Add Trend and Signal
-        last_price = float(asset_data.get('lastPrice', 0))
-        ema_200 = float(asset_data.get('ema_200', 0))
-        asset_data['trend'] = "Bullish" if last_price > ema_200 else "Bearish"
+        lp = float(asset_data.get('lastPrice', 0))
+        ema = float(asset_data.get('ema_200', 0))
+        atr = float(asset_data.get('atr', 0))
+        asset_data['trend'] = "Bullish" if lp > ema else "Bearish"
         asset_data['trade_signal'] = "Neutral"
+        
+        # Add Targets
+        asset_data['entry_price'] = round(lp, 2)
+        asset_data['sl_price'] = round(lp - (1.5 * atr), 2) if atr else round(lp - 2, 2)
+        asset_data['tp_price'] = round(lp + (3.0 * atr), 2) if atr else round(lp + 5, 2)
+        
         if asset_data.get('rsi', 50) < 30: asset_data['trade_signal'] = "🔥 BUY"
         elif asset_data.get('rsi', 50) > 70: asset_data['trade_signal'] = "🩸 SELL"
         
@@ -145,12 +152,19 @@ def get_idx(timeframe: str = "15m"):
         stocks = get_idx_data(interval=timeframe)
         status = get_idx_market_status()
         
-        # Add Trend and Signal for frontend compatibility
+        # Add Trend, Signal, and Targets for frontend compatibility
         for s in stocks:
             lp = float(s.get('lastPrice', 0))
             ema = float(s.get('ema_200', 0))
+            atr = float(s.get('atr', 0))
             s['trend'] = "Bullish" if lp > ema else "Bearish"
             s['trade_signal'] = "Neutral"
+            
+            # Targets
+            s['entry_price'] = round(lp, 0)
+            s['sl_price'] = round(lp - (2.0 * atr), 0) if atr else round(lp * 0.96, 0)
+            s['tp_price'] = round(lp + (4.0 * atr), 0) if atr else round(lp * 1.08, 0)
+            
             if s.get('demand_score', 0) > 70: s['trade_signal'] = "🔥 WHALE"
             
         return {"status": "success", "market_status": status, "data": stocks}
