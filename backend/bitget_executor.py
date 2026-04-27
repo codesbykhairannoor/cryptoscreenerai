@@ -22,34 +22,38 @@ class BitgetExecutor:
             }
         })
 
+    def get_balance_robust(self):
+        """Helper to fetch balance using multiple methods"""
+        try:
+            # Method 1: Swap Type
+            balance = self.exchange.fetch_balance(params={'type': 'swap'})
+            if balance and 'USDT' in balance:
+                return balance['USDT'].get('total', 0)
+        except:
+            pass
+        
+        try:
+            # Method 2: Generic
+            balance = self.exchange.fetch_balance()
+            if balance and 'USDT' in balance:
+                return balance['USDT'].get('total', 0)
+        except:
+            pass
+            
+        return 0
+
     def test_connection(self):
         try:
             if not self.api_key:
                 return False, "API Key Bitget tidak ditemukan di .env"
             
             print(f"Testing connection with Key: {self.api_key[:10]}...")
-            # Try multiple methods to fetch balance (Private API)
-            try:
-                # Method 1: Default Swap
-                balance = self.exchange.fetch_balance(params={'type': 'swap'})
-                if balance and 'USDT' in balance:
-                    usdt = balance.get('USDT', {}).get('total', 0)
-                    return True, f"Bitget Futures OK (Saldo: ${usdt})"
-                
-                # Method 2: Generic fallback
-                balance = self.exchange.fetch_balance()
-                if balance and 'USDT' in balance:
-                    usdt = balance.get('USDT', {}).get('total', 0)
-                    return True, f"Bitget Futures OK (Saldo: ${usdt})"
-            except Exception as e:
-                err_msg = str(e).lower()
-                if "permissions" in err_msg or "40014" in err_msg:
-                    print(f"PERMISSION ERROR: {err_msg}")
-                    # Don't return False yet, try ticker as proof of connection
-                else:
-                    print(f"Balance fetch failed: {e}")
-
-            # Fallback to ticker (Public API) - Proof that Keys/Connectivity are active
+            
+            usdt = self.get_balance_robust()
+            if usdt > 0:
+                return True, f"Bitget Futures OK (Saldo: ${round(usdt, 2)})"
+            
+            # Fallback to ticker proof
             try:
                 ticker = self.exchange.fetch_ticker('BTC/USDT:USDT')
                 if ticker and 'last' in ticker:
@@ -72,15 +76,13 @@ class BitgetExecutor:
             try: self.exchange.set_leverage(leverage, symbol)
             except: pass
             
-            # Fetch balance safely
-            balance = self.exchange.fetch_balance(params={'type': 'swap'})
-            total_usdt = balance.get('USDT', {}).get('total', 0)
+            total_usdt = self.get_balance_robust()
             
             max_safe = total_usdt * 0.2
             actual_spend = min(amount_usdt, max_safe)
             
             if actual_spend < 5:
-                return False, f"Saldo tidak cukup untuk trade aman (Min $5)"
+                return False, f"Saldo tidak cukup (Min $5). Saldo terdeteksi: ${total_usdt}"
 
             ticker = self.exchange.fetch_ticker(symbol)
             price = ticker['last']
@@ -90,6 +92,7 @@ class BitgetExecutor:
             return True, f"Trade {side.upper()} {symbol} BERHASIL! Margin: {actual_spend} USDT"
         except Exception as e:
             return False, f"Gagal Order: {str(e)}"
+
 
 if __name__ == "__main__":
     executor = BitgetExecutor()
