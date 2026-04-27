@@ -59,15 +59,15 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         url_cur = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=200"
         res_cur = requests.get(url_cur)
         df_cur = pd.DataFrame(res_cur.json(), columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
-        df_cur['close'] = df_cur['close'].astype(float)
-        df_cur['high'] = df_cur['high'].astype(float)
-        df_cur['low'] = df_cur['low'].astype(float)
+        for col in ['open', 'high', 'low', 'close']:
+            df_cur[col] = pd.to_numeric(df_cur[col], errors='coerce')
         
         # Fetch HTF data for MTF Trend
         url_htf = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={htf}&limit=200"
         res_htf = requests.get(url_htf)
         df_htf = pd.DataFrame(res_htf.json(), columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
-        df_htf['close'] = df_htf['close'].astype(float)
+        for col in ['open', 'high', 'low', 'close']:
+            df_htf[col] = pd.to_numeric(df_htf[col], errors='coerce')
         
         closes_cur = df_cur['close']
         closes_htf = df_htf['close']

@@ -26,11 +26,20 @@ class BitgetExecutor:
     def test_connection(self):
         try:
             print(f"Testing connection with Key: {self.api_key[:10]}...")
-            # Try a direct Futures ticker fetch instead of a full balance (which hits spot endpoints)
+            # Try a direct Futures ticker fetch
             ticker = self.exchange.fetch_ticker('BTC/USDT:USDT')
-            return True, f"Berhasil konek ke BITGET FUTURES! Harga BTC: {ticker['last']}"
+            if ticker and 'last' in ticker:
+                return True, f"Bitget Futures OK (BTC: ${ticker['last']})"
+            
+            # Fallback to balance check
+            balance = self.exchange.fetch_balance(params={'type': 'swap'})
+            if balance:
+                usdt = balance.get('USDT', {}).get('total', 0)
+                return True, f"Bitget Futures OK (Saldo: ${usdt})"
+                
+            return False, "Berhasil panggil API tapi data kosong."
         except Exception as e:
-            return False, f"Gagal konek: {str(e)}"
+            return False, f"Error: {str(e)}"
 
     def place_futures_order(self, symbol, side, leverage=5, amount_usdt=10):
         try:
