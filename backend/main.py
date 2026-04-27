@@ -31,43 +31,35 @@ def trade_checker_loop():
 
 def auto_trade_engine():
     """
-    The 'GG' Engine: Scans, Analyzes with AI, and Executes on Bitget.
+    The 'GG' Engine: Direct Execution based on Technical Signals.
+    (AI Confirmation disabled to prevent Quota Exhaustion)
     """
     executor = BitgetExecutor()
-    print("🚀 Auto-Trading Engine AKTIF! Memantau sinyal institusi...")
+    print("🚀 Auto-Trading Engine AKTIF! Eksekusi Langsung Berdasarkan Sinyal Teknis...")
     
     while True:
         try:
             # 1. Cari koin potensial
             raw_data = fetch_all_tickers()
-            # Gunakan logika existing untuk sortir
             candidates = analyze_and_sort(raw_data)
             
             for coin in candidates[:5]:
-                # Ambil indikator teknikal lengkap
                 tech = get_technical_indicators(coin['symbol'])
                 signal = tech.get('candle_pattern', "NONE")
                 ob = tech.get('order_block', "NONE")
+                fvg = tech.get('fvg', "NONE")
                 
-                # Filter: Hanya trade jika ada Order Block atau Strong Momentum
+                # Filter: Langsung eksekusi jika ada sinyal Teknis Kuat (OB atau Engulfing)
                 if ob != "NONE" or "ENGULFING" in signal:
-                    print(f"🔍 Menemukan sinyal potensial di {coin['symbol']}. Meminta konfirmasi AI...")
+                    print(f"🎯 Sinyal Valid di {coin['symbol']} ({ob}/{signal}). Menyiapkan eksekusi...")
                     
-                    # 2. Ambil Berita/Sentimen
-                    news = get_crypto_news(coin['symbol'])
-                    
-                    # 3. Konfirmasi AI (The Smart Decision)
-                    is_approved, reason = smart_trade_decision(coin['symbol'], tech, news)
-                    
-                    if is_approved:
-                        print(f"✅ AI SETUJU: {reason}")
-                        # 4. EKSEKUSI DI BITGET
-                        success, res = executor.place_futures_order(coin['symbol'], 'buy', leverage=5, amount_usdt=10)
-                        if success:
-                            log_trade(coin['symbol'], "BUY", coin['lastPrice'], 0, 0, "AUTO_AI")
-                            print(f"💰 PROFIT MISSION STARTED: {res}")
+                    # LANGSUNG EKSEKUSI DI BITGET (Tanpa AI)
+                    success, res = executor.place_futures_order(coin['symbol'], 'buy', leverage=5, amount_usdt=10)
+                    if success:
+                        log_trade(coin['symbol'], "BUY", coin['lastPrice'], 0, 0, "AUTO_TECH")
+                        print(f"💰 PROFIT MISSION STARTED: {res}")
                     else:
-                        print(f"❌ AI MENOLAK {coin['symbol']}: {reason}")
+                        print(f"⚠️ Gagal Eksekusi {coin['symbol']}: {res}")
                         
         except Exception as e:
             print(f"Auto-trade engine error: {e}")
