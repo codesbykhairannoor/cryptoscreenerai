@@ -1,6 +1,5 @@
 import requests
 import pandas as pd
-import pandas_ta as ta
 import numpy as np
 from patterns import detect_candle_patterns, detect_smart_money_concepts
 

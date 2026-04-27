@@ -1,10 +1,19 @@
 import pandas as pd
 import numpy as np
 
-def detect_candle_patterns(open_0, high_0, low_0, close_0, open_1, high_1, low_1, close_1):
+def detect_candle_patterns(df):
     """
-    Detects basic candlestick patterns based on current (0) and previous (1) candle.
+    Detects basic candlestick patterns from a DataFrame.
     """
+    if len(df) < 2: return "NONE"
+    
+    # Get last two candles (0 is latest, 1 is previous)
+    c0 = df.iloc[-1]
+    c1 = df.iloc[-2]
+    
+    open_0, high_0, low_0, close_0 = c0['open'], c0['high'], c0['low'], c0['close']
+    open_1, high_1, low_1, close_1 = c1['open'], c1['high'], c1['low'], c1['close']
+    
     patterns = []
     
     # Calculate body and wicks
@@ -44,25 +53,13 @@ def detect_smart_money_concepts(df):
     """
     if len(df) < 5: return {"ob": "NONE", "fvg": "NONE"}
     
-    # Get last 5 candles
-    last_3 = df.iloc[-3:]
-    
-    # 1. Fair Value Gap (FVG) Detection
-    # Bullish FVG: Low(n) > High(n-2)
-    # Bearish FVG: High(n) < Low(n-2)
     fvg = "NONE"
-    # Current FVG (Gap between current low and 2 candles ago high)
     if df.iloc[-1]['low'] > df.iloc[-3]['high']:
         fvg = "BULLISH FVG"
     elif df.iloc[-1]['high'] < df.iloc[-3]['low']:
         fvg = "BEARISH FVG"
 
-    # 2. Order Block (Simplified)
-    # Bullish OB: Last bearish candle before a strong bullish move
-    # Bearish OB: Last bullish candle before a strong bearish move
     ob = "NONE"
-    
-    # Check if last move was impulsive (body > 2x average of last 5)
     avg_body = abs(df['close'] - df['open']).tail(10).mean()
     last_body = abs(df.iloc[-1]['close'] - df.iloc[-1]['open'])
     
