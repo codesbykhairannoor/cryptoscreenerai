@@ -23,29 +23,51 @@ app.add_middleware(
 def auto_trade_engine():
     """
     The 'GG' Engine: Direct Execution based on Technical Signals.
+    Runs 24/7 on Railway - Laptop/HP can be OFF.
     """
     executor = BitgetExecutor()
-    print("🚀 Auto-Trading Engine AKTIF! Eksekusi Langsung Berdasarkan Sinyal Teknis...")
+    print("🚀 [SYSTEM] Auto-Trading Engine AKTIF!")
+    print("🚀 [INFO] Bot berjalan 24/7 di Cloud. Laptop/HP mati tetap cuan!")
     
     while True:
         try:
+            print("🔍 [SCAN] Memantau sinyal institusi...")
             raw_data = fetch_all_tickers()
             candidates = analyze_and_sort(raw_data)
             
             for coin in candidates[:5]:
-                tech = get_technical_indicators(coin['symbol'])
-                signal = tech.get('candle_pattern', "NONE")
-                ob = tech.get('order_block', "NONE")
+                symbol = coin['symbol']
+                tech = get_technical_indicators(symbol)
                 
-                if ob != "NONE" or "ENGULFING" in signal:
-                    print(f"🎯 Sinyal Valid di {coin['symbol']} ({ob}/{signal}). Menyiapkan eksekusi...")
-                    success, res = executor.place_futures_order(coin['symbol'], 'buy', leverage=5, amount_usdt=10)
+                # Intelligence Check
+                ob = tech.get('order_block', "NONE")
+                fvg = tech.get('fvg', "NONE")
+                pattern = tech.get('candle_pattern', "NONE")
+                rsi = tech.get('rsi', 50)
+                
+                # Criteria: Trend + Structure + Momentum
+                is_uptrend = coin.get('trend', '').startswith('Bullish')
+                
+                print(f"👀 [ANALYSIS] {symbol}: Trend={is_uptrend}, OB={ob}, FVG={fvg}, RSI={rsi}")
+                
+                # Smart Decision Logic
+                if (ob != "NONE" or fvg != "NONE") and rsi < 40:
+                    print(f"🎯 [EXECUTE] Sinyal GG ditemukan di {symbol}! Struktur: {ob}/{fvg}")
+                    
+                    # Entry strategy: Pullback limit for better R:R
+                    success, res = executor.place_futures_order(symbol, 'buy', leverage=5, amount_usdt=10)
                     if success:
-                        log_trade(coin['symbol'], "BUY", coin['lastPrice'], 0, 0, "AUTO_TECH")
-                        print(f"💰 PROFIT MISSION STARTED: {res}")
+                        log_trade(symbol, "BUY_AUTO", coin['lastPrice'], 0, 0, f"STRUCT: {ob}/{fvg}")
+                        print(f"💰 [SUCCESS] Trade Berhasil! {res}")
+                    else:
+                        print(f"⚠️ [FAILED] Gagal eksekusi {symbol}: {res}")
+                else:
+                    print(f"⏭️ [SKIP] {symbol}: Sinyal belum cukup kuat.")
+                    
         except Exception as e:
-            print(f"Auto-trade engine error: {e}")
-        time.sleep(300)
+            print(f"❌ [CRITICAL] Engine Error: {e}")
+        
+        time.sleep(300) # Re-scan every 5 minutes
 
 @app.on_event("startup")
 def startup_event():
