@@ -4,7 +4,9 @@ from data_fetcher import (
     fetch_all_tickers, get_order_book_details, get_technical_indicators, 
     get_forex_data, get_idx_data, get_idx_market_status
 )
-from ai_model import analyze_and_sort
+from bitget_executor import BitgetExecutor
+from sentiment import get_crypto_news
+from ai_model import analyze_and_sort, smart_trade_decision
 from database import init_db, log_trade, check_pending_trades, get_performance_stats
 import threading
 import time
@@ -27,12 +29,57 @@ def trade_checker_loop():
             print(f"Trade checker error: {e}")
         time.sleep(60) # Check every minute
 
+def auto_trade_engine():
+    """
+    The 'GG' Engine: Scans, Analyzes with AI, and Executes on Bitget.
+    """
+    executor = BitgetExecutor()
+    print("🚀 Auto-Trading Engine AKTIF! Memantau sinyal institusi...")
+    
+    while True:
+        try:
+            # 1. Cari koin potensial
+            raw_data = fetch_all_tickers()
+            # Gunakan logika existing untuk sortir
+            candidates = analyze_and_sort(raw_data)
+            
+            for coin in candidates[:5]:
+                # Ambil indikator teknikal lengkap
+                tech = get_technical_indicators(coin['symbol'])
+                signal = tech.get('candle_pattern', "NONE")
+                ob = tech.get('order_block', "NONE")
+                
+                # Filter: Hanya trade jika ada Order Block atau Strong Momentum
+                if ob != "NONE" or "ENGULFING" in signal:
+                    print(f"🔍 Menemukan sinyal potensial di {coin['symbol']}. Meminta konfirmasi AI...")
+                    
+                    # 2. Ambil Berita/Sentimen
+                    news = get_crypto_news(coin['symbol'])
+                    
+                    # 3. Konfirmasi AI (The Smart Decision)
+                    is_approved, reason = smart_trade_decision(coin['symbol'], tech, news)
+                    
+                    if is_approved:
+                        print(f"✅ AI SETUJU: {reason}")
+                        # 4. EKSEKUSI DI BITGET
+                        success, res = executor.place_futures_order(coin['symbol'], 'buy', leverage=5, amount_usdt=10)
+                        if success:
+                            log_trade(coin['symbol'], "BUY", coin['lastPrice'], 0, 0, "AUTO_AI")
+                            print(f"💰 PROFIT MISSION STARTED: {res}")
+                    else:
+                        print(f"❌ AI MENOLAK {coin['symbol']}: {reason}")
+                        
+        except Exception as e:
+            print(f"Auto-trade engine error: {e}")
+        time.sleep(300) # Scan ulang tiap 5 menit
+
 @app.on_event("startup")
 def startup_event():
     init_db()
-    # Start the background thread for checking TP/SL
-    thread = threading.Thread(target=trade_checker_loop, daemon=True)
-    thread.start()
+    # Checker TP/SL existing
+    threading.Thread(target=trade_checker_loop, daemon=True).start()
+    # GG Engine: Auto-Trading
+    threading.Thread(target=auto_trade_engine, daemon=True).start()
 
 @app.get("/")
 def read_root():

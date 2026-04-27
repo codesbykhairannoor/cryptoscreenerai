@@ -20,6 +20,41 @@ def analyze_and_sort(df):
         
     return df_sorted.to_dict('records')
 
+def smart_trade_decision(symbol, technicals, news):
+    """
+    Final Filter: Uses Gemini to decide if we should actually place the trade.
+    Returns: (bool, str_reason)
+    """
+    if not client: return False, "Gemini Client not initialized"
+    
+    try:
+        prompt = f"""
+        TIDAK BOLEH ASAL TRADE! Anda adalah Risk Manager Pro.
+        Analisa apakah kita harus masuk ke trade ini sekarang?
+        
+        Aset: {symbol}
+        Data Teknikal: {technicals}
+        Berita Terkini: {news}
+        
+        Aturan: 
+        1. Hanya katakan SETUJU jika teknikal (RSI, Trend, OB/FVG) DAN berita mendukung.
+        2. Jika berita negatif atau teknikal jenuh (overbought), katakan TOLAK.
+        
+        Format Jawaban Harus:
+        KEPUTUSAN: [SETUJU/TOLAK]
+        ALASAN: [Berikan alasan singkat dan padat]
+        """
+        
+        response = client.models.generate_content(
+            model='gemini-1.5-flash',
+            contents=prompt
+        )
+        text = response.text
+        decision = "SETUJU" in text.upper()
+        return decision, text
+    except Exception as e:
+        return False, f"AI Error: {str(e)}"
+
 def analyze_market_data(data_json):
     if not client:
         return "API Key Gemini belum diset di .env"
