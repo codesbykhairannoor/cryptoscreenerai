@@ -304,6 +304,19 @@ def get_idx(timeframe: str = "15m"):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.get("/api/bitget-status")
+def get_bitget_status():
+    try:
+        executor = BitgetExecutor()
+        success, message = executor.test_connection()
+        return {
+            "status": "success" if success else "error",
+            "message": message,
+            "connected": success
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e), "connected": False}
+
 @app.get("/api/performance")
 def get_performance():
     try:
