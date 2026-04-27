@@ -28,16 +28,19 @@ class BitgetExecutor:
                 return False, "API Key Bitget tidak ditemukan di .env"
             
             print(f"Testing connection with Key: {self.api_key[:10]}...")
-            # Try a direct Futures ticker fetch
+            # Try balance check first (Private API)
+            try:
+                balance = self.exchange.fetch_balance(params={'type': 'swap'})
+                if balance and 'USDT' in balance:
+                    usdt = balance.get('USDT', {}).get('total', 0)
+                    return True, f"Bitget Futures OK (Saldo: ${usdt})"
+            except Exception as e:
+                print(f"Balance fetch failed, trying ticker: {e}")
+
+            # Fallback to ticker (Public API)
             ticker = self.exchange.fetch_ticker('BTC/USDT:USDT')
             if ticker and 'last' in ticker:
                 return True, f"Bitget Futures OK (BTC: ${ticker['last']})"
-            
-            # Fallback to balance check
-            balance = self.exchange.fetch_balance(params={'type': 'swap'})
-            if balance:
-                usdt = balance.get('USDT', {}).get('total', 0)
-                return True, f"Bitget Futures OK (Saldo: ${usdt})"
                 
             return False, "Berhasil panggil API tapi data kosong."
         except Exception as e:
