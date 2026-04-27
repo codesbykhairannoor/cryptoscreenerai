@@ -11,13 +11,14 @@ class BitgetExecutor:
         self.secret_key = os.getenv("BITGET_SECRET_KEY")
         self.passphrase = os.getenv("BITGET_PASSPHRASE", "")
         
+        # Use bitget.cc (Better for Indonesia/SE Asia)
         self.exchange = ccxt.bitget({
             'apiKey': self.api_key,
             'secret': self.secret_key,
             'password': self.passphrase,
             'enableRateLimit': True,
             'timeout': 30000,
-            'hostname': 'bitgetapi.com',
+            'hostname': 'bitget.cc', 
             'options': {
                 'defaultType': 'swap',
             }

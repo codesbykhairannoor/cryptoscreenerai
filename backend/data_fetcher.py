@@ -10,9 +10,8 @@ def fetch_all_tickers():
         data = res.json()
         if isinstance(data, list):
             df = pd.DataFrame(data)
-            df['quoteVolume'] = pd.to_numeric(df['quoteVolume'], errors='coerce')
-            df['priceChangePercent'] = pd.to_numeric(df['priceChangePercent'], errors='coerce')
-            df['lastPrice'] = pd.to_numeric(df['lastPrice'], errors='coerce')
+            for col in ['quoteVolume', 'priceChangePercent', 'lastPrice']:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
             return df
         return pd.DataFrame()
     except Exception as e:
@@ -53,25 +52,23 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         htf_map = {"15m": "1h", "1h": "4h", "4h": "1d", "1d": "1w"}
         htf = htf_map.get(interval, "1h")
         
-        # Fetch Current
         url_cur = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=200"
         res_cur = requests.get(url_cur)
         data_cur = res_cur.json()
-        if not isinstance(data_cur, list): return {}
+        if not isinstance(data_cur, list) or len(data_cur) < period: return {}
         
         df_cur = pd.DataFrame(data_cur, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
         for col in ['open', 'high', 'low', 'close']:
-            df_cur[col] = pd.to_numeric(df_cur[col], errors='coerce').astype(float)
+            df_cur[col] = pd.to_numeric(df_cur[col], errors='coerce')
         
-        # Fetch HTF
         url_htf = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={htf}&limit=200"
         res_htf = requests.get(url_htf)
         data_htf = res_htf.json()
-        if not isinstance(data_htf, list): return {}
-        
-        df_htf = pd.DataFrame(data_htf, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
-        for col in ['open', 'high', 'low', 'close']:
-            df_htf[col] = pd.to_numeric(df_htf[col], errors='coerce').astype(float)
+        if not isinstance(data_htf, list): df_htf = df_cur.copy()
+        else:
+            df_htf = pd.DataFrame(data_htf, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
+            for col in ['open', 'high', 'low', 'close']:
+                df_htf[col] = pd.to_numeric(df_htf[col], errors='coerce')
         
         closes_cur = df_cur['close']
         closes_htf = df_htf['close']
@@ -86,11 +83,10 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         rsi_cur = 100 - (100 / (1 + rs.replace(0, np.nan))).fillna(100)
         
         # ATR
-        high_low = df_cur['high'] - df_cur['low']
-        high_close = (df_cur['high'] - df_cur['close'].shift()).abs()
-        low_close = (df_cur['low'] - df_cur['close'].shift()).abs()
-        ranges = pd.concat([high_low, high_close, low_close], axis=1)
-        true_range = np.max(ranges.values, axis=1)
+        high_low = (df_cur['high'] - df_cur['low']).values
+        high_close = np.abs(df_cur['high'] - df_cur['close'].shift()).values
+        low_close = np.abs(df_cur['low'] - df_cur['close'].shift()).values
+        true_range = np.nanmax([high_low, high_close, low_close], axis=0)
         atr_cur = pd.Series(true_range).rolling(period).mean()
 
         # EMA 200
@@ -107,7 +103,8 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             "ema_200_htf": round(ema_200_htf.iloc[-1], 2) if not ema_200_htf.empty else 0,
             "candle_pattern": pattern,
             "order_block": smc["ob"],
-            "fvg": smc["fvg"]
+            "fvg": smc["fvg"],
+            "htf": htf
         }
     except Exception as e:
         print(f"Error indicators for {symbol}: {e}")
@@ -134,14 +131,16 @@ def get_forex_data(timeframe="15m"):
 def get_idx_data():
     try:
         url = "https://scanner.tradingview.com/indonesia/scanner"
+        # Ultra Compatible Payload based on user's browser capture
         payload = {
             "columns": ["ticker-view", "close", "change", "volume", "market_cap_basic"],
             "filter": [{"left": "is_primary", "operation": "equal", "right": True}],
+            "ignore_unknown_fields": False,
             "options": {"lang": "id_ID"},
             "range": [0, 15],
             "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"}
         }
-        res = requests.post(url, json=payload).json()
+        res = requests.post(url, json=payload, timeout=10).json()
         stocks = []
         for item in res.get('data', []):
             d = item['d']
@@ -153,8 +152,9 @@ def get_idx_data():
                 "mcap": d[4]
             })
         return stocks
-    except Exception:
+    except Exception as e:
+        print(f"IDX Fetch Error: {e}")
         return []
 
 def get_idx_market_status():
-    return "OPEN" # Simplified for now
+    return "OPEN"

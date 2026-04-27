@@ -9,14 +9,17 @@ api_key = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=api_key) if api_key else None
 
 def analyze_and_sort(df):
-    # Filter for active coins with positive momentum
-    df_filtered = df[(df['quoteVolume'] > 1000000) & (df['priceChangePercent'] > 0)]
-    # Sort by highest momentum
-    df_sorted = df_filtered.sort_values(by='priceChangePercent', ascending=False).head(10)
+    if df.empty: return []
     
-    # Fallback to highest volume if not enough positive momentum coins
+    # Filter for active coins with decent volume
+    df_filtered = df[df['quoteVolume'] > 500000] # Lowered from 1M
+    
+    # Sort by highest momentum first
+    df_sorted = df_filtered.sort_values(by='priceChangePercent', ascending=False).head(15)
+    
+    # If not enough coins with positive change, just show highest volume ones
     if len(df_sorted) < 5:
-        df_sorted = df.sort_values(by='quoteVolume', ascending=False).head(10)
+        df_sorted = df.sort_values(by='quoteVolume', ascending=False).head(15)
         
     return df_sorted.to_dict('records')
 
