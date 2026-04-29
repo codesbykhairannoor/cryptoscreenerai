@@ -72,8 +72,7 @@ class BitgetWebSocketSniper:
                                     print(f"⚡ [ALERT] Volatility Spike Detected! Volume: {vol_pct}%")
                                     print(f"🚀 [WS SNIPER] TRIGGERED ON {symbol}!")
                                     self.last_trade_time[symbol] = now
-                                else:
-                                    print(f"📊 [WS V2] New Candle Data: {symbol}! (Normal)")
+                                # Muted: else: print(f"📊 [WS V2] New Candle Data: {symbol}! (Normal)")
             except Exception as e:
                 print(f"🔄 [WS RECONNECT] Error: {e}. Retrying in 5s...")
                 await asyncio.sleep(5)

@@ -184,6 +184,9 @@ class BitgetExecutor:
                 else:
                     pnl_pct = (entry_price - mark_price) / entry_price * 100
                 
+                # MONITOR LOG: Show user the current state
+                print(f"📊 [MONITOR] {symbol} | Side: {side.upper()} | PNL: {round(pnl_pct, 2)}% | Price: {mark_price}")
+                
                 # 1. BREAK-EVEN PROTECTION (At 2% profit)
                 # If we are up 2%, move SL to Entry + tiny buffer
                 if pnl_pct >= 2.0 and pnl_pct < 5.0:

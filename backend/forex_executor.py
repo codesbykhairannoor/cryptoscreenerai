@@ -155,9 +155,19 @@ class ForexExecutor:
         while True:
             try:
                 # 1. Intermarket Correlation Check: DXY (Dollar Index)
-                dxy_data = get_forex_data("DXY") # Need to ensure data_fetcher supports DXY
+                dxy_data = get_forex_data("DXY") 
                 fx_data = get_forex_data("XAUUSD")
                 
+                # MONITOR ACTIVE FOREX POSITIONS
+                try:
+                    positions = self.connection.get_positions()
+                    for pos in positions:
+                        if pos['symbol'].startswith('XAUUSD'):
+                            pnl = pos.get('unrealizedProfit', 0)
+                            print(f"📊 [FOREX MONITOR] Gold Position | PNL: ${round(pnl, 2)} | Price: {pos['currentPrice']}")
+                except:
+                    pass
+
                 if dxy_data and fx_data:
                     dxy_trend = dxy_data.get('trend', 'NEUTRAL')
                     gold_inst_flow = fx_data.get('inst_flow', "NORMAL")

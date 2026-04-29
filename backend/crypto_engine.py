@@ -41,11 +41,15 @@ def run_crypto_engine():
     
     while True:
         try:
+            # 1. MONITOR ACTIVE POSITIONS (PNL Logging)
+            # This shows the user exactly what the bot is managing
             executor.manage_open_positions()
             check_pending_trades()
             
+            # 2. GLOBAL CONTEXT & HEARTBEAT
             global_context = get_global_market_data()
-            print(f"🌍 [GLOBAL] {global_context}")
+            if int(time.time()) % 300 < 35:
+                print(f"🌍 [GLOBAL] {global_context}")
             
             raw_data = fetch_all_tickers()
             candidates = analyze_and_sort(raw_data)
@@ -56,25 +60,37 @@ def run_crypto_engine():
                     break
 
                 symbol = coin['symbol']
-                is_vol_spike = detect_volatility_spike(symbol)
+                entry = coin['lastPrice']
                 
+                # ANTI-FOMO FILTER: 
+                # Don't buy if price is already up > 10% in 24h (Pucuk Check)
+                price_change_24h = coin.get('priceChangePercent', 0)
+                if price_change_24h > 10.0:
+                    continue
+
                 tech = get_technical_indicators(symbol)
+                rsi = tech.get('rsi', 50)
+                
+                # OVERBOUGHT GUARD: Don't buy if RSI > 65
+                if rsi > 65:
+                    continue
+
+                is_vol_spike = detect_volatility_spike(symbol)
                 inst_flow = tech.get('inst_flow', "NORMAL")
                 retail = get_retail_sentiment(symbol)
                 
                 should_trade = False
                 reason = ""
                 
-                # RELAXED: 1.5x Vol Spike OR Institutional Accumulation
-                if is_vol_spike:
+                # SMART SCAN: Institutional Accumulation + RSI Bottom
+                if inst_flow == "INSTITUTIONAL_ACCUMULATION" and rsi < 50:
+                    should_auto = True
+                    reason = "INSTITUTIONAL ACCUMULATION (BOTTOM)"
+                elif is_vol_spike and rsi < 60:
                     should_trade = True
-                    reason = "VOLATILITY SNIPER"
-                elif inst_flow == "INSTITUTIONAL_ACCUMULATION" and retail['ratio'] < 2.0:
-                    should_trade = True
-                    reason = "INSTITUTIONAL FLOW"
+                    reason = "VOLATILITY REJECTION"
                 
                 if should_trade:
-                    entry = coin['lastPrice']
                     # SMART FALLBACK: Calculate SL/TP if AI model doesn't provide them
                     tp = coin.get('tp_price') or (entry * 1.03) # 3% Target
                     sl = coin.get('sl_price') or (entry * 0.98) # 2% Stop Loss
@@ -85,12 +101,7 @@ def run_crypto_engine():
                         last_exec_time = time.time()
                         log_trade(symbol, entry, tp, sl, market='crypto')
                         print(f"✅ [CRYPTO SUCCESS] Auto-Order Filled at ${entry}")
-                    else:
-                        print(f"⚠️ [CRYPTO FAILED] {symbol}: {res}")
             
-            if int(time.time()) % 300 < 30:
-                print("🛰️ [CRYPTO HEARTBEAT] Active Scanning...")
-                
         except Exception as e:
             print(f"❌ [CRYPTO ERROR] {e}")
         
