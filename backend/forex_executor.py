@@ -126,32 +126,35 @@ class ForexExecutor:
                     inst_flow = fx_data.get('inst_flow', "NORMAL")
                     rsi = fx_data.get('rsi', 50)
                     
-                    # SMART AUTO-TRADE: Institutional Flow + Oversold/Overbought RSI
+                    # SMART AUTO-TRADE: Institutional Flow + High Volatility
                     should_auto = False
                     side = 'buy'
+                    trades_to_open = 3 # Default batch
                     
-                    if inst_flow == "INSTITUTIONAL_ACCUMULATION" and rsi < 40:
+                    # Detect High Volatility (Turbo Mode)
+                    is_turbo = False
+                    if fx_data.get('volatility_spike') or abs(fx_data.get('price_change_5m', 0)) > 0.5:
+                        is_turbo = True
+                        trades_to_open = 5 # Open 5 positions if market is moving fast!
+                        print(f"🔥 [FOREX TURBO MODE] High Volatility Detected! Preparing {trades_to_open} positions...")
+                    
+                    if inst_flow == "INSTITUTIONAL_ACCUMULATION" and rsi < 45:
                         should_auto = True
                         side = 'buy'
-                    elif inst_flow == "INSTITUTIONAL_ABSORPTION" and rsi > 65:
+                    elif inst_flow == "INSTITUTIONAL_ABSORPTION" and rsi > 60:
                         should_auto = True
                         side = 'sell'
                         
                     if should_auto and (time.time() - last_auto_trade > AUTO_COOLDOWN):
-                        print(f"🎯 [FOREX AUTO-SNIPER] Institutional Setup Found on XAUUSD! Trading {side.upper()}...")
+                        print(f"🎯 [FOREX AUTO-SNIPER] Setup Found! Trading {trades_to_open} positions on {side.upper()}...")
                         
-                        # DYNAMIC RISK CALCULATOR: Use 1.5x ATR or fixed pips for Gold
                         price = fx_data['lastPrice']
-                        atr = fx_data.get('atr', 1.5) # Default 1.5 pips volatility
+                        atr = fx_data.get('atr', 1.5)
                         
-                        if side == 'buy':
-                            tp = price + (atr * 2) 
-                            sl = price - (atr * 1.5)
-                        else:
-                            tp = price - (atr * 2)
-                            sl = price + (atr * 1.5)
+                        tp = price + (atr * 2) if side == 'buy' else price - (atr * 2)
+                        sl = price - (atr * 1.5) if side == 'buy' else price + (atr * 1.5)
                             
-                        success = self.place_xauusd_scalp_batch(side, trades_count=3, volume=0.01, tp=tp, sl=sl)
+                        success = self.place_xauusd_scalp_batch(side, trades_count=trades_to_open, volume=0.01, tp=tp, sl=sl)
                         if success:
                             last_auto_trade = time.time()
                 
