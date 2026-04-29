@@ -77,7 +77,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             df_htf = df_cur.copy()
         else:
             df_htf = pd.DataFrame(data_htf, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
-            for col in ['open', 'high', 'low', 'close']:
+            for col in ['open', 'high', 'low', 'close', 'vol']:
                 df_htf[col] = pd.to_numeric(df_htf[col], errors='coerce').astype(float)
         
         closes_cur = df_cur['close']
@@ -101,19 +101,22 @@ def get_technical_indicators(symbol, interval="15m", period=14):
 
 
         # 1. VWAP CALCULATION (Institutional Benchmark)
-        # Formula: cumulative(typical_price * volume) / cumulative(volume)
         typical_price = (df_cur['high'] + df_cur['low'] + df_cur['close']) / 3
-        vwap = (typical_price * df_cur['vol']).cumsum() / df_cur['vol'].cumsum()
-        last_vwap = round(vwap.iloc[-1], 2)
+        vol_sum = df_cur['vol'].cumsum()
+        vwap = (typical_price * df_cur['vol']).cumsum() / vol_sum
+        last_vwap = round(vwap.iloc[-1], 2) if not vwap.empty else 0
         
-        # 2. LIQUIDITY SWEEP DETECTION (Anti-Stop Hunt)
-        # Logic: Price dips below previous low but closes back above with volume
+        # 2. EMA 200 (Current & HTF) - RESTORED
+        ema_200_cur = closes_cur.ewm(span=200, adjust=False).mean()
+        ema_200_htf = closes_htf.ewm(span=200, adjust=False).mean()
+
+        # 3. LIQUIDITY SWEEP DETECTION (Anti-Stop Hunt)
         last_candle = df_cur.iloc[-1]
         prev_candle = df_cur.iloc[-2]
         avg_vol = df_cur['vol'].rolling(20).mean().iloc[-1]
         is_sweep = False
         if last_candle['low'] < prev_candle['low'] and last_candle['close'] > prev_candle['low']:
-            if float(last_candle['vol']) > float(avg_vol) * 1.5: # Volume confirmation
+            if float(last_candle['vol']) > float(avg_vol) * 1.5: 
                 is_sweep = True
 
         # Smart detection
@@ -125,7 +128,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             "rsi": round(rsi_cur.iloc[-1], 2) if not rsi_cur.empty else 50,
             "atr": round(atr_cur.iloc[-1], 4) if not atr_cur.empty else 0,
             "vwap": last_vwap,
-            "vwap_dist": round((closes_cur.iloc[-1] - last_vwap) / last_vwap * 100, 2),
+            "vwap_dist": round((closes_cur.iloc[-1] - last_vwap) / last_vwap * 100, 2) if last_vwap > 0 else 0,
             "is_liquidity_sweep": is_sweep,
             "ema_200": round(ema_200_cur.iloc[-1], 2) if not ema_200_cur.empty else 0,
             "ema_200_htf": round(ema_200_htf.iloc[-1], 2) if not ema_200_htf.empty else 0,
