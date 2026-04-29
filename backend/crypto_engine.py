@@ -34,19 +34,27 @@ def run_crypto_engine():
     """
     executor = BitgetExecutor()
     from database import check_pending_trades
+    from sentiment import get_market_news_digest, get_crypto_news
     print("🚀 [CRYPTO] Trading Engine AKTIF!")
     
     last_exec_time = 0
+    last_news_report = 0
     COOLDOWN_PERIOD = 600 
     
     while True:
         try:
             # 1. MONITOR ACTIVE POSITIONS (PNL Logging)
-            # This shows the user exactly what the bot is managing
             executor.manage_open_positions()
             check_pending_trades()
             
-            # 2. GLOBAL CONTEXT & HEARTBEAT
+            # 2. PERIODIC NEWS DIGEST (Every 10 Mins)
+            if time.time() - last_news_report > 600:
+                digest = get_market_news_digest()
+                print(f"🗞️ [NEWS DIGEST] Sentiment: {digest['sentiment']}")
+                print(f"🗞️ [TOP CRYPTO] {digest['crypto_top']}")
+                last_news_report = time.time()
+
+            # 3. GLOBAL CONTEXT
             global_context = get_global_market_data()
             if int(time.time()) % 300 < 35:
                 print(f"🌍 [GLOBAL] {global_context}")
@@ -62,40 +70,40 @@ def run_crypto_engine():
                 symbol = coin['symbol']
                 entry = coin['lastPrice']
                 
-                # ANTI-FOMO FILTER: 
-                # Don't buy if price is already up > 10% in 24h (Pucuk Check)
+                # ANTI-FOMO FILTER
                 price_change_24h = coin.get('priceChangePercent', 0)
-                if price_change_24h > 10.0:
+                if price_change_24h > 15.0: # Relaxed slightly but still safe
                     continue
 
                 tech = get_technical_indicators(symbol)
                 rsi = tech.get('rsi', 50)
                 
-                # OVERBOUGHT GUARD: Don't buy if RSI > 65
-                if rsi > 65:
+                if rsi > 70: # Overbought
                     continue
 
                 is_vol_spike = detect_volatility_spike(symbol)
                 inst_flow = tech.get('inst_flow', "NORMAL")
-                retail = get_retail_sentiment(symbol)
                 
                 should_trade = False
                 reason = ""
                 
                 # SMART SCAN: Institutional Accumulation + RSI Bottom
                 if inst_flow == "INSTITUTIONAL_ACCUMULATION" and rsi < 50:
-                    should_auto = True
-                    reason = "INSTITUTIONAL ACCUMULATION (BOTTOM)"
+                    should_trade = True
+                    reason = "ACCUMULATION (BOTTOM)"
                 elif is_vol_spike and rsi < 60:
                     should_trade = True
                     reason = "VOLATILITY REJECTION"
                 
                 if should_trade:
-                    # SMART FALLBACK: Calculate SL/TP if AI model doesn't provide them
-                    tp = coin.get('tp_price') or (entry * 1.03) # 3% Target
-                    sl = coin.get('sl_price') or (entry * 0.98) # 2% Stop Loss
+                    # 4. FUTURE PROJECTION: Combined News + Tech
+                    news_context = get_crypto_news(symbol)
+                    print(f"🔮 [FUTURE OUTLOOK] {symbol}: Sinyal {reason} terdeteksi. RSI {rsi} menunjukkan ruang gerak naik. {news_context}")
                     
-                    print(f"🔍 [CRYPTO AUTO-TRADE] {reason} on {symbol} | Target: {round(tp, 4)} | SL: {round(sl, 4)}")
+                    tp = coin.get('tp_price') or (entry * 1.03) 
+                    sl = coin.get('sl_price') or (entry * 0.98) 
+                    
+                    print(f"🔍 [CRYPTO AUTO-TRADE] Executing on {symbol} | Target: {round(tp, 4)} | SL: {round(sl, 4)}")
                     success, res = executor.place_futures_order(symbol, 'buy', tp_price=tp, sl_price=sl)
                     if success:
                         last_exec_time = time.time()

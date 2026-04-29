@@ -57,27 +57,55 @@ def get_forex_news():
     except:
         return "Forex: News analysis in progress..."
 
+def get_market_news_digest():
+    """
+    Summarizes the general market sentiment from all sources.
+    This is what the bot 'thinks' about the current future trend.
+    """
+    try:
+        # 1. Crypto Headlines
+        c_url = "https://www.coindesk.com/arc/outboundfeeds/rss/"
+        c_res = requests.get(c_url, timeout=5)
+        c_root = ET.fromstring(c_res.content)
+        c_headlines = [item.find('title').text for item in c_root.findall('.//item')[:3]]
+        
+        # 2. Forex Headlines
+        f_url = "https://content.dailyfx.com/feeds/forex_market_news"
+        f_res = requests.get(f_url, timeout=5)
+        f_root = ET.fromstring(f_res.content)
+        f_headlines = [item.find('title').text for item in f_root.findall('.//item')[:3]]
+        
+        # 3. Analyze Sentiment
+        all_news = " ".join(c_headlines + f_headlines).upper()
+        sentiment = "NEUTRAL"
+        if any(x in all_news for x in ["BULLISH", "SURGE", "GAINS", "RECOVERY", "ADOPTION", "EASE"]):
+            sentiment = "BULLISH 🚀"
+        elif any(x in all_news for x in ["BEARISH", "CRASH", "DROP", "INFLATION", "HIKE", "CRACKDOWN"]):
+            sentiment = "BEARISH 📉"
+            
+        return {
+            "sentiment": sentiment,
+            "crypto_top": c_headlines[0] if c_headlines else "Quiet",
+            "forex_top": f_headlines[0] if f_headlines else "Stable"
+        }
+    except:
+        return {"sentiment": "PENDING", "crypto_top": "Scanning...", "forex_top": "Scanning..."}
+
 def get_crypto_news(symbol):
     """
-    Fetches real news headlines from CoinDesk RSS feed and checks for symbol mentions.
+    Fetches real news headlines and checks for symbol mentions.
     """
     try:
         url = "https://www.coindesk.com/arc/outboundfeeds/rss/"
         res = requests.get(url, timeout=5)
         root = ET.fromstring(res.content)
         
-        headlines = []
-        for item in root.findall('.//item'):
-            title = item.find('title').text
-            headlines.append(title)
-        
+        headlines = [item.find('title').text for item in root.findall('.//item')]
         clean_symbol = symbol.replace("USDT", "").upper()
         mentions = [h for h in headlines if clean_symbol in h.upper()]
         
         if mentions:
-            return f"Recent News for {clean_symbol}: {mentions[0]}"
-        
-        # Fallback to general market sentiment if specific news not found
-        return f"Market Sentiment for {clean_symbol} is currently tied to broader BTC macro trends."
-    except Exception as e:
-        return "Market news currently being analyzed by AI..."
+            return f"📰 [NEWS] {clean_symbol}: {mentions[0]}"
+        return f"💡 [SENTIMENT] {clean_symbol} following BTC/ETH macro trends."
+    except:
+        return "Analyzing market pulse..."
