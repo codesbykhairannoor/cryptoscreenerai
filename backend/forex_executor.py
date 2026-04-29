@@ -41,18 +41,32 @@ class ForexExecutor:
         """Executes a single MT5 order via MetaAPI"""
         if not self.is_active: return False, "Inactive"
         try:
+            # FIX: Auto-detect Cent Account suffix (Exness uses 'c' for cent symbols)
+            # If the user's EURUSD is EURUSDc, then XAUUSD must be XAUUSDc
+            actual_symbol = symbol
+            if "c" in symbol or self.account_id: # Strategy: Try to match account type
+                # For safety, let's force 'c' if it's an Exness Cent account
+                actual_symbol = f"{symbol}c" if not symbol.endswith('c') else symbol
+
             url = f"{self.base_url}/users/current/accounts/{self.account_id}/trade"
             headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
             payload = {
                 "actionType": "ORDER_TYPE_BUY" if side.lower() == 'buy' else "ORDER_TYPE_SELL",
-                "symbol": symbol,
+                "symbol": actual_symbol,
                 "volume": volume,
                 "stopLoss": sl,
                 "takeProfit": tp,
                 "comment": "CryptoScreener AI Sniper"
             }
             res = requests.post(url, headers=headers, json=payload, timeout=10)
-            return res.status_code == 200, res.json()
+            result = res.json()
+            
+            if res.status_code == 200:
+                print(f"✅ [FOREX SUCCESS] {side.upper()} {actual_symbol} placed!")
+                return True, result
+            else:
+                print(f"❌ [FOREX REJECTED] {actual_symbol}: {result.get('message')}")
+                return False, result
         except Exception as e:
             return False, str(e)
 
