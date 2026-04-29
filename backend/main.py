@@ -149,8 +149,15 @@ def startup_event():
         ws_thread = threading.Thread(target=run_ws, daemon=True)
         ws_thread.start()
         print("🛰️ [SYSTEM] WebSocket Sniper AKTIF di Background!")
+    # 3. Start Forex Engine (Isolated)
+    try:
+        from forex_executor import ForexExecutor
+        fx = ForexExecutor()
+        fx_thread = threading.Thread(target=fx.monitor_forex_market, daemon=True)
+        fx_thread.start()
+        print("🌍 [SYSTEM] Forex Engine AKTIF di Background!")
     except Exception as e:
-        print(f"⚠️ [SYSTEM] Gagal memulai WebSocket: {e}")
+        print(f"⚠️ [SYSTEM] Gagal memulai Forex Engine: {e}")
 
 @app.get("/")
 def read_root():
