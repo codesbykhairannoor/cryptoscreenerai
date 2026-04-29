@@ -23,6 +23,8 @@ export default function Home() {
   const [priceDirections, setPriceDirections] = useState<Record<string, 'up' | 'down'>>({});
   const [bitgetStatus, setBitgetStatus] = useState<string>("Checking...");
   const [isBitgetConnected, setIsBitgetConnected] = useState<boolean>(false);
+  const [forexStatus, setForexStatus] = useState<string>("Checking...");
+  const [isForexConnected, setIsForexConnected] = useState<boolean>(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   const fetchBitgetStatus = async () => {
@@ -38,13 +40,27 @@ export default function Home() {
     }
   };
 
+  const fetchForexStatus = async () => {
+    try {
+      const res = await fetch(`${backendUrl}/api/forex-status`);
+      if (res.ok) {
+        const json = await res.json();
+        setForexStatus(json.message);
+        setIsForexConnected(json.connected);
+      }
+    } catch (e) {
+      setForexStatus("Failed to connect to backend");
+    }
+  };
+
   const fetchData = useCallback(async () => {
     try {
-      fetchBitgetStatus();
       if (activeTab === 'crypto') {
+        fetchBitgetStatus();
         const res = await fetch(`${backendUrl}/api/top-coins?timeframe=${timeframe}`);
         if (res.ok) setCryptoData((await res.json()).data || []);
       } else if (activeTab === 'forex') {
+        fetchForexStatus();
         const res = await fetch(`${backendUrl}/api/forex?timeframe=${timeframe}`);
         if (res.ok) setForexData((await res.json()).data || []);
       } else if (activeTab === 'idx') {
@@ -159,21 +175,40 @@ export default function Home() {
           )}
         </header>
         
-        {/* BITGET STATUS BAR */}
-        <div className={`p-4 rounded-xl border flex items-center justify-between transition-all ${isBitgetConnected ? 'bg-emerald-950/20 border-emerald-900/50' : 'bg-red-950/20 border-red-900/50'}`}>
-          <div className="flex items-center gap-3">
-            <div className={`h-3 w-3 rounded-full ${isBitgetConnected ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : 'bg-red-500 shadow-[0_0_10px_#ef4444]'}`}></div>
-            <div>
-              <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Bitget Futures Connection</p>
-              <p className={`text-sm font-bold ${isBitgetConnected ? 'text-emerald-400' : 'text-red-400'}`}>
-                {bitgetStatus}
-              </p>
+        {/* CONDITIONAL STATUS BAR */}
+        {activeTab === 'crypto' && (
+          <div className={`p-4 rounded-xl border flex items-center justify-between transition-all ${isBitgetConnected ? 'bg-emerald-950/20 border-emerald-900/50' : 'bg-red-950/20 border-red-900/50'}`}>
+            <div className="flex items-center gap-3">
+              <div className={`h-3 w-3 rounded-full ${isBitgetConnected ? 'bg-emerald-500 shadow-[0_0_10px_#10b981]' : 'bg-red-500 shadow-[0_0_10px_#ef4444]'}`}></div>
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">Bitget Futures Connection</p>
+                <p className={`text-sm font-bold ${isBitgetConnected ? 'text-emerald-400' : 'text-red-400'}`}>
+                  {bitgetStatus}
+                </p>
+              </div>
             </div>
+            <button onClick={fetchBitgetStatus} className="px-3 py-1 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs font-bold transition-colors">
+              REFRESH
+            </button>
           </div>
-          <button onClick={fetchBitgetStatus} className="px-3 py-1 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs font-bold transition-colors">
-            REFRESH STATUS
-          </button>
-        </div>
+        )}
+
+        {activeTab === 'forex' && (
+          <div className={`p-4 rounded-xl border flex items-center justify-between transition-all ${isForexConnected ? 'bg-blue-950/20 border-blue-900/50' : 'bg-red-950/20 border-red-900/50'}`}>
+            <div className="flex items-center gap-3">
+              <div className={`h-3 w-3 rounded-full ${isForexConnected ? 'bg-blue-500 shadow-[0_0_10px_#3b82f6]' : 'bg-red-500 shadow-[0_0_10px_#ef4444]'}`}></div>
+              <div>
+                <p className="text-[10px] text-gray-500 uppercase font-bold tracking-widest">MetaAPI MT5 Connection (Exness)</p>
+                <p className={`text-sm font-bold ${isForexConnected ? 'text-blue-400' : 'text-red-400'}`}>
+                  {forexStatus}
+                </p>
+              </div>
+            </div>
+            <button onClick={fetchForexStatus} className="px-3 py-1 bg-gray-800 hover:bg-gray-700 rounded-lg text-xs font-bold transition-colors">
+              REFRESH
+            </button>
+          </div>
+        )}
 
         {/* TABS */}
         <nav className="flex bg-gray-900/80 p-1.5 rounded-2xl border border-gray-800 shadow-xl sticky top-4 z-50 backdrop-blur-xl">
