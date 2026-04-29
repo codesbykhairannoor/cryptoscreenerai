@@ -106,24 +106,33 @@ class BitgetExecutor:
             # Place Protected Limit Order
             for i in range(retries):
                 try:
-                    # 1. Place Main Entry Order
+                    # 1. Place Main Entry Order (Simplified for One-Way Mode compatibility)
+                    # We remove extra params for the initial entry to avoid mode conflicts
                     order = self.exchange.create_order(symbol, 'limit', side, quantity, limit_price)
                     print(f"✅ [BITGET] Entry Order Placed: {symbol}")
                     
-                    # 2. Attach TP & SL separately to avoid Bitget API 'single-param' restriction
-                    # We use 'stop' type or specific params for Bitget TP/SL
+                    # 2. Attach TP & SL separately using simple Market/Limit Close orders
+                    # This is the safest way to support both One-Way and Hedge modes
                     try:
+                        time.sleep(1) # Small delay to ensure position is registered
+                        tp_side = 'sell' if side == 'buy' else 'buy'
+                        
                         if tp_price:
-                            tp_side = 'sell' if side == 'buy' else 'buy'
-                            self.exchange.create_order(symbol, 'limit', tp_side, quantity, tp_price, params={'reduceOnly': True, 'takeProfitPrice': tp_price})
-                            print(f"🎯 [BITGET] Take Profit Set at {tp_price}")
+                            # For One-Way mode, we use a simple limit order with reduceOnly
+                            self.exchange.create_order(symbol, 'limit', tp_side, quantity, tp_price, params={'reduceOnly': True})
+                            print(f"🎯 [BITGET] Take Profit Order set at {tp_price}")
                         
                         if sl_price:
-                            sl_side = 'sell' if side == 'buy' else 'buy'
-                            self.exchange.create_order(symbol, 'limit', sl_side, quantity, sl_price, params={'reduceOnly': True, 'stopLossPrice': sl_price})
-                            print(f"🛡️ [BITGET] Stop Loss Set at {sl_price}")
+                            # For SL, we use the specific trigger price param for Bitget
+                            self.exchange.create_order(symbol, 'market', tp_side, quantity, params={
+                                'stopPrice': sl_price, 
+                                'triggerPrice': sl_price,
+                                'reduceOnly': True
+                            })
+                            print(f"🛡️ [BITGET] Stop Loss Trigger set at {sl_price}")
+                            
                     except Exception as e_safety:
-                        print(f"⚠️ [BITGET SAFETY WARNING] Order filled but SL/TP failed: {e_safety}")
+                        print(f"⚠️ [BITGET SAFETY] Position open but SL/TP failed (Mode Conflict): {e_safety}")
 
                     return True, f"Trade {side.upper()} BERHASIL! Entry: {last_price} | Margin: {round(actual_spend, 2)}"
                 except Exception as e:
