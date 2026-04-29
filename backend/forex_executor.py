@@ -89,7 +89,7 @@ class ForexExecutor:
                 time.sleep(60)
             except Exception as e:
                 print(f"❌ [FOREX SCANNER ERROR] {e}")
-                await asyncio.sleep(10)
+                time.sleep(10)
 
 if __name__ == "__main__":
     # Local Test
