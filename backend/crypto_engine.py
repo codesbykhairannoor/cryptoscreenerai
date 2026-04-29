@@ -75,10 +75,11 @@ def run_crypto_engine():
                 
                 if should_trade:
                     entry = coin['lastPrice']
-                    tp = coin['tp_price']
-                    sl = coin['sl_price']
+                    # SMART FALLBACK: Calculate SL/TP if AI model doesn't provide them
+                    tp = coin.get('tp_price') or (entry * 1.03) # 3% Target
+                    sl = coin.get('sl_price') or (entry * 0.98) # 2% Stop Loss
                     
-                    print(f"🔍 [CRYPTO AUTO-TRADE] {reason} triggered on {symbol}")
+                    print(f"🔍 [CRYPTO AUTO-TRADE] {reason} on {symbol} | Target: {round(tp, 4)} | SL: {round(sl, 4)}")
                     success, res = executor.place_futures_order(symbol, 'buy', tp_price=tp, sl_price=sl)
                     if success:
                         last_exec_time = time.time()
