@@ -126,23 +126,51 @@ def get_technical_indicators(symbol, interval="15m", period=14):
 
 def get_forex_data(symbol="XAUUSD", interval="15m"):
     try:
-        # Use PAXGUSDT as momentum proxy for Gold
-        indicators = get_technical_indicators("PAXGUSDT", interval=interval)
+        # Determine TV Ticker
+        tv_ticker = f"OANDA:{symbol}"
+        if symbol == "DXY": tv_ticker = "TVC:DXY"
         
-        # Fetch EXACT Spot Price from TradingView (OANDA)
+        # Use PAXGUSDT as momentum proxy for Gold, or some other stable proxy if needed
+        proxy_symbol = "PAXGUSDT" if symbol == "XAUUSD" else "BTCUSDT"
+        indicators = get_technical_indicators(proxy_symbol, interval=interval)
+        
+        # Fetch EXACT Spot Price from TradingView
         exact_price = 0
+        spread = 0
         try:
             tv_url = 'https://scanner.tradingview.com/cfd/scan'
-            tv_payload = {'symbols': {'tickers': [f'OANDA:{symbol}']}, 'columns': ['close']}
+            # Fetch Bid/Ask for spread calculation
+            tv_payload = {
+                'symbols': {'tickers': [tv_ticker]}, 
+                'columns': ['close', 'bid', 'ask', 'change', 'EMA200']
+            }
             tv_res = requests.post(tv_url, json=tv_payload, timeout=5)
             tv_data = tv_res.json()
             if tv_data.get('data') and len(tv_data['data']) > 0:
-                exact_price = float(tv_data['data'][0]['d'][0])
+                cols = tv_data['data'][0]['d']
+                exact_price = float(cols[0])
+                bid = float(cols[1] or 0)
+                ask = float(cols[2] or 0)
+                ema200 = float(cols[4] or 0)
+                
+                if bid > 0 and ask > 0:
+                    # Calculate spread in pips (e.g. 1950.10 - 1950.05 = 0.05 = 5 pips)
+                    spread = round((ask - bid) * 100, 1) if "XAU" in symbol else round((ask-bid)*10000, 1)
+
+                # Determine Trend based on EMA200
+                trend = "NEUTRAL"
+                if exact_price > ema200 * 1.001: trend = "BULLISH"
+                elif exact_price < ema200 * 0.999: trend = "BEARISH"
+                
+                indicators['trend'] = trend
+                indicators['price_change_5m'] = float(cols[3] or 0)
+                indicators['spread'] = spread
+                indicators['ema_200'] = ema200
         except Exception as e:
-            print("Failed to fetch exact TV price, using indicators proxy price:", e)
+            print(f"Failed to fetch TV data for {symbol}: {e}")
         
         if not indicators:
-            indicators = {"rsi": 50, "atr": 0, "ema_200": exact_price, "ema_200_htf": exact_price, "htf": "1h"}
+            indicators = {"rsi": 50, "atr": 1.5, "trend": "NEUTRAL", "spread": 0}
 
         return {
             "symbol": symbol,
@@ -150,7 +178,7 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
             **indicators
         }
     except Exception as e:
-        print(f"Forex fetch error: {e}")
+        print(f"Forex fetch error for {symbol}: {e}")
         return {}
 
 def get_idx_market_status():

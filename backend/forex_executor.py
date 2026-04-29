@@ -162,7 +162,13 @@ class ForexExecutor:
                     dxy_trend = dxy_data.get('trend', 'NEUTRAL')
                     gold_inst_flow = fx_data.get('inst_flow', "NORMAL")
                     rsi = fx_data.get('rsi', 50)
+                    spread = fx_data.get('spread', 0)
                     
+                    # LOGGING FOR AUDIT: Show user why we are NOT trading
+                    if int(time.time()) % 60 < 15: # Log every minute
+                        print(f"🕵️ [DEWA AUDIT] XAUUSD: {fx_data['lastPrice']} | RSI: {rsi} | Flow: {gold_inst_flow} | Spread: {spread}")
+                        print(f"🕵️ [DEWA AUDIT] DXY Index: {dxy_data['lastPrice']} | Trend: {dxy_trend}")
+
                     # LOGIC: Gold BUY only if DXY is WEAK (Bearish)
                     # Gold SELL only if DXY is STRONG (Bullish)
                     should_auto = False
@@ -179,10 +185,11 @@ class ForexExecutor:
                     trades_to_open = 5 if abs(fx_data.get('price_change_5m', 0)) > 0.4 else 3
                         
                     if should_auto and (time.time() - last_auto_trade > AUTO_COOLDOWN):
-                        # 3. Final Equity Guard (Account Cent Protection)
-                        # Avoid trading if balance/equity is too low for 5 positions
+                        # 3. Final Equity Guard & Spread Guard
+                        if not self.check_spread("XAUUSD"): continue
+                        
                         account = self.get_account_information()
-                        if account and account.get('equity', 0) < 500: # Min $5 (500 Cent)
+                        if account and account.get('equity', 0) < 500: 
                             print("🚨 [SAFETY] Equity too low for Barrage Mode!")
                             continue
 
