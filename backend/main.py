@@ -10,6 +10,7 @@ from data_fetcher import (
 from ai_model import analyze_and_sort
 from database import log_trade, get_performance_stats
 from bitget_executor import BitgetExecutor
+import requests
 import threading
 import time
 
@@ -22,76 +23,94 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+def detect_volatility_spike(symbol, timeframe="1m"):
+    """
+    Sniper Tool: Detects if institutional bots are pumping/dumping during news.
+    Look for 300% volume surge in the last minute.
+    """
+    try:
+        url = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={timeframe}&limit=5"
+        res = requests.get(url, timeout=2)
+        data = res.json()
+        if not data or len(data) < 5: return False
+        
+        # Last minute volume vs Average of previous 4 minutes
+        last_vol = float(data[-1][5])
+        avg_vol = sum(float(d[5]) for d in data[:-1]) / 4
+        
+        if last_vol > avg_vol * 3.0: # 300% Spike
+            return True
+        return False
+    except:
+        return False
+
 def auto_trade_engine():
     """
     The 'GG' Engine: Advanced Autonomous Execution.
-    Integrates Sentiment, News, CMC Global Data, and Institutional Flow.
+    Supports 'News Sniper' mode for high-volatility events (FOMC, etc.)
     """
     executor = BitgetExecutor()
     from database import check_pending_trades
     print("🚀 [SYSTEM] Auto-Trading Engine AKTIF!")
-    
-    # Track Daily Loss
-    daily_loss_limit = -10.0 # -10% safety shutdown
     
     while True:
         try:
             executor.manage_open_positions()
             check_pending_trades()
             
-            # 1. Global Market Context from CMC
+            # 1. Global Context & News Check
             global_context = get_global_market_data()
             print(f"🌍 [GLOBAL] {global_context}")
             
-            print("🔍 [SCAN] Memantau sinyal institusi & sentimen...")
+            # 2. Scanning for Normal & Sniper Opportunities
             raw_data = fetch_all_tickers()
             candidates = analyze_and_sort(raw_data)
             
             for coin in candidates[:5]:
                 symbol = coin['symbol']
+                
+                # SNIPER MODE: Rapid Volatility Check
+                is_news_spike = detect_volatility_spike(symbol)
+                
                 tech = get_technical_indicators(symbol)
-                
-                # Intelligent Filters
                 ob = tech.get('order_block', "NONE")
-                fvg = tech.get('fvg', "NONE")
                 inst_flow = tech.get('inst_flow', "NORMAL")
-                
-                # Retail vs Institution Sentiment
                 retail = get_retail_sentiment(symbol)
-                news = get_crypto_news(symbol)
                 
-                # SMART DECISION LOGIC: Confluence
                 should_trade = False
                 reason = ""
                 
-                if ob != "NONE" or fvg != "NONE":
-                    if inst_flow in ["INSTITUTIONAL_ABSORPTION", "INSTITUTIONAL_ACCUMULATION"]:
-                        if retail['ratio'] < 1.5:
-                            should_trade = True
-                            reason = f"Confluence: {ob}/{inst_flow}"
+                # Strategy A: News Sniper (Momentum)
+                if is_news_spike and inst_flow != "NORMAL":
+                    should_trade = True
+                    reason = "NEWS SNIPER: Volatility Spike + Inst Flow"
+                
+                # Strategy B: Smart Money (Swing)
+                elif (ob != "NONE") and inst_flow != "NORMAL" and retail['ratio'] < 1.5:
+                    should_trade = True
+                    reason = "SWING: OB + Institutional Confluence"
                 
                 if should_trade:
-                    # Risk Params
                     entry = coin['lastPrice']
                     tp = coin['tp_price']
-                    sl = coin['sl_price'] * 0.99 # Buffer
+                    sl = coin['sl_price'] * 0.985 # Tighter SL for Sniper
                     
-                    print(f"🎯 [EXECUTE] Sinyal VALID (ALL-IN) ditemukan: {symbol}")
-                    # PASS TP/SL to EXCHANGE
+                    print(f"🎯 [EXECUTE] {reason} ditemukan di {symbol}!")
                     success, res = executor.place_futures_order(
                         symbol, 'buy', leverage=5, 
                         tp_price=tp, sl_price=sl
                     )
                     if success:
                         log_trade(symbol, entry, tp, sl, market='crypto')
-                        print(f"💰 [SUCCESS] {symbol} (ALL-IN) Berhasil! News: {news}")
+                        print(f"💰 [SUCCESS] {symbol} Order Placed! Flow: {inst_flow}")
                     else:
                         print(f"⚠️ [FAILED] {symbol}: {res}")
                 
         except Exception as e:
             print(f"❌ [CRITICAL] Engine Error: {e}")
         
-        time.sleep(300)
+        # News/Fast Mode Logic: If market is volatile, poll faster (30s), else 5m
+        time.sleep(30) # Default faster polling for testing
 
 @app.on_event("startup")
 def startup_event():
