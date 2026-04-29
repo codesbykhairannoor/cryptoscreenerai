@@ -20,8 +20,13 @@ class BitgetExecutor:
             'timeout': 30000,
             'options': {
                 'defaultType': 'swap',
+                'posMode': 'unilateral' # Hardcode for One-Way Mode
             }
         })
+        try:
+            self.exchange.set_position_mode(False) # Attempt to set One-way (False)
+        except:
+            pass
 
     def get_balance_robust(self, retries=3):
         """Helper to fetch balance with retry logic"""
@@ -106,33 +111,38 @@ class BitgetExecutor:
             # Place Protected Limit Order
             for i in range(retries):
                 try:
-                    # 1. Place Main Entry Order (Simplified for One-Way Mode compatibility)
-                    # We remove extra params for the initial entry to avoid mode conflicts
-                    order = self.exchange.create_order(symbol, 'limit', side, quantity, limit_price)
+                    # 1. Place Main Entry Order (STRICT One-Way Mode)
+                    # We send ONLY the essential params to avoid 40774 error
+                    order = self.exchange.create_order(
+                        symbol=symbol,
+                        type='limit',
+                        side=side,
+                        amount=quantity,
+                        price=limit_price,
+                        params={} # Empty params to avoid any hidden mode conflicts
+                    )
                     print(f"✅ [BITGET] Entry Order Placed: {symbol}")
                     
                     # 2. Attach TP & SL separately using simple Market/Limit Close orders
-                    # This is the safest way to support both One-Way and Hedge modes
                     try:
-                        time.sleep(1) # Small delay to ensure position is registered
+                        time.sleep(1) 
                         tp_side = 'sell' if side == 'buy' else 'buy'
                         
                         if tp_price:
-                            # For One-Way mode, we use a simple limit order with reduceOnly
-                            self.exchange.create_order(symbol, 'limit', tp_side, quantity, tp_price, params={'reduceOnly': True})
-                            print(f"🎯 [BITGET] Take Profit Order set at {tp_price}")
+                            # For One-Way, a simple opposite order is enough if reduceOnly is tricky
+                            self.exchange.create_order(symbol, 'limit', tp_side, quantity, tp_price)
+                            print(f"🎯 [BITGET] Take Profit set at {tp_price}")
                         
                         if sl_price:
-                            # For SL, we use the specific trigger price param for Bitget
+                            # Use trigger price for SL
                             self.exchange.create_order(symbol, 'market', tp_side, quantity, params={
                                 'stopPrice': sl_price, 
-                                'triggerPrice': sl_price,
-                                'reduceOnly': True
+                                'triggerPrice': sl_price
                             })
-                            print(f"🛡️ [BITGET] Stop Loss Trigger set at {sl_price}")
+                            print(f"🛡️ [BITGET] Stop Loss set at {sl_price}")
                             
                     except Exception as e_safety:
-                        print(f"⚠️ [BITGET SAFETY] Position open but SL/TP failed (Mode Conflict): {e_safety}")
+                        print(f"⚠️ [BITGET SAFETY] Entry Success, but SL/TP failed: {e_safety}")
 
                     return True, f"Trade {side.upper()} BERHASIL! Entry: {last_price} | Margin: {round(actual_spend, 2)}"
                 except Exception as e:
