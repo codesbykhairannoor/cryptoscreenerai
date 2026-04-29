@@ -10,22 +10,12 @@ from data_fetcher import (
 from ai_model import analyze_and_sort
 from database import log_trade, get_performance_stats
 from bitget_executor import BitgetExecutor
+from crypto_engine import run_crypto_engine, detect_volatility_spike
+from forex_executor import ForexExecutor
 import requests
 import random
 import threading
 import time
-
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-from crypto_engine import run_crypto_engine, detect_volatility_spike
-from forex_executor import ForexExecutor
 
 app = FastAPI()
 
@@ -178,7 +168,6 @@ def get_idx(timeframe: str = "15m"):
         return {"status": "success", "market_status": status, "data": stocks}
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
 
 @app.get("/api/performance")
 def get_performance(market: str = None):
