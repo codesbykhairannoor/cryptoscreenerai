@@ -60,18 +60,12 @@ class BitgetWebSocketSniper:
                             channel = arg.get("channel")
                             symbol = arg.get("instId")
                             
-                            # Real-time Price Log (Optional)
-                            if channel == "ticker":
-                                # print(f"⚡ Tick: {symbol} @ {data['data'][0]['last']}")
-                                pass
-
                             if channel == "candle1m":
                                 now = time.time()
                                 if symbol in self.last_trade_time:
                                     if now - self.last_trade_time[symbol] < 30:
                                         continue
 
-                                # Detect Spike and get the actual % for the log
                                 is_spike, vol_pct = self.detect_vol_with_details(symbol)
                                 
                                 if is_spike:
@@ -80,24 +74,25 @@ class BitgetWebSocketSniper:
                                     self.last_trade_time[symbol] = now
                                 else:
                                     print(f"📊 [WS V2] New Candle Data: {symbol}! (Normal)")
+            except Exception as e:
+                print(f"🔄 [WS RECONNECT] Error: {e}. Retrying in 5s...")
+                await asyncio.sleep(5)
 
     def detect_vol_with_details(self, symbol):
         """Helper to get exact volume percentage for the log"""
         try:
-            from main import detect_volatility_spike
-            # This is a bit redundant but for logging it's worth it
+            # Simple volume check
             url = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=1m&limit=5"
             res = requests.get(url, timeout=2)
             data = res.json()
+            if not data or len(data) < 5: return False, 0
+            
             last_vol = float(data[-1][5])
             avg_vol = sum(float(d[5]) for d in data[:-1]) / 4
             pct = round((last_vol / avg_vol) * 100, 0)
             return last_vol > avg_vol * 3.0, int(pct)
         except:
             return False, 0
-            except Exception as e:
-                print(f"🔄 [WS RECONNECT] Error: {e}. Retrying in 5s...")
-                await asyncio.sleep(5)
 
 async def main():
     sniper = BitgetWebSocketSniper()
