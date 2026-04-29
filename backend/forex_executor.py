@@ -130,8 +130,18 @@ class ForexExecutor:
                         
                     if should_auto and (time.time() - last_auto_trade > AUTO_COOLDOWN):
                         print(f"🎯 [FOREX AUTO-SNIPER] Institutional Setup Found on XAUUSD! Trading {side.upper()}...")
-                        tp = fx_data['tp_price']
-                        sl = fx_data['sl_price']
+                        
+                        # DYNAMIC RISK CALCULATOR: Use 1.5x ATR or fixed pips for Gold
+                        price = fx_data['lastPrice']
+                        atr = fx_data.get('atr', 1.5) # Default 1.5 pips volatility
+                        
+                        if side == 'buy':
+                            tp = price + (atr * 2) # Target 2x Volatility
+                            sl = price - (atr * 1.5)
+                        else:
+                            tp = price - (atr * 2)
+                            sl = price + (atr * 1.5)
+                            
                         success = self.place_xauusd_scalp_batch(side, trades_count=3, volume=0.01, tp=tp, sl=sl)
                         if success:
                             last_auto_trade = time.time()
