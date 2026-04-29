@@ -24,147 +24,50 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def detect_volatility_spike(symbol, timeframe="1m"):
-    """
-    Sniper Tool: Detects if institutional bots are pumping/dumping during news.
-    Look for 300% volume surge in the last minute.
-    """
-    try:
-        url = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={timeframe}&limit=5"
-        res = requests.get(url, timeout=2)
-        data = res.json()
-        if not data or len(data) < 5: return False
-        
-        # Last minute volume vs Average of previous 4 minutes
-        last_vol = float(data[-1][5])
-        avg_vol = sum(float(d[5]) for d in data[:-1]) / 4
-        
-        if last_vol > avg_vol * 3.0: # 300% Spike
-            return True
-        return False
-    except:
-        return False
+from crypto_engine import run_crypto_engine, detect_volatility_spike
+from forex_executor import ForexExecutor
 
-def auto_trade_engine():
-    """
-    The 'GG' Engine: Advanced Autonomous Execution.
-    Supports 'News Sniper' mode for high-volatility events (FOMC, etc.)
-    """
-    executor = BitgetExecutor()
-    from database import check_pending_trades
-    print("🚀 [SYSTEM] Auto-Trading Engine AKTIF!")
-    
-    # Circuit Breaker: Track last execution time
-    last_exec_time = 0
-    COOLDOWN_PERIOD = 600 # 10 Minutes rest after each trade
-    
-    while True:
-        try:
-            executor.manage_open_positions()
-            check_pending_trades()
-            
-            # 1. Global Context & News Check
-            global_context = get_global_market_data()
-            print(f"🌍 [GLOBAL] {global_context}")
-            
-            # 2. Scanning for Normal & Sniper Opportunities
-            raw_data = fetch_all_tickers()
-            candidates = analyze_and_sort(raw_data)
-            
-            for coin in candidates[:5]:
-                # CIRCUIT BREAKER CHECK
-                now = time.time()
-                if now - last_exec_time < COOLDOWN_PERIOD:
-                    print(f"🛑 [CIRCUIT BREAKER] Bot sedang istirahat... ({int(COOLDOWN_PERIOD - (now-last_exec_time))}s left)")
-                    break
+app = FastAPI()
 
-                symbol = coin['symbol']
-                
-                # SNIPER MODE: Rapid Volatility Check
-                is_news_spike = detect_volatility_spike(symbol)
-                
-                tech = get_technical_indicators(symbol)
-                ob = tech.get('order_block', "NONE")
-                inst_flow = tech.get('inst_flow', "NORMAL")
-                retail = get_retail_sentiment(symbol)
-                
-                should_trade = False
-                reason = ""
-                
-                # Strategy A: News Sniper (Momentum)
-                if is_news_spike and inst_flow != "NORMAL":
-                    should_trade = True
-                    reason = "NEWS SNIPER: Volatility Spike + Inst Flow"
-                
-                # Strategy B: Smart Money (Swing)
-                elif (ob != "NONE") and inst_flow != "NORMAL" and retail['ratio'] < 1.5:
-                    should_trade = True
-                    reason = "SWING: OB + Institutional Confluence"
-                
-                if should_trade:
-                    # Risk Params with RANDOMIZED OFFSET (Stealth)
-                    offset = random.uniform(0.0001, 0.0005)
-                    
-                    entry = coin['lastPrice']
-                    tp = coin['tp_price'] * (1 + offset)
-                    sl = (coin['sl_price'] * 0.985) * (1 - offset)
-                    
-                    print(f"🔍 [ANALYSIS] Sentiment: Bullish | Inst. Flow: {inst_flow}")
-                    print(f"🎯 [EXECUTION] Placing Limit Order (Protected) for {symbol}...")
-                    
-                    success, res = executor.place_futures_order(
-                        symbol, 'buy', leverage=5, 
-                        tp_price=tp, sl_price=sl
-                    )
-                    if success:
-                        last_exec_time = time.time()
-                        log_trade(symbol, entry, tp, sl, market='crypto')
-                        print(f"✅ [SUCCESS] Order Filled at ${entry} (Slippage: <0.5%)")
-                        print(f"🛡️ [CIRCUIT BREAKER] Sniper Cooldown Active ({int(COOLDOWN_PERIOD/60)}m)")
-                    else:
-                        print(f"⚠️ [FAILED] {symbol}: {res}")
-                
-        except Exception as e:
-            print(f"❌ [CRITICAL] Engine Error: {e}")
-        
-        # News/Fast Mode Logic: If market is volatile, poll faster (30s), else 5m
-        time.sleep(30) # Default faster polling for testing
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 @app.on_event("startup")
 def startup_event():
-    # 1. Start Normal Auto-Trade Engine
-    thread = threading.Thread(target=auto_trade_engine, daemon=True)
-    thread.start()
+    # 1. Start Crypto Engine (Isolated)
+    crypto_thread = threading.Thread(target=run_crypto_engine, daemon=True)
+    crypto_thread.start()
     
-    # 2. Start Ultra-Fast WebSocket Sniper
+    # 2. Start WebSocket Sniper (Isolated)
     try:
         from websocket_sniper import main as ws_main
         import asyncio
-        
         def run_ws():
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             loop.run_until_complete(ws_main())
-            
         ws_thread = threading.Thread(target=run_ws, daemon=True)
         ws_thread.start()
-        print("🛰️ [SYSTEM] WebSocket Sniper AKTIF di Background!")
+        print("🛰️ [SYSTEM] WebSocket Sniper AKTIF!")
     except Exception as e:
         print(f"⚠️ [SYSTEM] Gagal memulai WebSocket: {e}")
 
     # 3. Start Forex Engine (Isolated)
     try:
-        from forex_executor import ForexExecutor
         fx = ForexExecutor()
         fx_thread = threading.Thread(target=fx.monitor_forex_market, daemon=True)
         fx_thread.start()
-        print("🌍 [SYSTEM] Forex Engine AKTIF di Background!")
+        print("🌍 [SYSTEM] Forex Engine AKTIF!")
     except Exception as e:
         print(f"⚠️ [SYSTEM] Gagal memulai Forex Engine: {e}")
 
 @app.get("/")
 def read_root():
-    return {"message": "CryptoScreener AI Backend is running"}
+    return {"message": "CryptoScreener AI Multi-Market Backend is running"}
 
 @app.get("/api/bitget-status")
 def get_bitget_status():
