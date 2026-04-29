@@ -28,47 +28,50 @@ class BitgetWebSocketSniper:
                 break
 
     async def subscribe(self, ws):
-        # Bitget V2 Subscription Format
+        # Bitget V2 USDT-FUTURES Subscription
         subs = {
             "op": "subscribe",
             "args": [
-                {"instType": "unify", "channel": "ticker", "instId": "BTCUSDT"},
-                {"instType": "unify", "channel": "candle1m", "instId": "BTCUSDT"},
-                {"instType": "unify", "channel": "ticker", "instId": "ETHUSDT"}
+                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "BTCUSDT"},
+                {"instType": "USDT-FUTURES", "channel": "candle1m", "instId": "BTCUSDT"},
+                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "ETHUSDT"},
+                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "SOLUSDT"}
             ]
         }
         await ws.send(json.dumps(subs))
-        print("🛰️ [WS V2] Subscribed to Public Stream!")
+        print("🛰️ [WS V2] Subscribed to USDT-FUTURES Stream (BTC, ETH, SOL)!")
 
     async def listen(self):
         while self.is_running:
             try:
                 print(f"📡 [WS] Connecting to {self.url}...")
                 async with websockets.connect(self.url) as ws:
-                    # Start Heartbeat in background
                     asyncio.create_task(self.heartbeat(ws))
-                    
                     await self.subscribe(ws)
                     
                     while True:
                         message = await ws.recv()
-                        if message == "pong": continue # Ignore heartbeat response
+                        if message == "pong": continue
                         
                         data = json.loads(message)
                         if "data" in data:
                             arg = data.get("arg", {})
                             channel = arg.get("channel")
                             symbol = arg.get("instId")
-
-                            now = time.time()
-                            if symbol in self.last_trade_time:
-                                if now - self.last_trade_time[symbol] < 30:
-                                    continue
+                            
+                            # Real-time Price Log (Optional)
+                            if channel == "ticker":
+                                # print(f"⚡ Tick: {symbol} @ {data['data'][0]['last']}")
+                                pass
 
                             if channel == "candle1m":
-                                print(f"📊 [WS V2] Candle Data Received: {symbol}")
+                                print(f"📊 [WS V2] New Candle Data: {symbol}!")
+                                now = time.time()
+                                if symbol in self.last_trade_time:
+                                    if now - self.last_trade_time[symbol] < 30:
+                                        continue
+
                                 is_spike = detect_volatility_spike(symbol)
-                                
                                 if is_spike:
                                     print(f"🚀 [WS SNIPER] TRIGGERED ON {symbol}!")
                                     self.last_trade_time[symbol] = now
