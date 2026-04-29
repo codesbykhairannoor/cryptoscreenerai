@@ -114,8 +114,25 @@ def auto_trade_engine():
 
 @app.on_event("startup")
 def startup_event():
+    # 1. Start Normal Auto-Trade Engine
     thread = threading.Thread(target=auto_trade_engine, daemon=True)
     thread.start()
+    
+    # 2. Start Ultra-Fast WebSocket Sniper
+    try:
+        from websocket_sniper import main as ws_main
+        import asyncio
+        
+        def run_ws():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(ws_main())
+            
+        ws_thread = threading.Thread(target=run_ws, daemon=True)
+        ws_thread.start()
+        print("🛰️ [SYSTEM] WebSocket Sniper AKTIF di Background!")
+    except Exception as e:
+        print(f"⚠️ [SYSTEM] Gagal memulai WebSocket: {e}")
 
 @app.get("/")
 def read_root():
