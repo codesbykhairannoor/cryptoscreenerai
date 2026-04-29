@@ -132,18 +132,24 @@ class BitgetExecutor:
                         time.sleep(1) 
                         tp_side = 'sell' if side == 'buy' else 'buy'
                         
-                        if tp_price:
-                            # For One-Way, a simple opposite order is enough if reduceOnly is tricky
-                            self.exchange.create_order(symbol, 'limit', tp_side, quantity, tp_price)
-                            print(f"🎯 [BITGET] Take Profit set at {tp_price}")
+                        # PRECISION FIX: Round prices according to exchange rules
+                        market = self.exchange.market(symbol)
+                        price_precision = market['precision']['price']
                         
-                        if sl_price:
-                            # Use trigger price for SL
+                        formatted_tp = self.exchange.price_to_precision(symbol, tp_price) if tp_price else None
+                        formatted_sl = self.exchange.price_to_precision(symbol, sl_price) if sl_price else None
+
+                        if formatted_tp:
+                            self.exchange.create_order(symbol, 'limit', tp_side, quantity, formatted_tp)
+                            print(f"🎯 [BITGET] Take Profit set at {formatted_tp}")
+                        
+                        if formatted_sl:
+                            # Use trigger price for SL with correct precision
                             self.exchange.create_order(symbol, 'market', tp_side, quantity, params={
-                                'stopPrice': sl_price, 
-                                'triggerPrice': sl_price
+                                'stopPrice': formatted_sl, 
+                                'triggerPrice': formatted_sl
                             })
-                            print(f"🛡️ [BITGET] Stop Loss set at {sl_price}")
+                            print(f"🛡️ [BITGET] Stop Loss set at {formatted_sl}")
                             
                     except Exception as e_safety:
                         print(f"⚠️ [BITGET SAFETY] Entry Success, but SL/TP failed: {e_safety}")
