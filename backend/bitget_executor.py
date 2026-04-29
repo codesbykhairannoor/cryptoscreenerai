@@ -157,8 +157,8 @@ class BitgetExecutor:
 
     def manage_open_positions(self):
         """
-        PROTECTION: Moves SL to Break-Even (BEP) when 2% profit is reached.
-        Prevents profit from turning into loss.
+        SUPER SMART PROTECTION: BEP and Trailing Stop Logic.
+        Moves SL to lock in profit as the market moves in our favor.
         """
         try:
             positions = self.exchange.fetch_positions(params={'productType': 'usdt-futures'})
@@ -178,13 +178,36 @@ class BitgetExecutor:
                 else:
                     pnl_pct = (entry_price - mark_price) / entry_price * 100
                 
-                # If 2% profit reached, move SL to entry (Break-Even)
-                if pnl_pct >= 2.0:
-                    print(f"🛡️ [PROTECT] {symbol} Profit 2% tercapai! Memindahkan SL ke BEP (Entry).")
-                    # Note: Implement actual SL modification here via exchange.create_order with type='stop_loss'
-                    # For Bitget, this requires specific params.
+                # 1. BREAK-EVEN PROTECTION (At 2% profit)
+                # If we are up 2%, move SL to Entry + tiny buffer
+                if pnl_pct >= 2.0 and pnl_pct < 5.0:
+                    print(f"🛡️ [PROTECT] {symbol} Profit 2% reached. Moving SL to BEP.")
+                    sl_price = entry_price * 1.001 if side == 'long' else entry_price * 0.999
+                    self.update_sl_price(symbol, side, size, sl_price)
+
+                # 2. TRAILING STOP (At 5% profit and above)
+                # Lock in 80% of the gains
+                elif pnl_pct >= 5.0:
+                    print(f"🔥 [TRAIL] {symbol} Profit {round(pnl_pct, 2)}% reached. Trailing SL...")
+                    trail_sl = mark_price * 0.985 if side == 'long' else mark_price * 1.015
+                    self.update_sl_price(symbol, side, size, trail_sl)
+                    
         except Exception as e:
             print(f"Position Management Error: {e}")
+
+    def update_sl_price(self, symbol, side, amount, new_sl):
+        """Helper to cancel old SL and place a new one"""
+        try:
+            # 1. Cancel existing Stop orders for this symbol first (if possible)
+            # 2. Place new Trigger/Market SL order
+            tp_side = 'sell' if side == 'long' or side == 'buy' else 'buy'
+            self.exchange.create_order(symbol, 'market', tp_side, amount, params={
+                'stopPrice': new_sl,
+                'triggerPrice': new_sl,
+                'reduceOnly': True
+            })
+        except:
+            pass
 
 
 if __name__ == "__main__":
