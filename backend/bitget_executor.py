@@ -1,5 +1,6 @@
 import ccxt
 import os
+import time
 import traceback
 from dotenv import load_dotenv
 

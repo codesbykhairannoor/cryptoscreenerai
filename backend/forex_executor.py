@@ -92,9 +92,12 @@ class ForexExecutor:
         Detects News Spikes and Institutional Divergence on XAUUSD.
         """
         from sentiment import get_forex_news
+        from data_fetcher import get_forex_data
         print("🌍 [SYSTEM] Forex Monitoring Engine (XAUUSD Focus) AKTIF!")
         
         last_news_check = 0
+        last_auto_trade = 0
+        AUTO_COOLDOWN = 3600 # 1 Hour cooldown for auto-trades
         
         while True:
             try:
@@ -108,15 +111,32 @@ class ForexExecutor:
                     print(news)
                     last_news_check = time.time()
                 
-                # 3. High-Frequency XAUUSD Scan (Every 5 seconds for Scalping)
-                # This simulates WebSocket performance for fast entries
-                account_info = self.get_account_information()
-                if account_info:
-                    # In a real scenario, we would pull XAUUSD tick data here
-                    # For now, we ensure the engine is 'warm' and ready to execute
-                    pass
+                # 3. High-Frequency XAUUSD Auto-Scan
+                fx_data = get_forex_data("XAUUSD")
+                if fx_data:
+                    inst_flow = fx_data.get('inst_flow', "NORMAL")
+                    rsi = fx_data.get('rsi', 50)
+                    
+                    # SMART AUTO-TRADE: Institutional Flow + Oversold/Overbought RSI
+                    should_auto = False
+                    side = 'buy'
+                    
+                    if inst_flow == "INSTITUTIONAL_ACCUMULATION" and rsi < 40:
+                        should_auto = True
+                        side = 'buy'
+                    elif inst_flow == "INSTITUTIONAL_ABSORPTION" and rsi > 65:
+                        should_auto = True
+                        side = 'sell'
+                        
+                    if should_auto and (time.time() - last_auto_trade > AUTO_COOLDOWN):
+                        print(f"🎯 [FOREX AUTO-SNIPER] Institutional Setup Found on XAUUSD! Trading {side.upper()}...")
+                        tp = fx_data['tp_price']
+                        sl = fx_data['sl_price']
+                        success = self.place_xauusd_scalp_batch(side, trades_count=3, volume=0.01, tp=tp, sl=sl)
+                        if success:
+                            last_auto_trade = time.time()
                 
-                time.sleep(5) # Fast polling for Scalper readiness
+                time.sleep(15) # Scan every 15 seconds
                 
             except Exception as e:
                 print(f"❌ [FOREX SCANNER ERROR] {e}")

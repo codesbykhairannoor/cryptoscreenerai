@@ -53,41 +53,42 @@ def run_crypto_engine():
             for coin in candidates[:5]:
                 now = time.time()
                 if now - last_exec_time < COOLDOWN_PERIOD:
-                    print(f"🛑 [CIRCUIT BREAKER] Crypto Engine Resting... ({int(COOLDOWN_PERIOD - (now-last_exec_time))}s left)")
                     break
 
                 symbol = coin['symbol']
-                is_news_spike = detect_volatility_spike(symbol)
+                is_vol_spike = detect_volatility_spike(symbol)
                 
                 tech = get_technical_indicators(symbol)
-                ob = tech.get('order_block', "NONE")
                 inst_flow = tech.get('inst_flow', "NORMAL")
                 retail = get_retail_sentiment(symbol)
                 
                 should_trade = False
                 reason = ""
                 
-                if is_news_spike and inst_flow != "NORMAL":
+                # RELAXED: 1.5x Vol Spike OR Institutional Accumulation
+                if is_vol_spike:
                     should_trade = True
-                    reason = "NEWS SNIPER"
-                elif (ob != "NONE") and inst_flow != "NORMAL" and retail['ratio'] < 1.5:
+                    reason = "VOLATILITY SNIPER"
+                elif inst_flow == "INSTITUTIONAL_ACCUMULATION" and retail['ratio'] < 2.0:
                     should_trade = True
-                    reason = "SMART MONEY SWING"
+                    reason = "INSTITUTIONAL FLOW"
                 
                 if should_trade:
-                    offset = random.uniform(0.0001, 0.0005)
                     entry = coin['lastPrice']
-                    tp = coin['tp_price'] * (1 + offset)
-                    sl = (coin['sl_price'] * 0.985) * (1 - offset)
+                    tp = coin['tp_price']
+                    sl = coin['sl_price']
                     
-                    print(f"🔍 [CRYPTO ANALYSIS] {reason} found on {symbol}")
+                    print(f"🔍 [CRYPTO AUTO-TRADE] {reason} triggered on {symbol}")
                     success, res = executor.place_futures_order(symbol, 'buy', tp_price=tp, sl_price=sl)
                     if success:
                         last_exec_time = time.time()
                         log_trade(symbol, entry, tp, sl, market='crypto')
-                        print(f"✅ [CRYPTO SUCCESS] Order Filled at ${entry}")
+                        print(f"✅ [CRYPTO SUCCESS] Auto-Order Filled at ${entry}")
                     else:
                         print(f"⚠️ [CRYPTO FAILED] {symbol}: {res}")
+            
+            if int(time.time()) % 300 < 30:
+                print("🛰️ [CRYPTO HEARTBEAT] Active Scanning...")
                 
         except Exception as e:
             print(f"❌ [CRYPTO ERROR] {e}")
