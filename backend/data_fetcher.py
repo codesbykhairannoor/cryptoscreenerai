@@ -107,6 +107,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         # Smart detection
         pattern = detect_candle_patterns(df_cur)
         smc = detect_smart_money_concepts(df_cur)
+        inst_flow = detect_institutional_flow(df_cur)
         
         return {
             "rsi": round(rsi_cur.iloc[-1], 2) if not rsi_cur.empty else 50,
@@ -116,6 +117,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             "candle_pattern": pattern,
             "order_block": smc["ob"],
             "fvg": smc["fvg"],
+            "inst_flow": inst_flow,
             "htf": htf
         }
     except Exception as e:
@@ -175,6 +177,49 @@ def get_idx_market_status():
         return "OPEN (Session 2)"
     else:
         return "CLOSED"
+
+def get_retail_sentiment(symbol):
+    """
+    Fetches Long/Short Ratio from Binance as a proxy for Retail vs Institutional sentiment.
+    High L/S Ratio usually means retail is heavy long (potentially a bearish indicator).
+    """
+    try:
+        # Binance Global Futures Data (Public)
+        url = f"https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol={symbol}&period=1h&limit=1"
+        res = requests.get(url, timeout=5)
+        data = res.json()
+        if isinstance(data, list) and len(data) > 0:
+            ratio = float(data[0]['longShortRatio'])
+            sentiment = "Retail Over-Long" if ratio > 2.0 else "Retail Over-Short" if ratio < 0.5 else "Balanced"
+            return {"ratio": ratio, "sentiment": sentiment}
+        return {"ratio": 1.0, "sentiment": "Neutral"}
+    except:
+        return {"ratio": 1.0, "sentiment": "Neutral"}
+
+def detect_institutional_flow(df):
+    """
+    Analyzes volume spikes and price action to detect institutional footprint.
+    Institutional bots usually accumulate/distribute without moving price much (Divergence).
+    """
+    try:
+        if len(df) < 20: return "NORMAL"
+        
+        avg_vol = df['vol'].rolling(window=20).mean().iloc[-1]
+        last_vol = df['vol'].iloc[-1]
+        last_price_change = abs(df['close'].iloc[-1] - df['open'].iloc[-1])
+        avg_price_change = (df['high'] - df['low']).rolling(window=20).mean().iloc[-1]
+        
+        # Pattern: High Volume, Small Price Change = Institutional Absorption
+        if last_vol > avg_vol * 2.5 and last_price_change < avg_price_change * 0.5:
+            return "INSTITUTIONAL_ABSORPTION"
+        
+        # Pattern: High Volume, Significant Price Move from low = Accumulation
+        if last_vol > avg_vol * 2.0 and df['close'].iloc[-1] > df['open'].iloc[-1]:
+            return "INSTITUTIONAL_ACCUMULATION"
+            
+        return "RETAIL_DOMINATED"
+    except:
+        return "NORMAL"
 
 def get_idx_data(interval="15m"):
     try:

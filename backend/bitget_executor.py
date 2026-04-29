@@ -78,11 +78,15 @@ class BitgetExecutor:
             
             total_usdt = self.get_balance_robust()
             
-            max_safe = total_usdt * 0.2
-            actual_spend = min(amount_usdt, max_safe)
+            # Smart Margin: For small accounts, use min $5. For larger, use 20% max.
+            if total_usdt < 50:
+                actual_spend = 5.0 if total_usdt >= 5.0 else total_usdt
+            else:
+                max_safe = total_usdt * 0.2
+                actual_spend = min(amount_usdt, max_safe)
             
             if actual_spend < 5:
-                return False, f"Saldo tidak cukup (Min $5). Saldo terdeteksi: ${total_usdt}"
+                return False, f"Saldo tidak cukup (Min $5). Saldo Anda: ${total_usdt}. Coba tambahkan saldo ke Futures USDT-M."
 
             ticker = self.exchange.fetch_ticker(symbol)
             price = ticker['last']

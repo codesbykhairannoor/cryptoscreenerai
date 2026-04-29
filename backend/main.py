@@ -1,9 +1,11 @@
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from sentiment import get_crypto_news
 from data_fetcher import (
     fetch_all_tickers, get_order_book_details, 
     get_technical_indicators, get_forex_data, 
-    get_idx_data, get_idx_market_status
+    get_idx_data, get_idx_market_status,
+    get_retail_sentiment, detect_institutional_flow
 )
 from ai_model import analyze_and_sort
 from database import log_trade, get_performance_stats
@@ -22,8 +24,8 @@ app.add_middleware(
 
 def auto_trade_engine():
     """
-    The 'GG' Engine: Direct Execution based on Technical Signals.
-    Runs 24/7 on Railway - Laptop/HP can be OFF.
+    The 'GG' Engine: Advanced Autonomous Execution.
+    Integrates Sentiment, News, and Institutional Order Flow.
     """
     executor = BitgetExecutor()
     from database import check_pending_trades
@@ -31,28 +33,51 @@ def auto_trade_engine():
     
     while True:
         try:
-            # 1. Update existing trades (WIN/LOSS)
             check_pending_trades()
             
-            # 2. Scan for new trades
-            print("🔍 [SCAN] Memantau sinyal institusi...")
+            print("🔍 [SCAN] Memantau sinyal institusi & sentimen...")
             raw_data = fetch_all_tickers()
             candidates = analyze_and_sort(raw_data)
             
             for coin in candidates[:5]:
                 symbol = coin['symbol']
                 tech = get_technical_indicators(symbol)
+                
+                # Intelligent Filters
                 ob = tech.get('order_block', "NONE")
                 fvg = tech.get('fvg', "NONE")
+                inst_flow = tech.get('inst_flow', "NORMAL")
                 rsi = tech.get('rsi', 50)
                 
-                # Criteria: Structure + Momentum
-                if (ob != "NONE" or fvg != "NONE") and rsi < 45: # Relaxed from 40
-                    print(f"🎯 [EXECUTE] Sinyal GG ditemukan di {symbol}!")
+                # Retail vs Institution Sentiment
+                retail = get_retail_sentiment(symbol)
+                news = get_crypto_news(symbol)
+                
+                print(f"📊 [ANALYSIS] {symbol}: OB={ob}, Flow={inst_flow}, Retail={retail['sentiment']}, RSI={rsi}")
+                
+                # SMART DECISION LOGIC: Confluence of 3 factors
+                # 1. Technical Structure (OB/FVG)
+                # 2. Institutional Flow (Accumulation/Absorption)
+                # 3. Contrarian Sentiment (Retail shouldn't be over-long)
+                
+                should_trade = False
+                reason = ""
+                
+                if ob != "NONE" or fvg != "NONE":
+                    if inst_flow in ["INSTITUTIONAL_ABSORPTION", "INSTITUTIONAL_ACCUMULATION"]:
+                        if retail['ratio'] < 1.5: # Retail is not over-crowded in longs
+                            should_trade = True
+                            reason = f"Confluence: {ob}/{inst_flow} + Clean Retail"
+                
+                if should_trade:
+                    print(f"🎯 [EXECUTE] Sinyal VALID ditemukan: {symbol} | Reason: {reason}")
                     success, res = executor.place_futures_order(symbol, 'buy', leverage=5, amount_usdt=10)
                     if success:
                         log_trade(symbol, coin['lastPrice'], coin['tp_price'], coin['sl_price'], market='crypto')
-                        print(f"💰 [SUCCESS] Trade Berhasil! {res}")
+                        print(f"💰 [SUCCESS] {symbol} Order Placed! News: {news}")
+                    else:
+                        print(f"⚠️ [FAILED] {symbol}: {res}")
+                
         except Exception as e:
             print(f"❌ [CRITICAL] Engine Error: {e}")
         
@@ -95,6 +120,9 @@ def get_top_coins(timeframe: str = "15m"):
             coin['candle_pattern'] = tech.get('candle_pattern', "NONE")
             coin['order_block'] = tech.get('order_block', "NONE")
             coin['fvg'] = tech.get('fvg', "NONE")
+            coin['inst_flow'] = tech.get('inst_flow', "NORMAL")
+            coin['retail_sentiment'] = get_retail_sentiment(coin['symbol']).get('sentiment', 'Neutral')
+            coin['news_insight'] = get_crypto_news(coin['symbol'])
             coin['htf'] = tech.get('htf', "1h")
             
             # Trend calculation
