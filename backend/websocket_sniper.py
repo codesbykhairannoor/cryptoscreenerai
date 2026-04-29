@@ -2,6 +2,7 @@ import asyncio
 import json
 import websockets
 import os
+import time
 from dotenv import load_dotenv
 from bitget_executor import BitgetExecutor
 from main import detect_volatility_spike
@@ -14,53 +15,54 @@ class BitgetWebSocketSniper:
         self.url = "wss://ws.bitget.com/mix/v1/stream"
         self.executor = BitgetExecutor()
         self.is_running = True
+        self.last_trade_time = {} # For Debouncing
 
     async def subscribe(self, ws):
-        # Subscribe to Tickers and 1m Candles for Top Coins
-        # For simplicity, we monitor BTC and ETH as market leaders
         subs = {
             "op": "subscribe",
             "args": [
                 {"instType": "mc", "channel": "ticker", "instId": "BTCUSDT"},
-                {"instType": "mc", "channel": "candle1m", "instId": "BTCUSDT"}
+                {"instType": "mc", "channel": "candle1m", "instId": "BTCUSDT"},
+                {"instType": "mc", "channel": "ticker", "instId": "ETHUSDT"}
             ]
         }
         await ws.send(json.dumps(subs))
-        print("🛰️ [WS] Subscribed to Real-time Stream!")
+        print("🛰️ [WS] Subscribed with Heartbeat & Auto-Reconnect!")
 
     async def listen(self):
-        async with websockets.connect(self.url) as ws:
-            await self.subscribe(ws)
-            
-            while self.is_running:
-                try:
-                    message = await ws.recv()
-                    data = json.loads(message)
+        while self.is_running:
+            try:
+                # Use ping_interval to prevent Zombie Connections
+                async with websockets.connect(self.url, ping_interval=20, ping_timeout=10) as ws:
+                    await self.subscribe(ws)
                     
-                    if "data" in data:
-                        # Process Real-time Data
-                        channel = data["action"] if "action" in data else data.get("arg", {}).get("channel")
+                    while True:
+                        message = await ws.recv()
+                        data = json.loads(message)
                         
-                        if channel == "ticker":
-                            # Ultra-fast logic here
-                            # print(f"⚡ Price Update: {data['data'][0]['last']}")
-                            pass
-                            
-                        if channel == "candle1m":
-                            symbol = data["arg"]["instId"]
-                            print(f"📊 [WS] Candle Close on {symbol} - Checking for Spikes...")
-                            
-                            # Immediate Trigger!
-                            is_spike = detect_volatility_spike(symbol)
-                            if is_spike:
-                                print(f"🚀 [WS SNIPER] VOLATILITY DETECTED ON {symbol}!")
-                                # Execute immediate trade
-                                # success, res = self.executor.place_futures_order(...)
+                        if "data" in data:
+                            arg = data.get("arg", {})
+                            channel = arg.get("channel")
+                            symbol = arg.get("instId")
+
+                            # DEBOUNCING: Prevent multiple trades in same 30s window
+                            now = time.time()
+                            if symbol in self.last_trade_time:
+                                if now - self.last_trade_time[symbol] < 30:
+                                    continue
+
+                            if channel == "candle1m":
+                                print(f"📊 [WS] Candle Update: {symbol}")
+                                is_spike = detect_volatility_spike(symbol)
                                 
-                except Exception as e:
-                    print(f"❌ [WS ERROR] {e}")
-                    await asyncio.sleep(5)
-                    break
+                                if is_spike:
+                                    print(f"🚀 [WS SNIPER] VOLATILITY TRIGGERED ON {symbol}!")
+                                    self.last_trade_time[symbol] = now
+                                    # Trade logic here (already handled in main.py loop but WS can trigger it faster)
+
+            except Exception as e:
+                print(f"🔄 [WS RECONNECT] Connection lost, retrying in 5s... Error: {e}")
+                await asyncio.sleep(5)
 
 async def main():
     sniper = BitgetWebSocketSniper()
