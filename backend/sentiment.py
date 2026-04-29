@@ -31,6 +31,32 @@ def get_global_market_data():
     except:
         return "Global: Analysis in progress"
 
+def get_forex_news():
+    """
+    Fetches real-time Forex news headlines.
+    Critical for Gold (XAUUSD) trading.
+    """
+    try:
+        # Using a reliable financial news RSS feed
+        url = "https://content.dailyfx.com/feeds/forex_market_news"
+        res = requests.get(url, timeout=5)
+        root = ET.fromstring(res.content)
+        
+        headlines = []
+        for item in root.findall('.//item'):
+            title = item.find('title').text
+            headlines.append(title)
+        
+        if headlines:
+            # Look for Gold or USD related news
+            important = [h for h in headlines if any(x in h.upper() for x in ["GOLD", "XAU", "USD", "FED", "INFLATION", "NFP"])]
+            if important:
+                return f"🔥 [FOREX NEWS] {important[0]}"
+            return f"📊 [FOREX NEWS] {headlines[0]}"
+        return "Forex: Market is stable with no major news spikes."
+    except:
+        return "Forex: News analysis in progress..."
+
 def get_crypto_news(symbol):
     """
     Fetches real news headlines from CoinDesk RSS feed and checks for symbol mentions.
