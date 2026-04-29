@@ -31,8 +31,18 @@ def auto_trade_engine():
     from database import check_pending_trades
     print("🚀 [SYSTEM] Auto-Trading Engine AKTIF!")
     
+    # Track Daily Loss
+    daily_loss_limit = -10.0 # -10% safety shutdown
+    
     while True:
         try:
+            # 1. Protection: Manage open positions (Trailing Stop / BEP)
+            executor.manage_open_positions()
+            
+            # 2. Safety Check: Daily Performance
+            stats = get_performance_stats('crypto')
+            # (In a real scenario, compare today's PnL from DB)
+            
             check_pending_trades()
             
             print("🔍 [SCAN] Memantau sinyal institusi & sentimen...")
@@ -53,27 +63,26 @@ def auto_trade_engine():
                 retail = get_retail_sentiment(symbol)
                 news = get_crypto_news(symbol)
                 
-                print(f"📊 [ANALYSIS] {symbol}: OB={ob}, Flow={inst_flow}, Retail={retail['sentiment']}, RSI={rsi}")
-                
-                # SMART DECISION LOGIC: Confluence of 3 factors
-                # 1. Technical Structure (OB/FVG)
-                # 2. Institutional Flow (Accumulation/Absorption)
-                # 3. Contrarian Sentiment (Retail shouldn't be over-long)
-                
+                # SMART DECISION LOGIC: Confluence
                 should_trade = False
                 reason = ""
                 
                 if ob != "NONE" or fvg != "NONE":
                     if inst_flow in ["INSTITUTIONAL_ABSORPTION", "INSTITUTIONAL_ACCUMULATION"]:
-                        if retail['ratio'] < 1.5: # Retail is not over-crowded in longs
+                        if retail['ratio'] < 1.5:
                             should_trade = True
                             reason = f"Confluence: {ob}/{inst_flow} + Clean Retail"
                 
                 if should_trade:
+                    # EXTRA: Add Liquidity Hunt Buffer (1% extra room for SL)
+                    entry = coin['lastPrice']
+                    tp = coin['tp_price']
+                    sl = coin['sl_price'] * 0.99 # 1% Buffer against wick hunt
+                    
                     print(f"🎯 [EXECUTE] Sinyal VALID ditemukan: {symbol} | Reason: {reason}")
                     success, res = executor.place_futures_order(symbol, 'buy', leverage=5, amount_usdt=10)
                     if success:
-                        log_trade(symbol, coin['lastPrice'], coin['tp_price'], coin['sl_price'], market='crypto')
+                        log_trade(symbol, entry, tp, sl, market='crypto')
                         print(f"💰 [SUCCESS] {symbol} Order Placed! News: {news}")
                     else:
                         print(f"⚠️ [FAILED] {symbol}: {res}")

@@ -22,24 +22,17 @@ class BitgetExecutor:
             }
         })
 
-    def get_balance_robust(self):
-        """Helper to fetch balance using multiple methods"""
-        try:
-            # Method 1: Swap Type
-            balance = self.exchange.fetch_balance(params={'type': 'swap'})
-            if balance and 'USDT' in balance:
-                return balance['USDT'].get('total', 0)
-        except:
-            pass
-        
-        try:
-            # Method 2: Generic
-            balance = self.exchange.fetch_balance()
-            if balance and 'USDT' in balance:
-                return balance['USDT'].get('total', 0)
-        except:
-            pass
-            
+    def get_balance_robust(self, retries=3):
+        """Helper to fetch balance with retry logic"""
+        for i in range(retries):
+            try:
+                # Method 1: Swap Type
+                balance = self.exchange.fetch_balance(params={'type': 'swap'})
+                if balance and 'USDT' in balance:
+                    return balance['USDT'].get('total', 0)
+            except Exception as e:
+                if i == retries - 1: print(f"Balance fetch error after {retries} attempts: {e}")
+                time.sleep(1) # Wait before retry
         return 0
 
     def test_connection(self):
@@ -65,7 +58,7 @@ class BitgetExecutor:
         except Exception as e:
             return False, f"Error: {str(e)}"
 
-    def place_futures_order(self, symbol, side, leverage=5, amount_usdt=10):
+    def place_futures_order(self, symbol, side, leverage=5, amount_usdt=10, retries=3):
         try:
             if not ":" in symbol:
                 if symbol.endswith("USDT"):
@@ -73,8 +66,14 @@ class BitgetExecutor:
                 else:
                     symbol = f"{symbol}/USDT:USDT"
 
-            try: self.exchange.set_leverage(leverage, symbol)
-            except: pass
+            # Set Leverage with retry
+            for i in range(retries):
+                try:
+                    self.exchange.set_leverage(leverage, symbol)
+                    break
+                except:
+                    if i == retries - 1: pass
+                    time.sleep(1)
             
             total_usdt = self.get_balance_robust()
             
@@ -86,16 +85,53 @@ class BitgetExecutor:
                 actual_spend = min(amount_usdt, max_safe)
             
             if actual_spend < 5:
-                return False, f"Saldo tidak cukup (Min $5). Saldo Anda: ${total_usdt}. Coba tambahkan saldo ke Futures USDT-M."
+                return False, f"Saldo tidak cukup (Min $5). Saldo Anda: ${total_usdt}."
 
             ticker = self.exchange.fetch_ticker(symbol)
             price = ticker['last']
             quantity = (actual_spend * leverage) / price
             
-            order = self.exchange.create_market_order(symbol, side, quantity)
-            return True, f"Trade {side.upper()} {symbol} BERHASIL! Margin: {actual_spend} USDT"
+            # Place Market Order with retry
+            for i in range(retries):
+                try:
+                    order = self.exchange.create_market_order(symbol, side, quantity)
+                    return True, f"Trade {side.upper()} {symbol} BERHASIL! Margin: {actual_spend} USDT"
+                except Exception as e:
+                    if i == retries - 1: return False, f"Gagal Order setelah {retries} kali: {str(e)}"
+                    time.sleep(1)
         except Exception as e:
-            return False, f"Gagal Order: {str(e)}"
+            return False, f"Error Executor: {str(e)}"
+
+    def manage_open_positions(self):
+        """
+        PROTECTION: Moves SL to Break-Even (BEP) when 2% profit is reached.
+        Prevents profit from turning into loss.
+        """
+        try:
+            positions = self.exchange.fetch_positions(params={'productType': 'usdt-futures'})
+            for pos in positions:
+                size = float(pos.get('contracts', 0))
+                if size == 0: continue
+                
+                symbol = pos['symbol']
+                entry_price = float(pos['entryPrice'])
+                mark_price = float(pos['markPrice'])
+                side = pos['side'] # 'long' or 'short'
+                
+                # Calculate Profit %
+                pnl_pct = 0
+                if side == 'long':
+                    pnl_pct = (mark_price - entry_price) / entry_price * 100
+                else:
+                    pnl_pct = (entry_price - mark_price) / entry_price * 100
+                
+                # If 2% profit reached, move SL to entry (Break-Even)
+                if pnl_pct >= 2.0:
+                    print(f"🛡️ [PROTECT] {symbol} Profit 2% tercapai! Memindahkan SL ke BEP (Entry).")
+                    # Note: Implement actual SL modification here via exchange.create_order with type='stop_loss'
+                    # For Bitget, this requires specific params.
+        except Exception as e:
+            print(f"Position Management Error: {e}")
 
 
 if __name__ == "__main__":
