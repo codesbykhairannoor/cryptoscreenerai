@@ -11,6 +11,7 @@ from ai_model import analyze_and_sort
 from database import log_trade, get_performance_stats
 from bitget_executor import BitgetExecutor
 import requests
+import random
 import threading
 import time
 
@@ -53,6 +54,10 @@ def auto_trade_engine():
     from database import check_pending_trades
     print("🚀 [SYSTEM] Auto-Trading Engine AKTIF!")
     
+    # Circuit Breaker: Track last execution time
+    last_exec_time = 0
+    COOLDOWN_PERIOD = 600 # 10 Minutes rest after each trade
+    
     while True:
         try:
             executor.manage_open_positions()
@@ -67,6 +72,12 @@ def auto_trade_engine():
             candidates = analyze_and_sort(raw_data)
             
             for coin in candidates[:5]:
+                # CIRCUIT BREAKER CHECK
+                now = time.time()
+                if now - last_exec_time < COOLDOWN_PERIOD:
+                    print(f"🛑 [CIRCUIT BREAKER] Bot sedang istirahat... ({int(COOLDOWN_PERIOD - (now-last_exec_time))}s left)")
+                    break
+
                 symbol = coin['symbol']
                 
                 # SNIPER MODE: Rapid Volatility Check
@@ -91,16 +102,21 @@ def auto_trade_engine():
                     reason = "SWING: OB + Institutional Confluence"
                 
                 if should_trade:
-                    entry = coin['lastPrice']
-                    tp = coin['tp_price']
-                    sl = coin['sl_price'] * 0.985 # Tighter SL for Sniper
+                    # Risk Params with RANDOMIZED OFFSET (Stealth)
+                    # Offsetting by 0.01% to 0.05% to avoid round-number traps
+                    offset = random.uniform(0.0001, 0.0005)
                     
-                    print(f"🎯 [EXECUTE] {reason} ditemukan di {symbol}!")
+                    entry = coin['lastPrice']
+                    tp = coin['tp_price'] * (1 + offset) # Stealth TP
+                    sl = (coin['sl_price'] * 0.985) * (1 - offset) # Stealth SL
+                    
+                    print(f"🎯 [EXECUTE] {reason} ditemukan di {symbol}! (Mode Stealth Aktif)")
                     success, res = executor.place_futures_order(
                         symbol, 'buy', leverage=5, 
                         tp_price=tp, sl_price=sl
                     )
                     if success:
+                        last_exec_time = time.time() # Trigger Cooldown
                         log_trade(symbol, entry, tp, sl, market='crypto')
                         print(f"💰 [SUCCESS] {symbol} Order Placed! Flow: {inst_flow}")
                     else:

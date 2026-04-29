@@ -60,8 +60,8 @@ class BitgetExecutor:
 
     def place_futures_order(self, symbol, side, leverage=5, amount_usdt=None, tp_price=None, sl_price=None, retries=3):
         """
-        Executes a Full-Balance trade with mandatory SL and TP on the exchange.
-        Uses 95% of balance to maximize exposure while covering fees.
+        Executes a 'Market-with-Protection' trade using Limit orders with offset.
+        Prevents buying at extreme prices (slippage protection).
         """
         try:
             if not ":" in symbol:
@@ -79,29 +79,36 @@ class BitgetExecutor:
                     time.sleep(1)
             
             total_usdt = self.get_balance_robust()
-            
-            # AGGRESSIVE STRATEGY: Use 95% of balance
             actual_spend = total_usdt * 0.95
             
             if actual_spend < 5:
                 return False, f"Saldo tidak cukup (Min $5). Saldo Anda: ${total_usdt}."
 
             ticker = self.exchange.fetch_ticker(symbol)
-            price = ticker['last']
-            quantity = (actual_spend * leverage) / price
+            last_price = ticker['last']
+            
+            # SLIPPAGE PROTECTION: Calculate Limit Price (0.5% offset)
+            # This ensures we get fast execution but not at a crazy price
+            if side == 'buy':
+                limit_price = last_price * 1.005 # Buy slightly higher to guarantee fill
+            else:
+                limit_price = last_price * 0.995 # Sell slightly lower
+
+            quantity = (actual_spend * leverage) / limit_price
             
             # Enhanced Order Params for Bitget (TP/SL)
-            params = {}
-            if tp_price: params['takeProfitPrice'] = tp_price
-            if sl_price: params['stopLossPrice'] = sl_price
+            params = {
+                'takeProfitPrice': tp_price,
+                'stopLossPrice': sl_price
+            }
 
-            # Place Market Order with TP/SL attached
+            # Place Protected Limit Order
             for i in range(retries):
                 try:
-                    order = self.exchange.create_market_order(symbol, side, quantity, params=params)
-                    return True, f"Trade {side.upper()} {symbol} (ALL-IN) BERHASIL! Margin: {round(actual_spend, 2)} USDT | SL: {sl_price} | TP: {tp_price}"
+                    order = self.exchange.create_order(symbol, 'limit', side, quantity, limit_price, params=params)
+                    return True, f"Trade {side.upper()} (Protected Limit) BERHASIL! Entry: {last_price} | Margin: {round(actual_spend, 2)}"
                 except Exception as e:
-                    if i == retries - 1: return False, f"Gagal Order ALL-IN: {str(e)}"
+                    if i == retries - 1: return False, f"Gagal Order Sniper: {str(e)}"
                     time.sleep(1)
         except Exception as e:
             return False, f"Error Executor: {str(e)}"
