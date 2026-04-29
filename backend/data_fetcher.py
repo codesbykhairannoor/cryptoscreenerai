@@ -110,9 +110,10 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         # Logic: Price dips below previous low but closes back above with volume
         last_candle = df_cur.iloc[-1]
         prev_candle = df_cur.iloc[-2]
+        avg_vol = df_cur['vol'].rolling(20).mean().iloc[-1]
         is_sweep = False
         if last_candle['low'] < prev_candle['low'] and last_candle['close'] > prev_candle['low']:
-            if last_candle['vol'] > avg_gain.iloc[-1] * 1.5: # Volume confirmation
+            if float(last_candle['vol']) > float(avg_vol) * 1.5: # Volume confirmation
                 is_sweep = True
 
         # Smart detection
