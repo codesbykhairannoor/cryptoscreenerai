@@ -84,11 +84,15 @@ class BitgetExecutor:
                 except:
                     time.sleep(1)
             
-            total_usdt = self.get_balance_robust()
-            actual_spend = total_usdt * 0.95
+            # Get Available Balance (Free balance only to avoid locked funds error)
+            balance_data = self.exchange.fetch_balance(params={'type': 'swap'})
+            available_usdt = balance_data.get('USDT', {}).get('free', 0)
+            
+            # Use 90% of AVAILABLE balance as a safety buffer for fees/slippage
+            actual_spend = available_usdt * 0.90
             
             if actual_spend < 5:
-                return False, f"Saldo tidak cukup (Min $5). Saldo Anda: ${total_usdt}."
+                return False, f"Saldo tersedia tidak cukup (Min $5). Tersedia: ${round(available_usdt, 2)}."
 
             ticker = self.exchange.fetch_ticker(symbol)
             last_price = ticker['last']
