@@ -66,7 +66,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         if not isinstance(data_cur, list) or len(data_cur) < period: return {}
 
         df_cur = pd.DataFrame(data_cur, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
-        for col in ['open', 'high', 'low', 'close']:
+        for col in ['open', 'high', 'low', 'close', 'vol']:
             df_cur[col] = pd.to_numeric(df_cur[col], errors='coerce').astype(float)
         
         # Fetch HTF data for MTF Trend
