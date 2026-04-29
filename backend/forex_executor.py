@@ -75,11 +75,19 @@ class ForexExecutor:
         XAUUSD SCALPER MODE: Strikes Gold with multiple simultaneous trades.
         Now supports SL/TP for every trade in the batch.
         """
+        from database import log_trade
         print(f"🚀 [XAUUSD SNIPER] Triggering {trades_count} Scalp Trades ({side.upper()}) with SL/TP!")
         results = []
         for i in range(trades_count):
             success, res = self.place_forex_order("XAUUSD", side, volume, tp=tp, sl=sl)
             results.append(success)
+            if success:
+                # Log the first successful trade of the batch to the journal for tracking
+                if i == 0: 
+                    # Fetch price for accurate log
+                    from data_fetcher import get_forex_data
+                    price = get_forex_data("XAUUSD").get('lastPrice', 0)
+                    log_trade("XAUUSD", price, tp, sl, market='forex')
             time.sleep(0.1)
             
         success_count = results.count(True)
@@ -93,6 +101,7 @@ class ForexExecutor:
         """
         from sentiment import get_forex_news
         from data_fetcher import get_forex_data
+        from database import log_trade
         print("🌍 [SYSTEM] Forex Monitoring Engine (XAUUSD Focus) AKTIF!")
         
         last_news_check = 0
@@ -136,7 +145,7 @@ class ForexExecutor:
                         atr = fx_data.get('atr', 1.5) # Default 1.5 pips volatility
                         
                         if side == 'buy':
-                            tp = price + (atr * 2) # Target 2x Volatility
+                            tp = price + (atr * 2) 
                             sl = price - (atr * 1.5)
                         else:
                             tp = price - (atr * 2)
