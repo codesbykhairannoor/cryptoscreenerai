@@ -14,7 +14,7 @@ class ForexExecutor:
     def __init__(self):
         self.api_token = os.getenv("FOREX_META_API_TOKEN")
         self.account_id = os.getenv("FOREX_ACCOUNT_ID")
-        self.base_url = "https://mt-client-api-v1.new-york.agiliumtrade.ai"
+        self.base_url = "https://mt-client-api-v1.london.agiliumtrade.ai"
         self.is_active = self.api_token is not None and self.account_id is not None
 
     def get_account_information(self):
