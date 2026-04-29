@@ -78,6 +78,15 @@ def get_bitget_status():
     except Exception as e:
         return {"connected": False, "message": str(e)}
 
+@app.get("/api/forex-status")
+def get_forex_status():
+    try:
+        executor = ForexExecutor()
+        success, message = executor.test_connection()
+        return {"connected": success, "message": message}
+    except Exception as e:
+        return {"connected": False, "message": str(e)}
+
 @app.get("/api/top-coins")
 def get_top_coins(timeframe: str = "15m"):
     try:

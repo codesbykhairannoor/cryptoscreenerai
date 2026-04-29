@@ -9,7 +9,7 @@ load_dotenv()
 class ForexExecutor:
     """
     Dedicated Forex Engine for MetaTrader 5 (via MetaAPI).
-    Isolated from Crypto and Stock logic.
+    Focused on XAUUSD Institutional Scalping.
     """
     def __init__(self):
         self.api_token = os.getenv("FOREX_META_API_TOKEN")
@@ -29,22 +29,20 @@ class ForexExecutor:
             print(f"❌ [FOREX ERROR] Failed to fetch account info: {e}")
             return None
 
-    def place_forex_order(self, symbol, side, volume=0.01, tp=None, sl=None):
-        """
-        Executes a professional Forex trade on MT5.
-        Supports 1-pip scalping strategies with simultaneous execution.
-        """
-        if not self.is_active: 
-            return False, "Forex API Token/Account ID belum dikonfigurasi di .env"
+    def test_connection(self):
+        """Verify if the Exness MT5 account is ready for combat"""
+        info = self.get_account_information()
+        if info and 'balance' in info:
+            print(f"✅ [FOREX] MT5 Connected! Balance: ${info['balance']} | Equity: ${info['equity']}")
+            return True, f"Connected to Exness MT5 (Balance: ${info['balance']})"
+        return False, "Failed to connect to MetaAPI. Check Token/ID or Dashboard Status."
 
+    def place_forex_order(self, symbol, side, volume=0.01, tp=None, sl=None):
+        """Executes a single MT5 order via MetaAPI"""
+        if not self.is_active: return False, "Inactive"
         try:
             url = f"{self.base_url}/users/current/accounts/{self.account_id}/trade"
-            headers = {
-                "auth-token": self.api_token,
-                "Content-Type": "application/json"
-            }
-            
-            # Professional MT5 Order Structure
+            headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
             payload = {
                 "actionType": "ORDER_TYPE_BUY" if side.lower() == 'buy' else "ORDER_TYPE_SELL",
                 "symbol": symbol,
@@ -53,26 +51,47 @@ class ForexExecutor:
                 "takeProfit": tp,
                 "comment": "CryptoScreener AI Sniper"
             }
-            
             res = requests.post(url, headers=headers, json=payload, timeout=10)
-            result = res.json()
-            
-            if res.status_code == 200:
-                print(f"✅ [FOREX SUCCESS] {side.upper()} {symbol} (Vol: {volume}) Placed on MT5!")
-                return True, result
-            else:
-                return False, result.get("message", "Unknown MT5 Error")
-
+            return res.status_code == 200, res.json()
         except Exception as e:
-            return False, f"System Error: {str(e)}"
+            return False, str(e)
+
+    def place_xauusd_scalp_batch(self, side, trades_count=5, volume=0.01):
+        """
+        XAUUSD SCALPER MODE: Strikes Gold with multiple simultaneous trades.
+        Ideal for 1-pip or tight scalping during high-volatility news.
+        """
+        print(f"🚀 [XAUUSD SNIPER] Triggering {trades_count} Scalp Trades ({side.upper()})!")
+        results = []
+        for i in range(trades_count):
+            success, res = self.place_forex_order("XAUUSD", side, volume)
+            results.append(success)
+            time.sleep(0.1)
+            
+        success_count = results.count(True)
+        print(f"✅ [XAUUSD SUCCESS] {success_count}/{trades_count} Trades Executed!")
+        return success_count > 0
 
     def monitor_forex_market(self):
         """
-        Dedicated scanner for Forex pairs (EURUSD, GBPUSD, XAUUSD).
-        This runs in its own thread to avoid interfering with Crypto.
+        Institutional Gold & FX Scanner.
+        Detects 'Smart Money' moves on XAUUSD.
         """
-        print("🌍 [SYSTEM] Forex Monitoring Engine AKTIF!")
+        print("🌍 [SYSTEM] Forex Monitoring Engine (XAUUSD Focus) AKTIF!")
         while True:
-            # Placeholder for Forex Analysis Logic
-            # (RSI, Institutional Flow, news-driven signals)
-            time.sleep(60) # Scan every minute
+            try:
+                # Periodic Connection Heartbeat
+                if int(time.time()) % 300 < 60:
+                    self.test_connection()
+                
+                # Placeholder for XAUUSD Analysis (Institutional Flow)
+                # In a real scenario, we'd use MetaAPI WebSocket for tick-by-tick data
+                time.sleep(60)
+            except Exception as e:
+                print(f"❌ [FOREX SCANNER ERROR] {e}")
+                await asyncio.sleep(10)
+
+if __name__ == "__main__":
+    # Local Test
+    fx = ForexExecutor()
+    fx.test_connection()
