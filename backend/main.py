@@ -176,6 +176,35 @@ def get_performance(market: str = None):
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.post("/api/execute-now")
+def execute_now(trade: dict):
+    """
+    MANUAL SNIPER: Instantly executes a market order.
+    Use this to test connectivity or manual entry.
+    """
+    try:
+        symbol = trade.get('symbol')
+        market = trade.get('market', 'crypto')
+        side = trade.get('side', 'buy')
+        
+        if market == 'crypto':
+            executor = BitgetExecutor()
+            # Small randomized TP/SL for manual stealth test
+            tp = float(trade.get('tp', 0))
+            sl = float(trade.get('sl', 0))
+            success, res = executor.place_futures_order(symbol, side, tp_price=tp, sl_price=sl)
+        else:
+            executor = ForexExecutor()
+            # Manual batch for Forex (3 trades for 'pinter' scaling test)
+            success = executor.place_xauusd_scalp_batch(side, trades_count=1, volume=0.01)
+            res = "Forex Order Sent to MT5"
+            
+        if success:
+            return {"status": "success", "message": f"🚀 Manual {side.upper()} executed for {symbol}!"}
+        return {"status": "error", "message": f"❌ Failed: {res}"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
 @app.post("/api/select-trade")
 def select_trade(trade: dict):
     try:

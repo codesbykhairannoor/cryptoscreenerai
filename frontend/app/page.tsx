@@ -138,6 +138,26 @@ export default function Home() {
     } catch (err) { console.error(err); }
   };
 
+  const handleExecuteNow = async (asset: any) => {
+    if (!confirm(`🚀 EXECUTE REAL MARKET ORDER for ${asset.symbol}?`)) return;
+    try {
+      const res = await fetch(`${backendUrl}/api/execute-now`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: asset.symbol,
+          market: activeTab,
+          side: 'buy',
+          tp: asset.tp_price,
+          sl: asset.sl_price
+        })
+      });
+      const data = await res.json();
+      alert(data.message);
+      fetchData();
+    } catch (err) { alert("Execution Failed"); }
+  };
+
   const currentData = activeTab === 'crypto' ? cryptoData : activeTab === 'forex' ? forexData : idxData;
   const filteredHistory = tradeHistory.filter(t => t.market === activeTab);
 
@@ -309,7 +329,10 @@ export default function Home() {
                           </span>
                         </td>
                         <td className="px-6 py-5 text-center">
-                          <button onClick={(e) => {e.stopPropagation(); handlePickTrade(asset);}} className="bg-emerald-500/10 hover:bg-emerald-500 text-emerald-500 hover:text-white p-3 rounded-xl border border-emerald-500/20 transition-all">✅</button>
+                          <div className="flex items-center gap-2">
+                            <button onClick={(e) => {e.stopPropagation(); handlePickTrade(asset);}} className="bg-emerald-500/10 hover:bg-emerald-500 text-emerald-500 hover:text-white p-3 rounded-xl border border-emerald-500/20 transition-all" title="Add to Journal">✅</button>
+                            <button onClick={(e) => {e.stopPropagation(); handleExecuteNow(asset);}} className="bg-orange-500/10 hover:bg-orange-500 text-orange-500 hover:text-white px-3 py-3 rounded-xl border border-orange-500/20 transition-all font-black text-[10px]" title="Execute Now">⚡ NOW</button>
+                          </div>
                         </td>
                       </tr>
                       {isExp && (
