@@ -1,6 +1,6 @@
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from sentiment import get_crypto_news
+from sentiment import get_crypto_news, get_global_market_data
 from data_fetcher import (
     fetch_all_tickers, get_order_book_details, 
     get_technical_indicators, get_forex_data, 
@@ -25,7 +25,7 @@ app.add_middleware(
 def auto_trade_engine():
     """
     The 'GG' Engine: Advanced Autonomous Execution.
-    Integrates Sentiment, News, and Institutional Order Flow.
+    Integrates Sentiment, News, CMC Global Data, and Institutional Flow.
     """
     executor = BitgetExecutor()
     from database import check_pending_trades
@@ -36,14 +36,12 @@ def auto_trade_engine():
     
     while True:
         try:
-            # 1. Protection: Manage open positions (Trailing Stop / BEP)
             executor.manage_open_positions()
-            
-            # 2. Safety Check: Daily Performance
-            stats = get_performance_stats('crypto')
-            # (In a real scenario, compare today's PnL from DB)
-            
             check_pending_trades()
+            
+            # 1. Global Market Context from CMC
+            global_context = get_global_market_data()
+            print(f"🌍 [GLOBAL] {global_context}")
             
             print("🔍 [SCAN] Memantau sinyal institusi & sentimen...")
             raw_data = fetch_all_tickers()
@@ -57,7 +55,6 @@ def auto_trade_engine():
                 ob = tech.get('order_block', "NONE")
                 fvg = tech.get('fvg', "NONE")
                 inst_flow = tech.get('inst_flow', "NORMAL")
-                rsi = tech.get('rsi', 50)
                 
                 # Retail vs Institution Sentiment
                 retail = get_retail_sentiment(symbol)
@@ -71,19 +68,23 @@ def auto_trade_engine():
                     if inst_flow in ["INSTITUTIONAL_ABSORPTION", "INSTITUTIONAL_ACCUMULATION"]:
                         if retail['ratio'] < 1.5:
                             should_trade = True
-                            reason = f"Confluence: {ob}/{inst_flow} + Clean Retail"
+                            reason = f"Confluence: {ob}/{inst_flow}"
                 
                 if should_trade:
-                    # EXTRA: Add Liquidity Hunt Buffer (1% extra room for SL)
+                    # Risk Params
                     entry = coin['lastPrice']
                     tp = coin['tp_price']
-                    sl = coin['sl_price'] * 0.99 # 1% Buffer against wick hunt
+                    sl = coin['sl_price'] * 0.99 # Buffer
                     
-                    print(f"🎯 [EXECUTE] Sinyal VALID ditemukan: {symbol} | Reason: {reason}")
-                    success, res = executor.place_futures_order(symbol, 'buy', leverage=5, amount_usdt=10)
+                    print(f"🎯 [EXECUTE] Sinyal VALID (ALL-IN) ditemukan: {symbol}")
+                    # PASS TP/SL to EXCHANGE
+                    success, res = executor.place_futures_order(
+                        symbol, 'buy', leverage=5, 
+                        tp_price=tp, sl_price=sl
+                    )
                     if success:
                         log_trade(symbol, entry, tp, sl, market='crypto')
-                        print(f"💰 [SUCCESS] {symbol} Order Placed! News: {news}")
+                        print(f"💰 [SUCCESS] {symbol} (ALL-IN) Berhasil! News: {news}")
                     else:
                         print(f"⚠️ [FAILED] {symbol}: {res}")
                 

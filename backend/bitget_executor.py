@@ -58,7 +58,11 @@ class BitgetExecutor:
         except Exception as e:
             return False, f"Error: {str(e)}"
 
-    def place_futures_order(self, symbol, side, leverage=5, amount_usdt=10, retries=3):
+    def place_futures_order(self, symbol, side, leverage=5, amount_usdt=None, tp_price=None, sl_price=None, retries=3):
+        """
+        Executes a Full-Balance trade with mandatory SL and TP on the exchange.
+        Uses 95% of balance to maximize exposure while covering fees.
+        """
         try:
             if not ":" in symbol:
                 if symbol.endswith("USDT"):
@@ -66,23 +70,18 @@ class BitgetExecutor:
                 else:
                     symbol = f"{symbol}/USDT:USDT"
 
-            # Set Leverage with retry
+            # Set Leverage
             for i in range(retries):
                 try:
                     self.exchange.set_leverage(leverage, symbol)
                     break
                 except:
-                    if i == retries - 1: pass
                     time.sleep(1)
             
             total_usdt = self.get_balance_robust()
             
-            # Smart Margin: For small accounts, use min $5. For larger, use 20% max.
-            if total_usdt < 50:
-                actual_spend = 5.0 if total_usdt >= 5.0 else total_usdt
-            else:
-                max_safe = total_usdt * 0.2
-                actual_spend = min(amount_usdt, max_safe)
+            # AGGRESSIVE STRATEGY: Use 95% of balance
+            actual_spend = total_usdt * 0.95
             
             if actual_spend < 5:
                 return False, f"Saldo tidak cukup (Min $5). Saldo Anda: ${total_usdt}."
@@ -91,13 +90,18 @@ class BitgetExecutor:
             price = ticker['last']
             quantity = (actual_spend * leverage) / price
             
-            # Place Market Order with retry
+            # Enhanced Order Params for Bitget (TP/SL)
+            params = {}
+            if tp_price: params['takeProfitPrice'] = tp_price
+            if sl_price: params['stopLossPrice'] = sl_price
+
+            # Place Market Order with TP/SL attached
             for i in range(retries):
                 try:
-                    order = self.exchange.create_market_order(symbol, side, quantity)
-                    return True, f"Trade {side.upper()} {symbol} BERHASIL! Margin: {actual_spend} USDT"
+                    order = self.exchange.create_market_order(symbol, side, quantity, params=params)
+                    return True, f"Trade {side.upper()} {symbol} (ALL-IN) BERHASIL! Margin: {round(actual_spend, 2)} USDT | SL: {sl_price} | TP: {tp_price}"
                 except Exception as e:
-                    if i == retries - 1: return False, f"Gagal Order setelah {retries} kali: {str(e)}"
+                    if i == retries - 1: return False, f"Gagal Order ALL-IN: {str(e)}"
                     time.sleep(1)
         except Exception as e:
             return False, f"Error Executor: {str(e)}"
