@@ -70,15 +70,22 @@ def run_crypto_engine():
                 symbol = coin['symbol']
                 entry = coin['lastPrice']
                 
-                # ANTI-FOMO FILTER
-                price_change_24h = coin.get('priceChangePercent', 0)
-                if price_change_24h > 15.0: # Relaxed slightly but still safe
-                    continue
-
                 tech = get_technical_indicators(symbol)
                 rsi = tech.get('rsi', 50)
+                vwap = tech.get('vwap', entry)
+                vwap_dist = tech.get('vwap_dist', 0)
+                is_sweep = tech.get('is_liquidity_sweep', False)
                 
-                if rsi > 70: # Overbought
+                # 1. INSTITUTIONAL FAIR VALUE CHECK (Anti-FOMO)
+                # Don't buy if price is > 3% above VWAP (Price is too expensive/over-extended)
+                if vwap_dist > 3.0:
+                    continue
+
+                # 2. ORDER BOOK IMBALANCE (Whale Tracker)
+                from data_fetcher import get_order_book_details
+                ob = get_order_book_details(symbol)
+                # If Ask Wall is 2x Bid Wall,Institutions are likely pushing price down. Avoid.
+                if ob['ratio'] < 0.5:
                     continue
 
                 is_vol_spike = detect_volatility_spike(symbol)
@@ -87,18 +94,22 @@ def run_crypto_engine():
                 should_trade = False
                 reason = ""
                 
-                # SMART SCAN: Institutional Accumulation + RSI Bottom
-                if inst_flow == "INSTITUTIONAL_ACCUMULATION" and rsi < 50:
+                # REFINED STRATEGY: Institutional Reversals
+                if is_sweep:
                     should_trade = True
-                    reason = "ACCUMULATION (BOTTOM)"
-                elif is_vol_spike and rsi < 60:
+                    reason = "INSTITUTIONAL LIQUIDITY SWEEP (STOP-HUNT REVERSAL)"
+                elif inst_flow == "INSTITUTIONAL_ACCUMULATION" and vwap_dist < 1.0:
                     should_trade = True
-                    reason = "VOLATILITY REJECTION"
+                    reason = "INSTITUTIONAL VWAP ACCUMULATION"
+                elif is_vol_spike and rsi < 55 and vwap_dist < 2.0:
+                    should_trade = True
+                    reason = "VWAP SUPPORT BREAKOUT"
                 
                 if should_trade:
                     # 4. FUTURE PROJECTION: Combined News + Tech
                     news_context = get_crypto_news(symbol)
-                    print(f"🔮 [FUTURE OUTLOOK] {symbol}: Sinyal {reason} terdeteksi. RSI {rsi} menunjukkan ruang gerak naik. {news_context}")
+                    print(f"🏛️ [WALL STREET LOGIC] {symbol}: Trading with the Whales. Reason: {reason}. Price vs VWAP: {vwap_dist}%")
+                    print(f"🔮 [FUTURE OUTLOOK] RSI {rsi} & OrderBook Ratio {ob['ratio']} suggests upward momentum. {news_context}")
                     
                     tp = coin.get('tp_price') or (entry * 1.03) 
                     sl = coin.get('sl_price') or (entry * 0.98) 

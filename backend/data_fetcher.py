@@ -100,10 +100,21 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         atr_cur = pd.Series(true_range).rolling(period).mean()
 
 
-        # EMA 200 (Current & HTF)
-        ema_200_cur = closes_cur.ewm(span=200, adjust=False).mean()
-        ema_200_htf = closes_htf.ewm(span=200, adjust=False).mean()
+        # 1. VWAP CALCULATION (Institutional Benchmark)
+        # Formula: cumulative(typical_price * volume) / cumulative(volume)
+        typical_price = (df_cur['high'] + df_cur['low'] + df_cur['close']) / 3
+        vwap = (typical_price * df_cur['vol']).cumsum() / df_cur['vol'].cumsum()
+        last_vwap = round(vwap.iloc[-1], 2)
         
+        # 2. LIQUIDITY SWEEP DETECTION (Anti-Stop Hunt)
+        # Logic: Price dips below previous low but closes back above with volume
+        last_candle = df_cur.iloc[-1]
+        prev_candle = df_cur.iloc[-2]
+        is_sweep = False
+        if last_candle['low'] < prev_candle['low'] and last_candle['close'] > prev_candle['low']:
+            if last_candle['vol'] > avg_gain.iloc[-1] * 1.5: # Volume confirmation
+                is_sweep = True
+
         # Smart detection
         pattern = detect_candle_patterns(df_cur)
         smc = detect_smart_money_concepts(df_cur)
@@ -112,6 +123,9 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         return {
             "rsi": round(rsi_cur.iloc[-1], 2) if not rsi_cur.empty else 50,
             "atr": round(atr_cur.iloc[-1], 4) if not atr_cur.empty else 0,
+            "vwap": last_vwap,
+            "vwap_dist": round((closes_cur.iloc[-1] - last_vwap) / last_vwap * 100, 2),
+            "is_liquidity_sweep": is_sweep,
             "ema_200": round(ema_200_cur.iloc[-1], 2) if not ema_200_cur.empty else 0,
             "ema_200_htf": round(ema_200_htf.iloc[-1], 2) if not ema_200_htf.empty else 0,
             "candle_pattern": pattern,
