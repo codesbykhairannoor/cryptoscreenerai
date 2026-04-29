@@ -106,8 +106,26 @@ class BitgetExecutor:
             # Place Protected Limit Order
             for i in range(retries):
                 try:
-                    order = self.exchange.create_order(symbol, 'limit', side, quantity, limit_price, params=params)
-                    return True, f"Trade {side.upper()} (Protected Limit) BERHASIL! Entry: {last_price} | Margin: {round(actual_spend, 2)}"
+                    # 1. Place Main Entry Order
+                    order = self.exchange.create_order(symbol, 'limit', side, quantity, limit_price)
+                    print(f"✅ [BITGET] Entry Order Placed: {symbol}")
+                    
+                    # 2. Attach TP & SL separately to avoid Bitget API 'single-param' restriction
+                    # We use 'stop' type or specific params for Bitget TP/SL
+                    try:
+                        if tp_price:
+                            tp_side = 'sell' if side == 'buy' else 'buy'
+                            self.exchange.create_order(symbol, 'limit', tp_side, quantity, tp_price, params={'reduceOnly': True, 'takeProfitPrice': tp_price})
+                            print(f"🎯 [BITGET] Take Profit Set at {tp_price}")
+                        
+                        if sl_price:
+                            sl_side = 'sell' if side == 'buy' else 'buy'
+                            self.exchange.create_order(symbol, 'limit', sl_side, quantity, sl_price, params={'reduceOnly': True, 'stopLossPrice': sl_price})
+                            print(f"🛡️ [BITGET] Stop Loss Set at {sl_price}")
+                    except Exception as e_safety:
+                        print(f"⚠️ [BITGET SAFETY WARNING] Order filled but SL/TP failed: {e_safety}")
+
+                    return True, f"Trade {side.upper()} BERHASIL! Entry: {last_price} | Margin: {round(actual_spend, 2)}"
                 except Exception as e:
                     if i == retries - 1: return False, f"Gagal Order Sniper: {str(e)}"
                     time.sleep(1)
