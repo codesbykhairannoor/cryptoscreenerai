@@ -70,20 +70,20 @@ class ForexExecutor:
         except Exception as e:
             return False, str(e)
 
-    def place_xauusd_scalp_batch(self, side, trades_count=5, volume=0.01):
+    def place_xauusd_scalp_batch(self, side, trades_count=5, volume=0.01, tp=None, sl=None):
         """
         XAUUSD SCALPER MODE: Strikes Gold with multiple simultaneous trades.
-        Ideal for 1-pip or tight scalping during high-volatility news.
+        Now supports SL/TP for every trade in the batch.
         """
-        print(f"🚀 [XAUUSD SNIPER] Triggering {trades_count} Scalp Trades ({side.upper()})!")
+        print(f"🚀 [XAUUSD SNIPER] Triggering {trades_count} Scalp Trades ({side.upper()}) with SL/TP!")
         results = []
         for i in range(trades_count):
-            success, res = self.place_forex_order("XAUUSD", side, volume)
+            success, res = self.place_forex_order("XAUUSD", side, volume, tp=tp, sl=sl)
             results.append(success)
             time.sleep(0.1)
             
         success_count = results.count(True)
-        print(f"✅ [XAUUSD SUCCESS] {success_count}/{trades_count} Trades Executed!")
+        print(f"✅ [XAUUSD SUCCESS] {success_count}/{trades_count} Trades Executed with Safety!")
         return success_count > 0
 
     def monitor_forex_market(self):

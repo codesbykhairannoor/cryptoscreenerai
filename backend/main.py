@@ -196,8 +196,10 @@ def execute_now(trade: dict):
         else:
             executor = ForexExecutor()
             # Manual batch for Forex (3 trades for 'pinter' scaling test)
-            success = executor.place_xauusd_scalp_batch(side, trades_count=1, volume=0.01)
-            res = "Forex Order Sent to MT5"
+            tp = float(trade.get('tp', 0))
+            sl = float(trade.get('sl', 0))
+            success = executor.place_xauusd_scalp_batch(side, trades_count=1, volume=0.01, tp=tp, sl=sl)
+            res = "Forex Order Sent to MT5 with SL/TP"
             
         if success:
             return {"status": "success", "message": f"🚀 Manual {side.upper()} executed for {symbol}!"}
