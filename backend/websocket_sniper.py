@@ -3,6 +3,7 @@ import json
 import websockets
 import os
 import time
+import requests
 from dotenv import load_dotenv
 from bitget_executor import BitgetExecutor
 from main import detect_volatility_spike
@@ -65,16 +66,35 @@ class BitgetWebSocketSniper:
                                 pass
 
                             if channel == "candle1m":
-                                print(f"📊 [WS V2] New Candle Data: {symbol}!")
                                 now = time.time()
                                 if symbol in self.last_trade_time:
                                     if now - self.last_trade_time[symbol] < 30:
                                         continue
 
-                                is_spike = detect_volatility_spike(symbol)
+                                # Detect Spike and get the actual % for the log
+                                is_spike, vol_pct = self.detect_vol_with_details(symbol)
+                                
                                 if is_spike:
+                                    print(f"⚡ [ALERT] Volatility Spike Detected! Volume: {vol_pct}%")
                                     print(f"🚀 [WS SNIPER] TRIGGERED ON {symbol}!")
                                     self.last_trade_time[symbol] = now
+                                else:
+                                    print(f"📊 [WS V2] New Candle Data: {symbol}! (Normal)")
+
+    def detect_vol_with_details(self, symbol):
+        """Helper to get exact volume percentage for the log"""
+        try:
+            from main import detect_volatility_spike
+            # This is a bit redundant but for logging it's worth it
+            url = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval=1m&limit=5"
+            res = requests.get(url, timeout=2)
+            data = res.json()
+            last_vol = float(data[-1][5])
+            avg_vol = sum(float(d[5]) for d in data[:-1]) / 4
+            pct = round((last_vol / avg_vol) * 100, 0)
+            return last_vol > avg_vol * 3.0, int(pct)
+        except:
+            return False, 0
             except Exception as e:
                 print(f"🔄 [WS RECONNECT] Error: {e}. Retrying in 5s...")
                 await asyncio.sleep(5)

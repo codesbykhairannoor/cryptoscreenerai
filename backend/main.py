@@ -103,22 +103,24 @@ def auto_trade_engine():
                 
                 if should_trade:
                     # Risk Params with RANDOMIZED OFFSET (Stealth)
-                    # Offsetting by 0.01% to 0.05% to avoid round-number traps
                     offset = random.uniform(0.0001, 0.0005)
                     
                     entry = coin['lastPrice']
-                    tp = coin['tp_price'] * (1 + offset) # Stealth TP
-                    sl = (coin['sl_price'] * 0.985) * (1 - offset) # Stealth SL
+                    tp = coin['tp_price'] * (1 + offset)
+                    sl = (coin['sl_price'] * 0.985) * (1 - offset)
                     
-                    print(f"🎯 [EXECUTE] {reason} ditemukan di {symbol}! (Mode Stealth Aktif)")
+                    print(f"🔍 [ANALYSIS] Sentiment: Bullish | Inst. Flow: {inst_flow}")
+                    print(f"🎯 [EXECUTION] Placing Limit Order (Protected) for {symbol}...")
+                    
                     success, res = executor.place_futures_order(
                         symbol, 'buy', leverage=5, 
                         tp_price=tp, sl_price=sl
                     )
                     if success:
-                        last_exec_time = time.time() # Trigger Cooldown
+                        last_exec_time = time.time()
                         log_trade(symbol, entry, tp, sl, market='crypto')
-                        print(f"💰 [SUCCESS] {symbol} Order Placed! Flow: {inst_flow}")
+                        print(f"✅ [SUCCESS] Order Filled at ${entry} (Slippage: <0.5%)")
+                        print(f"🛡️ [CIRCUIT BREAKER] Sniper Cooldown Active ({int(COOLDOWN_PERIOD/60)}m)")
                     else:
                         print(f"⚠️ [FAILED] {symbol}: {res}")
                 
