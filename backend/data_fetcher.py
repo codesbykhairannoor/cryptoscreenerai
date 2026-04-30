@@ -220,8 +220,6 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         low_close = np.abs(df_cur['low'].values - df_cur['close'].shift().values)
         true_range = np.nanmax([high_low, high_close, low_close], axis=0)
         atr_cur = pd.Series(true_range).rolling(period).mean()
-ing(period).mean()
-
 
         # 1. VWAP CALCULATION (Institutional Benchmark)
         typical_price = (df_cur['high'] + df_cur['low'] + df_cur['close']) / 3
