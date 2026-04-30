@@ -124,9 +124,15 @@ class BitgetExecutor:
             return 0
 
     def get_all_positions(self):
-        """Position Fetcher with Real-time PNL Calculation"""
+        """Position Fetcher with Real-time PNL Calculation (Hybrid WS/REST)"""
         all_pos = []
         try:
+            # 1. Try to get from Shared State (WebSocket) first
+            from shared_state import state
+            if state.positions and (time.time() - state.last_update < 30):
+                return state.positions
+
+            # 2. Fallback to REST
             ccxt_pos = self.exchange.fetch_positions(params={'productType': 'usdt-futures'})
             for p in ccxt_pos:
                 sz = float(p.get('contracts', 0) or 0)
@@ -135,7 +141,6 @@ class BitgetExecutor:
                     mark = float(p.get('markPrice', 0))
                     side = p['side'].lower()
                     
-                    # Manual PNL calculation for precision
                     pnl_pct = 0
                     if entry > 0:
                         diff = (mark - entry) if side in ['long', 'buy'] else (entry - mark)
@@ -149,21 +154,32 @@ class BitgetExecutor:
                         'mark_price': mark,
                         'pnl': round(pnl_pct, 2)
                     })
+            
+            # Update Shared State for next call
+            state.update_positions(all_pos)
             return all_pos
         except Exception as e:
-            # print(f"[CLASSIC POS ERROR] {e}")
             return []
 
     def get_pending_plan_orders(self, symbol=None):
-        """Plan/Trigger Order Fetcher for Classic (V2 Mix) with Multi-Type Polling"""
+        """Plan/Trigger Order Fetcher (Hybrid WS/REST)"""
         all_orders = []
         try:
-            # 1. Normal Orders via CCXT
+            # 1. Check Shared State (WebSocket) first
+            from shared_state import state
+            ws_orders = state.orders
+            if ws_orders:
+                target_clean = self._clean_symbol(symbol) if symbol else None
+                for o in ws_orders:
+                    o_sym = o.get('symbol', '')
+                    if not target_clean or self._clean_symbol(o_sym) == target_clean:
+                        all_orders.append({'info': o, 'type': 'stop', 'symbol': o_sym})
+                if all_orders: return all_orders
+
+            # 2. Fallback to REST API
             try: all_orders += self.exchange.fetch_open_orders(symbol, params={'productType': 'usdt-futures'})
             except: pass
             
-            # 2. Plan Orders (Direct V2 Mix API) - Polling multiple product types for safety
-            # Bitget Classic uses different productTypes depending on account age/region
             for pt in ['usdt-futures', 'umcbl', 'dmcbl', 'cmcbl']:
                 try:
                     plan_data = self.exchange.private_get_mix_order_orders_plan_pending({'productType': pt})

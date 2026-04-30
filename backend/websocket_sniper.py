@@ -93,18 +93,28 @@ class BitgetPrivateWS:
                         channel = data.get("arg", {}).get("channel")
                         
                         if channel == "order" and "data" in data:
+                            from shared_state import state
                             for order in data["data"]:
                                 status = order.get("orderStatus")
                                 symbol = order.get("symbol")
-                                side = order.get("side")
+                                
+                                # Instantly update Shared State
+                                current_orders = state.orders
+                                # Remove if exists and update with new status
+                                current_orders = [o for o in current_orders if o.get('orderId') != order.get('orderId')]
+                                if status not in ['filled', 'canceled']:
+                                    current_orders.append(order)
+                                state.update_orders(current_orders)
                                 
                                 if status == "filled":
-                                    print(f"✅ [PRIVATE WS] EKSEKUSI TERDETEKSI: {symbol} {side.upper()} berhasil terisi di bursa!")
-                                    print(f"🔄 [STATE SYNC] Menjalankan sinkronisasi memori otomatis...")
+                                    print(f"✅ [PRIVATE WS] EKSEKUSI TERDETEKSI: {symbol} berhasil terisi!")
                                     self.executor.sync_state_with_exchange()
                                     
                         elif channel == "account":
-                            print("💰 [PRIVATE WS] Update Saldo: Terdeteksi perubahan margin di bursa. Bot tetap sinkron.")
+                            from shared_state import state
+                            for acc in data.get("data", []):
+                                state.update_balance(acc.get('marginCoin'), acc)
+                            # print("💰 [PRIVATE WS] Update Saldo Real-time.")
 
             except Exception as e:
                 print(f"🔄 [PRIVATE WS RECONNECT] Error: {e}")
