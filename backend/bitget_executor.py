@@ -287,11 +287,14 @@ class BitgetExecutor:
                         has_tp = True
                         tp_p = float(info.get('triggerPrice') or info.get('executePrice') or 0)
                 
-                # Diagnostic Log (SL & TP)
-                if int(now) % 30 < 5:
+                # Diagnostic Log (SL & TP) - Every 10 seconds
+                if int(now) % 10 < 3:
                     sl_status = f"SL: {sl_p}" if has_sl else "SL: MISSING"
                     tp_status = f"TP: {tp_p}" if has_tp else "TP: MISSING"
-                    print(f"💎 [REAL-TIME MONITOR] {symbol} | PNL: {pnl}% | {sl_status} | {tp_status}")
+                    # Add WS status indicator
+                    from shared_state import state
+                    ws_active = "🟢 WS" if (time.time() - state.last_update < 60) else "🔴 REST"
+                    print(f"💎 [MONITOR {ws_active}] {symbol} | PNL: {pnl}% | {sl_status} | {tp_status}")
 
                 # 2. PROGRESSIVE TRAILING LOGIC (PINTER)
                 new_sl = 0

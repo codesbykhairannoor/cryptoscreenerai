@@ -65,7 +65,7 @@ class BitgetPrivateWS:
             ]
         }
         await ws.send(json.dumps(subs))
-        print("🛰️ [PRIVATE WS] Subscribed to Order & Account Updates!")
+        print("🛰️ [PRIVATE WS] Subscribed to Order, Algo (SL/TP), and Account Updates!")
 
     async def listen(self):
         while self.is_running:
