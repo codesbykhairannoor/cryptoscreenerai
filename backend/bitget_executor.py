@@ -269,9 +269,11 @@ class BitgetExecutor:
                     # BEP and Trailing Stop logic
                     if pnl_pct >= 2.0 and pnl_pct < 5.0:
                         sl_price = entry_price * 1.001 if side == 'long' else entry_price * 0.999
+                        print(f"🛡️ [SECURE] Profit 2% tercapai di {symbol}! Memindahkan SL ke Break-Even (${round(sl_price, 4)}).")
                         self.update_sl_price(symbol, side, size, sl_price)
                     elif pnl_pct >= 5.0:
                         trail_sl = mark_price * 0.985 if side == 'long' else mark_price * 1.015
+                        print(f"🏃 [TRAIL] Profit 5% tercapai di {symbol}! Mengaktifkan Trailing Stop di ${round(trail_sl, 4)}.")
                         self.update_sl_price(symbol, side, size, trail_sl)
 
             # 2. ORPHANED ORDER CLEANUP (Database Sync)
@@ -285,40 +287,44 @@ class BitgetExecutor:
                 
                 for (db_symbol,) in db_trades:
                     # Check if this DB symbol is still active in Bitget
-                    # Note: db_symbol is like 'LUMIAUSDT', exchange symbol is like 'LUMIA/USDT:USDT'
                     is_active = any(db_symbol.replace("USDT","") in s for s in active_symbols)
                     
                     if not is_active:
-                        print(f"🧹 [CLEANUP] {db_symbol} closed. Purging orphaned orders to release margin...")
+                        print(f"🧹 [CLEANUP] {db_symbol} sudah tertutup di bursa. Membersihkan orphaned orders...")
                         try:
                             clean_sym = f"{db_symbol.replace('USDT','')}/USDT:USDT" if not ":" in db_symbol else db_symbol
                             self.exchange.cancel_all_orders(clean_sym)
                             cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE symbol = %s AND market = 'crypto'", (db_symbol,))
                             conn.commit()
                         except Exception as e_clean:
-                            print(f"⚠️ [CLEANUP ERROR] {db_symbol}: {e_clean}")
+                            pass
             except Exception as e_db:
-                print(f"DB Monitor Error: {e_db}")
+                print(f"❌ [DB MONITOR ERROR] {e_db}")
             finally:
                 if conn:
                     conn.close()
                     
         except Exception as e:
-            print(f"Position Management Error: {e}")
+            print(f"⚠️ [MONITOR ERROR] {e}")
 
     def update_sl_price(self, symbol, side, amount, new_sl):
         """Helper to cancel old SL and place a new one"""
         try:
-            # 1. Cancel existing Stop orders for this symbol first (if possible)
-            # 2. Place new Trigger/Market SL order
+            # Bitget V2 Trigger Order
             tp_side = 'sell' if side == 'long' or side == 'buy' else 'buy'
+            # Cancel all previous plan orders to avoid overlap
+            try:
+                self.exchange.cancel_all_orders(symbol, params={'planType': 'normal_plan'})
+            except:
+                pass
+                
             self.exchange.create_order(symbol, 'market', tp_side, amount, params={
-                'stopPrice': new_sl,
-                'triggerPrice': new_sl,
+                'triggerPrice': str(new_sl),
+                'triggerType': 'mark',
                 'reduceOnly': True
             })
-        except:
-            pass
+        except Exception as e:
+            print(f"❌ [SL UPDATE FAILED] {symbol}: {e}")
 
 
 if __name__ == "__main__":

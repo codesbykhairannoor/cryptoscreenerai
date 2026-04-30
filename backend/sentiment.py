@@ -105,7 +105,11 @@ def get_crypto_news(symbol):
         mentions = [h for h in headlines if clean_symbol in h.upper()]
         
         if mentions:
-            return f"📰 [NEWS] {clean_symbol}: {mentions[0]}"
-        return f"💡 [SENTIMENT] {clean_symbol} following BTC/ETH macro trends."
+            msg = f"📰 [NEWS] {clean_symbol}: {mentions[0]}"
+            print(msg)
+            return msg
+            
+        msg = f"💡 [SENTIMENT] {clean_symbol} following BTC/ETH macro trends."
+        return msg
     except:
         return "Analyzing market pulse..."

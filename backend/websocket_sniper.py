@@ -87,13 +87,12 @@ class BitgetPrivateWS:
                                 side = order.get("side")
                                 
                                 if status == "filled":
-                                    print(f"✅ [PRIVATE WS] ORDER FILLED: {symbol} {side}!")
-                                    # [CRITICAL] Instant SL/TP trigger could go here if needed
-                                    # For now, let's trigger a position sync to be safe
+                                    print(f"✅ [PRIVATE WS] EKSEKUSI TERDETEKSI: {symbol} {side.upper()} berhasil terisi di bursa!")
+                                    print(f"🔄 [STATE SYNC] Menjalankan sinkronisasi memori otomatis...")
                                     self.executor.sync_state_with_exchange()
                                     
                         elif topic == "account":
-                            print("💰 [PRIVATE WS] Account Balance Updated.")
+                            print("💰 [PRIVATE WS] Update Saldo: Terdeteksi perubahan margin di bursa. Bot tetap sinkron.")
 
             except Exception as e:
                 print(f"🔄 [PRIVATE WS RECONNECT] Error: {e}")

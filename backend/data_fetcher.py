@@ -56,16 +56,19 @@ def get_funding_rate(symbol):
         if data.get('code') == '00000' and 'data' in data:
             rates = data['data']
             if rates:
-                return float(rates[0].get('fundingRate', 0))
+                rate = float(rates[0].get('fundingRate', 0))
     except:
         pass
-    return 0
+    
+    if rate != 0:
+        print(f"🌡️ [SENSORS] Funding Rate {symbol}: {round(rate * 100, 4)}%")
+    return rate
 
 def get_open_interest(symbol):
     """
-    [INSTITUTIONAL OI ENGINE] - Tracks unsettled futures contracts
-    Logic: Increasing OI = New Money Entering (Strong Trend)
+    [INSTITUTIONAL RADAR] - Tracks market participation
     """
+    oi = 0
     try:
         clean_symbol = symbol.replace("/", "").split(":")[0]
         url = f"https://api.bitget.com/api/v3/market/open-interest?category=USDT-FUTURES&symbol={clean_symbol}"
@@ -74,10 +77,13 @@ def get_open_interest(symbol):
         if data.get('code') == '00000' and 'data' in data:
             oi_list = data['data'].get('list', [])
             if oi_list:
-                return float(oi_list[0].get('openInterest', 0))
+                oi = float(oi_list[0].get('openInterest', 0))
     except:
         pass
-    return 0
+    
+    if oi > 0:
+        print(f"🎯 [SENSORS] Open Interest {symbol}: ${round(oi/1e6, 2)}M")
+    return oi
 
 def fetch_all_tickers():
     """MIGRATED TO BITGET V3 ENGINE"""
@@ -92,11 +98,12 @@ def fetch_all_tickers():
             for d in raw_list:
                 mapped_data.append({
                     "symbol": d['symbol'],
-                    "lastPrice": float(d['lastPr']),
-                    "priceChangePercent": float(d['change24h']) * 100, # Bitget is decimal
-                    "quoteVolume": float(d['quoteVolume'])
+                    "lastPrice": float(d.get('last', 0)),
+                    "priceChangePercent": float(d.get('change24h', 0)) * 100,
+                    "quoteVolume": float(d.get('quoteVolume', 0))
                 })
             df = pd.DataFrame(mapped_data)
+            print(f"📊 [MARKET] Berhasil memetakan {len(df)} ticker dari Bitget.")
             return df
     except Exception as e:
         print(f"❌ [BITGET FETCH ERROR] {e}")
