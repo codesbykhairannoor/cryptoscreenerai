@@ -82,9 +82,11 @@ def run_crypto_engine():
                     break
 
                 symbol = coin['symbol']
-                # Standardize symbol for comparison
-                clean_sym = f"{symbol.replace('USDT', '')}/USDT:USDT" if "USDT" in symbol and ":" not in symbol else symbol
-                if clean_sym.upper() in open_symbols:
+                # Standardize symbol for comparison using the new robust helper
+                clean_sym_base = executor._clean_symbol(symbol)
+                open_bases = [executor._clean_symbol(s) for s in open_symbols]
+                
+                if clean_sym_base in open_bases:
                     continue
                 
                 # 1. CIRCUIT BREAKER CHECK (Global Risk Manager)
