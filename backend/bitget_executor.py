@@ -266,8 +266,8 @@ class BitgetExecutor:
                     print(f"📊 [MONITOR] {symbol} | PNL: {round(pnl_pct, 2)}% | Price: {mark_price}")
                     
                     # [VERIFICATION LOG] Confirm SL/TP Status
-                    sl_status = "ACTIVE" if pos.get('stopLoss') or pos.get('slPrice') else "PENDING"
-                    tp_status = "ACTIVE" if pos.get('takeProfit') or pos.get('tpPrice') else "PENDING"
+                    sl_status = "ACTIVE" if pos.get('stopLossPrice') or pos.get('slPrice') else "PENDING"
+                    tp_status = "ACTIVE" if pos.get('takeProfitPrice') or pos.get('tpPrice') else "PENDING"
                     print(f"🛡️ [VERIFIED] Risk Guards for {symbol}: SL [{sl_status}] | TP [{tp_status}]")
                     
                     # [INSTITUTIONAL UPGRADE] Partial Take Profit & Safety Guard
