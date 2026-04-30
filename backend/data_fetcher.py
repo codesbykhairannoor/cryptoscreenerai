@@ -181,7 +181,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         # 1. Fetch Current Interval from BITGET (Hybrid V3 with V2 Fallback)
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         try:
-            url_v3 = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={bg_interval}&limit=200&productType=usdt-futures"
+            url_v3 = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&interval={bg_interval}&limit=100&category=USDT-FUTURES"
             res = requests.get(url_v3, headers=headers, timeout=5)
             data_cur = res.json()
             if not data_cur or 'data' not in data_cur or not data_cur['data']:
@@ -209,7 +209,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             df_cur[col] = df_cur[col].astype(float)
         # 2. Fetch HTF from BITGET (Hybrid)
         try:
-            url_htf_v3 = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={htf}&limit=200&productType=usdt-futures"
+            url_htf_v3 = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&interval={htf}&limit=100&category=USDT-FUTURES"
             res_h = requests.get(url_htf_v3, headers=headers, timeout=5)
             data_htf = res_h.json()
             if not data_htf or 'data' not in data_htf or not data_htf['data']:
