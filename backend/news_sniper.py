@@ -1,84 +1,103 @@
 import time
 import requests
-import feedparser
+import xml.etree.ElementTree as ET
 from threading import Thread
 from datetime import datetime
+import re
 
-# Institutional-grade News Source (DailyFX or Forexfactory)
-NEWS_RSS_URL = "https://content.dailyfx.com/feeds/forex_market_news"
+# Multiple High-Speed Sources
+SOURCES = [
+    "https://content.dailyfx.com/feeds/forex_market_news",
+    "https://www.forexlive.com/feed/news",
+    "https://www.investing.com/rss/news_1.rss"
+]
 
-# High-priority triggers
-VOLATILITY_KEYWORDS = ["NFP", "FOMC", "CPI", "NON-FARM", "INTEREST RATE", "POWELL", "FED", "UNEMPLOYMENT"]
+# Institutional High-Impact Keywords
+BULLISH_KEYWORDS = re.compile(r"HIKE|BEATS|SURPLUS|STRONG|HAWKISH|GAINS|RECOVERS|EXPANDS|PEAK")
+BEARISH_KEYWORDS = re.compile(r"CUT|MISSES|DEFICIT|WEAK|DOVISH|DROPS|SLUMPS|CONTRACTS|BOTTOM")
+CRITICAL_KEYWORDS = re.compile(r"NFP|FOMC|CPI|FED|POWELL|LAGARDE|INTEREST RATE|UNEMPLOYMENT|PAYROLL")
 
 class NewsSniper:
     """
-    [MILLI-SECOND EXECUTION ENGINE]
-    Monitors news feeds with sub-second precision to trigger entries.
+    [INSTITUTIONAL NEWS SNIPER V2]
+    Sub-second ingestion with multi-source parallel processing.
     """
     def __init__(self, callback):
         self.callback = callback
-        self.last_news_id = None
+        self.seen_ids = set()
         self.is_running = True
-        self.latency_stats = []
+        # Pre-initialize executor for zero-lag execution
+        from forex_executor import ForexExecutor
+        self.fx = ForexExecutor()
 
-    def monitor_loop(self):
-        print("🛰️ [NEWS SNIPER] Ingestion Engine ACTIVE (Precision: 500ms)")
+    def fetch_source(self, url):
+        """Individual thread for each news source"""
         while self.is_running:
             try:
-                start_fetch = time.time()
-                feed = feedparser.parse(NEWS_RSS_URL)
-                fetch_latency = (time.time() - start_fetch) * 1000
-                
-                if feed.entries:
-                    latest = feed.entries[0]
-                    news_id = latest.get('id') or latest.get('link')
+                res = requests.get(url, timeout=5)
+                if res.status_code == 200:
+                    root = ET.fromstring(res.content)
+                    items = root.findall('.//item')
                     
-                    if news_id != self.last_news_id:
-                        title = latest.title.upper()
-                        # Record ingestion time
-                        ingestion_time = time.time()
+                    if items:
+                        latest = items[0]
+                        title = latest.find('title').text
+                        link = latest.find('link').text
                         
-                        # Detect critical events
-                        is_critical = any(kw in title for kw in VOLATILITY_KEYWORDS)
-                        
-                        if is_critical:
-                            print(f"🔥 [CRITICAL NEWS] {latest.title}")
-                            print(f"⏱️ [LATENCY] Ingestion: {round(fetch_latency, 2)}ms | Time: {datetime.now().strftime('%H:%M:%S.%f')[:-3]}")
+                        if link not in self.seen_ids:
+                            self.seen_ids.add(link)
+                            ingestion_time = time.time()
+                            self.process_news(title, ingestion_time)
                             
-                            # Trigger sub-millisecond execution callback
-                            self.callback(latest.title, ingestion_time)
-                        
-                        self.last_news_id = news_id
+                # Keep seen_ids manageable
+                if len(self.seen_ids) > 100: self.seen_ids.pop()
                 
             except Exception as e:
-                print(f"⚠️ [NEWS SNIPER ERROR] {e}")
+                pass
             
-            time.sleep(0.5) # Poll every 500ms for high-impact events
+            time.sleep(0.3) # 300ms polling for high sensitivity
+
+    def process_news(self, title, ingestion_time):
+        title_upper = title.upper()
+        is_critical = CRITICAL_KEYWORDS.search(title_upper)
+        
+        if is_critical:
+            print(f"🔥 [CRITICAL NEWS] {title}")
+            
+            # Sub-millisecond Sentiment Logic
+            side = None
+            if BULLISH_KEYWORDS.search(title_upper): side = 'buy'
+            elif BEARISH_KEYWORDS.search(title_upper): side = 'sell'
+            
+            if side:
+                # Trigger the high-priority callback
+                self.callback(side, title, ingestion_time)
+            else:
+                # If unsure but critical, alert the user for manual sniper action
+                print(f"⚠️ [NEWS ALERT] Critical event detected but sentiment neutral: {title}")
 
     def start(self):
-        Thread(target=self.monitor_loop, daemon=True).start()
+        print("🛰️ [NEWS SNIPER V2] Multi-Source Parallel Engine ACTIVE")
+        for source in SOURCES:
+            Thread(target=self.fetch_source, args=(source,), daemon=True).start()
 
-def news_execution_handler(news_title, ingestion_time):
+def news_execution_handler(side, title, ingestion_time):
     """
-    This function reacts to news. In a production environment, 
-    this would call place_forex_order immediately.
+    ULTRA-FAST EXECUTION HANDLER
     """
-    # Simulate execution
     execution_start = time.time()
     latency = (execution_start - ingestion_time) * 1000
     
-    print(f"⚡ [EXECUTION] News-Triggered Trade Initialized!")
-    print(f"📈 [DELTA] Trigger-to-Execution: {round(latency, 4)}ms")
+    print(f"⚡ [NEWS EXECUTION] Side: {side.upper()} | Latency: {round(latency, 4)}ms")
     
-    # Logic to decide BUY/SELL based on title content
-    # (Simplified for now)
-    side = 'buy' if any(x in news_title for x in ["BEATS", "GAINS", "HIKE", "STRONG"]) else 'sell'
-    
-    # Import here to avoid circular dependencies
+    # IMPORT AND TRIGGER BARRAGE
     from forex_executor import ForexExecutor
     fx = ForexExecutor()
-    # fx.place_xauusd_scalp_batch(side, trades_count=5, volume=0.01) # Uncomment for LIVE
+    
+    # 10 positions for critical news (The 'Aggressive' request)
+    fx.place_xauusd_scalp_batch(side, trades_count=10, volume=0.01)
 
 if __name__ == "__main__":
     sniper = NewsSniper(news_execution_handler)
-    sniper.monitor_loop()
+    sniper.start()
+    while True: time.sleep(1)
