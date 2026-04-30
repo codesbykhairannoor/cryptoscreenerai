@@ -46,13 +46,45 @@ class BitgetExecutor:
 
     def get_all_positions(self):
         """
-        [STATE MEMORY] - Fetches all currently active positions on Bitget
+        [STATE MEMORY] - Fetches all currently active positions on Bitget using V3 API directly.
         """
+        import requests, time, hmac, hashlib, base64
         try:
-            positions = self.exchange.fetch_positions(params={'productType': 'usdt-futures'})
-            return [p for p in positions if float(p.get('contracts', 0)) > 0]
+            ts = str(int(time.time() * 1000))
+            path = "/api/v3/mix/position/all-position"
+            query = "productType=USDT-FUTURES&marginCoin=USDT"
+            
+            message = ts + "GET" + path + "?" + query
+            mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
+            sign = base64.b64encode(mac.digest()).decode('utf8')
+            
+            headers = {
+                "ACCESS-KEY": self.api_key,
+                "ACCESS-SIGN": sign,
+                "ACCESS-TIMESTAMP": ts,
+                "ACCESS-PASSPHRASE": self.passphrase,
+                "Content-Type": "application/json"
+            }
+            
+            url = f"https://api.bitget.com{path}?{query}"
+            res = requests.get(url, headers=headers, timeout=5)
+            data = res.json()
+            
+            if data.get('code') == '00000' and 'data' in data:
+                positions = []
+                for p in data['data']:
+                    size = float(p.get('size', 0) or p.get('total', 0))
+                    if size > 0:
+                        instId = p.get('instId', '')
+                        # Convert Bitget V3 instId (BTCUSDT) to CCXT format (BTC/USDT:USDT)
+                        symbol = f"{instId.replace('USDT', '')}/USDT:USDT" if "USDT" in instId else instId
+                        positions.append({'symbol': symbol, 'size': size})
+                return positions
+            else:
+                print(f"⚠️ [STATE ERROR] V3 API Response: {res.text}")
+                return []
         except Exception as e:
-            print(f"⚠️ [STATE ERROR] Gagal fetch posisi: {e}")
+            print(f"⚠️ [STATE ERROR] Gagal fetch posisi V3: {e}")
             return []
 
     def get_max_available(self, symbol, leverage):
