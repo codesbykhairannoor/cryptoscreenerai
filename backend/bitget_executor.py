@@ -51,7 +51,7 @@ class BitgetExecutor:
         import requests, time, hmac, hashlib, base64
         try:
             ts = str(int(time.time() * 1000))
-            path = "/api/v3/mix/position/all-position"
+            path = "/api/v2/mix/position/all-position"
             query = "productType=USDT-FUTURES&marginCoin=USDT"
             
             message = ts + "GET" + path + "?" + query
@@ -75,16 +75,54 @@ class BitgetExecutor:
                 for p in data['data']:
                     size = float(p.get('size', 0) or p.get('total', 0))
                     if size > 0:
-                        instId = p.get('instId', '')
-                        # Convert Bitget V3 instId (BTCUSDT) to CCXT format (BTC/USDT:USDT)
-                        symbol = f"{instId.replace('USDT', '')}/USDT:USDT" if "USDT" in instId else instId
-                        positions.append({'symbol': symbol, 'size': size})
+                        instId = p.get('instId', '') or p.get('symbol', '')
+                        # Convert Bitget V2 instId/symbol to CCXT format
+                        symbol = f"{instId.replace('USDT', '')}/USDT:USDT" if "USDT" in instId and ":" not in instId else instId
+                        positions.append({
+                            'symbol': symbol, 
+                            'instId': instId,
+                            'size': size, 
+                            'entryPrice': float(p.get('averageOpenPrice', p.get('entryPrice', 0))),
+                            'markPrice': float(p.get('markPrice', 0)),
+                            'side': p.get('holdSide', 'long')
+                        })
                 return positions
             else:
-                print(f"⚠️ [STATE ERROR] V3 API Response: {res.text}")
+                print(f"⚠️ [STATE ERROR] V2 API Response: {res.text}")
                 return []
         except Exception as e:
-            print(f"⚠️ [STATE ERROR] Gagal fetch posisi V3: {e}")
+            print(f"⚠️ [STATE ERROR] Gagal fetch posisi V2: {e}")
+            return []
+
+    def get_pending_plan_orders(self):
+        """Fetches all pending trigger/plan orders (SL/TP) via Bitget V2"""
+        import requests, time, hmac, hashlib, base64
+        try:
+            ts = str(int(time.time() * 1000))
+            path = "/api/v2/mix/order/orders-plan-pending"
+            query = "productType=USDT-FUTURES"
+            
+            message = ts + "GET" + path + "?" + query
+            mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
+            sign = base64.b64encode(mac.digest()).decode('utf8')
+            
+            headers = {
+                "ACCESS-KEY": self.api_key,
+                "ACCESS-SIGN": sign,
+                "ACCESS-TIMESTAMP": ts,
+                "ACCESS-PASSPHRASE": self.passphrase,
+                "Content-Type": "application/json"
+            }
+            
+            url = f"https://api.bitget.com{path}?{query}"
+            res = requests.get(url, headers=headers, timeout=5)
+            data = res.json()
+            
+            if data.get('code') == '00000':
+                return data.get('data', {}).get('entrustList', []) if isinstance(data.get('data'), dict) else data.get('data', [])
+            return []
+        except Exception as e:
+            print(f"⚠️ [PLAN ERROR] Gagal fetch plan orders: {e}")
             return []
 
     def get_max_available(self, symbol, leverage):
@@ -277,17 +315,21 @@ class BitgetExecutor:
         Ensures margin is released immediately after a trade ends.
         """
         try:
-            # 1. Fetch current active positions from Bitget
-            positions = self.exchange.fetch_positions(params={'productType': 'usdt-futures'})
+            # 1. Fetch current active positions from Native Bitget V2 API instead of CCXT
+            positions = self.get_all_positions()
             active_symbols = []
+            
+            # Fetch pending plan orders to check actual SL/TP
+            plan_orders = self.get_pending_plan_orders()
+            
             for pos in positions:
-                size = float(pos.get('contracts', 0))
+                size = pos['size']
                 if size > 0:
                     active_symbols.append(pos['symbol'])
                     
                     symbol = pos['symbol']
-                    entry_price = float(pos['entryPrice'])
-                    mark_price = float(pos['markPrice'])
+                    entry_price = pos['entryPrice']
+                    mark_price = pos['markPrice']
                     side = pos['side']
                     
                     pnl_pct = 0
@@ -297,35 +339,63 @@ class BitgetExecutor:
                         pnl_pct = (entry_price - mark_price) / entry_price * 100
                     print(f"📊 [MONITOR] {symbol} | PNL: {round(pnl_pct, 2)}% | Price: {mark_price}")
                     
-                    # [VERIFICATION LOG] Confirm SL/TP Status with Prices
-                    sl_price = pos.get('stopLossPrice') or pos.get('slPrice') or 0
-                    tp_price = pos.get('takeProfitPrice') or pos.get('tpPrice') or 0
-                    sl_text = f"${sl_price} (ACTIVE)" if float(sl_price) > 0 else "PENDING"
-                    tp_text = f"${tp_price} (ACTIVE)" if float(tp_price) > 0 else "PENDING"
+                    # [VERIFICATION LOG] Determine SL/TP Status from pending plan orders
+                    sl_price = 0
+                    tp_price = 0
+                    for plan in plan_orders:
+                        if plan.get('instId') == pos.get('instId') or plan.get('symbol') == pos.get('instId'):
+                            trigger = float(plan.get('triggerPrice', 0))
+                            if trigger > 0:
+                                if side == 'long':
+                                    if trigger > entry_price: tp_price = trigger
+                                    else: sl_price = trigger
+                                else:
+                                    if trigger < entry_price: tp_price = trigger
+                                    else: sl_price = trigger
+                                    
+                    # Auto-inject Default SL if missing to protect user capital
+                    if sl_price == 0:
+                        default_sl = entry_price * 0.95 if side == 'long' else entry_price * 1.05
+                        print(f"⚠️ [RISK] {symbol} tidak memiliki Stop Loss! Memasang default SL di {round(default_sl, 4)}")
+                        self.update_sl_price(symbol, side, size, default_sl)
+                        sl_price = default_sl
+                        
+                    sl_text = f"${round(sl_price, 4)} (ACTIVE)" if sl_price > 0 else "PENDING"
+                    tp_text = f"${round(tp_price, 4)} (ACTIVE)" if tp_price > 0 else "PENDING"
                     print(f"🛡️ [VERIFIED] Risk Guards for {symbol}: SL: {sl_text} | TP: {tp_text}")
                     
                     # [INSTITUTIONAL UPGRADE] Partial Take Profit & Safety Guard
                     if pnl_pct >= 2.0 and pnl_pct < 5.0:
-                        # Check if we already did partial (you might want to store this in DB, 
-                        # but for now let's use a simple volume check or just move SL)
-                        sl_price = entry_price * 1.001 if side == 'long' else entry_price * 0.999
-                        print(f"💰 [PARTIAL TP] Profit 2% tercapai di {symbol}! Menutup 50% posisi untuk amankan modal.")
+                        # Check if we already did partial by checking if SL is at Break-Even or better
+                        already_secured = False
+                        if side == 'long' and sl_price >= entry_price: already_secured = True
+                        if side == 'short' and sl_price <= entry_price and sl_price > 0: already_secured = True
                         
-                        try:
-                            # Close 50% of the position
-                            close_side = 'sell' if side == 'long' else 'buy'
-                            partial_size = size * 0.5
-                            self.exchange.create_order(symbol, 'market', close_side, partial_size, params={'reduceOnly': True})
+                        if not already_secured:
+                            new_sl_price = entry_price * 1.002 if side == 'long' else entry_price * 0.998
+                            print(f"💰 [PARTIAL TP] Profit 2% tercapai di {symbol}! Menutup 50% posisi untuk amankan modal.")
                             
-                            print(f"🛡️ [SECURE] Memindahkan sisa posisi ke Break-Even (${round(sl_price, 4)}).")
-                            self.update_sl_price(symbol, side, size * 0.5, sl_price)
-                        except Exception as e_ptp:
-                            print(f"⚠️ [PTP ERROR] Gagal eksekusi partial: {e_ptp}")
-                            
+                            try:
+                                # Close 50% of the position
+                                close_side = 'sell' if side == 'long' else 'buy'
+                                partial_size = size * 0.5
+                                self.exchange.create_order(symbol, 'market', close_side, partial_size, params={'reduceOnly': True})
+                                
+                                print(f"🛡️ [SECURE] Memindahkan sisa posisi ke Break-Even (${round(new_sl_price, 4)}).")
+                                self.update_sl_price(symbol, side, partial_size, new_sl_price)
+                            except Exception as e_ptp:
+                                print(f"⚠️ [PTP ERROR] Gagal eksekusi partial: {e_ptp}")
+                                
                     elif pnl_pct >= 5.0:
                         trail_sl = mark_price * 0.985 if side == 'long' else mark_price * 1.015
-                        print(f"🏃 [TRAIL] Profit 5% tercapai di {symbol}! Mengaktifkan Trailing Stop di ${round(trail_sl, 4)}.")
-                        self.update_sl_price(symbol, side, size, trail_sl)
+                        
+                        update_trail = False
+                        if side == 'long' and trail_sl > sl_price: update_trail = True
+                        if side == 'short' and (sl_price == 0 or trail_sl < sl_price): update_trail = True
+                        
+                        if update_trail:
+                            print(f"🏃 [TRAIL] Menggeser Trailing Stop {symbol} ke ${round(trail_sl, 4)}.")
+                            self.update_sl_price(symbol, side, size, trail_sl)
 
             # 2. ORPHANED ORDER CLEANUP (Database Sync)
             from database import get_connection
