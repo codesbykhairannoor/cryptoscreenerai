@@ -1,6 +1,8 @@
 import requests
 import pandas as pd
 import numpy as np
+import time
+import os
 from patterns import detect_candle_patterns, detect_smart_money_concepts
 
 def fetch_all_tickers():
