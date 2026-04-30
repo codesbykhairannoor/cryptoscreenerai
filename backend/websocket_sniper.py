@@ -60,7 +60,7 @@ class BitgetPrivateWS:
             "op": "subscribe",
             "args": [
                 {"instType": "USDT-FUTURES", "channel": "order", "instId": "default"},
-                {"instType": "USDT-FUTURES", "channel": "planOrder", "instId": "default"},
+                {"instType": "USDT-FUTURES", "channel": "orders-algo", "instId": "default"},
                 {"instType": "USDT-FUTURES", "channel": "account", "instId": "default"}
             ]
         }
@@ -111,14 +111,14 @@ class BitgetPrivateWS:
                                     print(f"✅ [PRIVATE WS] EKSEKUSI TERDETEKSI: {symbol} berhasil terisi!")
                                     self.executor.sync_state_with_exchange()
                                     
-                        elif channel == "planOrder" and "data" in data:
+                        elif channel == "orders-algo" and "data" in data:
                             from shared_state import state
                             for plan in data["data"]:
-                                status = plan.get("status")
-                                # Instantly update Shared State with Plan Orders
+                                status = plan.get("state") # V2 uses 'state' for algo
+                                # Instantly update Shared State with Algo Orders
                                 current_orders = state.orders
                                 current_orders = [o for o in current_orders if o.get('orderId') != plan.get('orderId')]
-                                if status in ['live', 'not_trigger']: # Active plan types
+                                if status in ['live', 'not_trigger', 'executed']: 
                                     current_orders.append(plan)
                                 state.update_orders(current_orders)
                                 

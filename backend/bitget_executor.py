@@ -279,11 +279,11 @@ class BitgetExecutor:
                 for o in plans:
                     info = o.get('info', {})
                     p_type = str(info.get('planType', '')).lower()
-                    # Bitget V2 Plan detection
-                    if 'stop' in p_type or 'loss' in p_type:
+                    # Bitget V2 Plan detection (psl=pos stop loss, ptp=pos take profit, pl=plan)
+                    if p_type in ['stop', 'loss', 'psl', 'sl']:
                         has_sl = True
                         sl_p = float(info.get('triggerPrice') or info.get('executePrice') or 0)
-                    elif 'profit' in p_type:
+                    elif p_type in ['profit', 'ptp', 'tp']:
                         has_tp = True
                         tp_p = float(info.get('triggerPrice') or info.get('executePrice') or 0)
                 
