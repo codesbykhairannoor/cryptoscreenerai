@@ -171,9 +171,17 @@ class BitgetExecutor:
             if ws_orders:
                 target_clean = self._clean_symbol(symbol) if symbol else None
                 for o in ws_orders:
-                    o_sym = o.get('symbol', '')
-                    if not target_clean or self._clean_symbol(o_sym) == target_clean:
-                        all_orders.append({'info': o, 'type': 'stop', 'symbol': o_sym})
+                    # WebSocket algo orders might have 'symbol' or 'instId'
+                    o_sym = o.get('symbol') or o.get('instId') or ''
+                    o_clean = self._clean_symbol(o_sym)
+                    if not target_clean or o_clean == target_clean:
+                        # Normalize WebSocket order for the monitor
+                        all_orders.append({
+                            'info': o, 
+                            'type': 'stop', 
+                            'symbol': symbol or o_sym,
+                            'stopPrice': float(o.get('triggerPrice') or o.get('executePrice') or 0)
+                        })
                 if all_orders: return all_orders
 
             # 2. Fallback to REST API
@@ -279,13 +287,15 @@ class BitgetExecutor:
                 for o in plans:
                     info = o.get('info', {})
                     p_type = str(info.get('planType', '')).lower()
+                    price = float(o.get('stopPrice') or info.get('triggerPrice') or info.get('executePrice') or 0)
+                    
                     # Bitget V2 Plan detection (psl=pos stop loss, ptp=pos take profit, pl=plan)
                     if p_type in ['stop', 'loss', 'psl', 'sl']:
                         has_sl = True
-                        sl_p = float(info.get('triggerPrice') or info.get('executePrice') or 0)
+                        sl_p = price
                     elif p_type in ['profit', 'ptp', 'tp']:
                         has_tp = True
-                        tp_p = float(info.get('triggerPrice') or info.get('executePrice') or 0)
+                        tp_p = price
                 
                 # Diagnostic Log (SL & TP) - Every 10 seconds
                 if int(now) % 10 < 3:
