@@ -160,11 +160,16 @@ class ForexExecutor:
                 
                 # MONITOR ACTIVE FOREX POSITIONS
                 try:
-                    positions = self.connection.get_positions()
-                    for pos in positions:
-                        if pos['symbol'].startswith('XAUUSD'):
-                            pnl = pos.get('unrealizedProfit', 0)
-                            print(f"📊 [FOREX MONITOR] Gold Position | PNL: ${round(pnl, 2)} | Price: {pos['currentPrice']}")
+                    # Fetching positions via REST API instead of undefined self.connection
+                    pos_url = f"{self.base_url}/users/current/accounts/{self.account_id}/positions"
+                    headers = {"auth-token": self.api_token}
+                    pos_res = requests.get(pos_url, headers=headers, timeout=10)
+                    positions = pos_res.json()
+                    if isinstance(positions, list):
+                        for pos in positions:
+                            if pos['symbol'].startswith('XAUUSD'):
+                                pnl = pos.get('unrealizedProfit', 0)
+                                print(f"📊 [FOREX MONITOR] Gold Position | PNL: ${round(pnl, 2)} | Price: {pos.get('currentPrice')}")
                 except:
                     pass
 
@@ -179,15 +184,16 @@ class ForexExecutor:
                         print(f"🕵️ [DEWA AUDIT] XAUUSD: {fx_data['lastPrice']} | RSI: {rsi} | Flow: {gold_inst_flow} | Spread: {spread}")
                         print(f"🕵️ [DEWA AUDIT] DXY Index: {dxy_data['lastPrice']} | Trend: {dxy_trend}")
 
-                    # LOGIC: Gold BUY only if DXY is WEAK (Bearish)
-                    # Gold SELL only if DXY is STRONG (Bullish)
+                    # RELAXED LOGIC: Be more proactive
                     should_auto = False
                     side = 'buy'
                     
-                    if gold_inst_flow == "INSTITUTIONAL_ACCUMULATION" and dxy_trend == 'BEARISH' and rsi < 45:
+                    # BUY: DXY is not Bullish AND (Gold oversold OR Institutional Flow)
+                    if dxy_trend != 'BULLISH' and (rsi < 40 or gold_inst_flow == "INSTITUTIONAL_ACCUMULATION"):
                         should_auto = True
                         side = 'buy'
-                    elif gold_inst_flow == "INSTITUTIONAL_ABSORPTION" and dxy_trend == 'BULLISH' and rsi > 60:
+                    # SELL: DXY is not Bearish AND (Gold overbought OR Institutional Flow)
+                    elif dxy_trend != 'BEARISH' and (rsi > 65 or gold_inst_flow == "INSTITUTIONAL_ABSORPTION"):
                         should_auto = True
                         side = 'sell'
                     
