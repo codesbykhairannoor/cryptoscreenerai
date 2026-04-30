@@ -178,24 +178,40 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         htf = htf_map.get(interval, "1H")
         bg_interval = interval if interval != '1h' else '1H'
 
-        # 1. Fetch Current Interval from BITGET (Global Domain to bypass local ISP block)
-        url_cur = f"https://api.bitgetapi.com/api/v3/market/candles?symbol={clean_symbol}&granularity={bg_interval}&limit=200&category=USDT-FUTURES"
-        res_cur = requests.get(url_cur, timeout=5)
-        data_cur = res_cur.json()
-        if not data_cur or 'data' not in data_cur or not data_cur['data']: 
-            print(f"⏳ [DATA] Sinkronisasi data {clean_symbol} tertunda...")
+        # 1. Fetch Current Interval from BITGET (Hybrid V3 with V2 Fallback)
+        try:
+            url_v3 = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={bg_interval}&limit=200&category=USDT-FUTURES"
+            res = requests.get(url_v3, timeout=5)
+            data_cur = res.json()
+            if not data_cur or 'data' not in data_cur or not data_cur['data']:
+                raise ValueError("V3 Empty")
+        except:
+            # Fallback to V2 Mix API (Very Stable)
+            v2_gran = interval if interval != '1h' else '1H'
+            url_v2 = f"https://api.bitget.com/api/v2/mix/market/candles?symbol={clean_symbol}_UMCBL&granularity={v2_gran}&limit=200&productType=usdt-futures"
+            res = requests.get(url_v2, timeout=5)
+            data_cur = res.json()
+
+        if not data_cur or 'data' not in data_cur or not data_cur['data']:
+            print(f"⏳ [DATA] Sinkronisasi {clean_symbol} gagal di semua jalur...")
             return {}
         
         # Bitget Format: [ts, open, high, low, close, vol, qvol]
         df_cur = pd.DataFrame(data_cur['data'], columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'quoteVol'])
         for col in ['open', 'high', 'low', 'close', 'vol']:
             df_cur[col] = df_cur[col].astype(float)
-        if len(df_cur) < 5: return {}
+        # 2. Fetch HTF from BITGET (Hybrid)
+        try:
+            url_htf_v3 = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={htf}&limit=200&category=USDT-FUTURES"
+            res_h = requests.get(url_htf_v3, timeout=5)
+            data_htf = res_h.json()
+            if not data_htf or 'data' not in data_htf or not data_htf['data']:
+                raise ValueError("V3 Empty")
+        except:
+            url_htf_v2 = f"https://api.bitget.com/api/v2/mix/market/candles?symbol={clean_symbol}_UMCBL&granularity={htf}&limit=200&productType=usdt-futures"
+            res_h = requests.get(url_htf_v2, timeout=5)
+            data_htf = res_h.json()
 
-        # 2. Fetch HTF from BITGET
-        url_htf = f"https://api.bitgetapi.com/api/v3/market/candles?symbol={clean_symbol}&granularity={htf}&limit=200&category=USDT-FUTURES"
-        res_htf = requests.get(url_htf, timeout=5)
-        data_htf = res_htf.json()
         if not data_htf or 'data' not in data_htf or not data_htf['data']:
             df_htf = df_cur.copy()
         else:
