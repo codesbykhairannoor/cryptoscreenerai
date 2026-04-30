@@ -97,12 +97,31 @@ class BitgetExecutor:
         except: return {'total': 0, 'free': 0}
 
     def get_max_available(self, symbol, leverage=10):
+        """Calculates max trade size with exchange precision awareness"""
         try:
             balance = self.get_balance()
+            free_usdt = balance['free']
+            
             ticker = self.exchange.fetch_ticker(symbol)
             price = ticker['last']
-            return round((balance['free'] * leverage * 0.9) / price, 3)
-        except: return 0
+            
+            # 1. Raw calculation
+            raw_amount = (free_usdt * leverage * 0.9) / price
+            
+            # 2. Apply exchange precision
+            formatted_amount = float(self.exchange.amount_to_precision(symbol, raw_amount))
+            
+            # 3. Check against minimum limit
+            market = self.exchange.market(symbol)
+            min_amount = market.get('limits', {}).get('amount', {}).get('min', 0.01)
+            
+            if formatted_amount < min_amount:
+                return 0
+                
+            return formatted_amount
+        except Exception as e:
+            print(f"[MAX AVAILABLE ERROR] {e}")
+            return 0
 
     def get_all_positions(self):
         """Position Fetcher for Classic accounts (V2 Mix)"""
@@ -127,24 +146,37 @@ class BitgetExecutor:
             return []
 
     def get_pending_plan_orders(self, symbol=None):
-        """Plan/Trigger Order Fetcher for Classic (V2 Mix)"""
+        """Plan/Trigger Order Fetcher for Classic (V2 Mix) using Direct API"""
         all_orders = []
         try:
-            params = {'productType': 'USDT-FUTURES'}
-            # 1. Normal Orders
+            # 1. Normal Orders via CCXT
+            params = {'productType': 'usdt-futures'}
             all_orders += self.exchange.fetch_open_orders(symbol, params=params)
             
-            # 2. Plan/Trigger Orders (SL/TP)
-            # CCXT might not fetch plan orders via fetch_open_orders for all Bitget versions
-            # So we call the private endpoint if necessary, or check the 'stop' type
+            # 2. Plan/Trigger Orders via Direct V2 Mix API (Essential for SL/TP detection)
             try:
-                # Some versions of CCXT Bitget map fetch_open_orders to both, 
-                # but we'll add a check for 'stop' orders in the list
-                pass 
-            except: pass
+                # Bitget V2 Mix Plan Endpoint: /api/v2/mix/order/orders-plan-pending
+                instId = symbol.replace('/', '').replace(':USDT', '') if symbol else None
+                plan_params = {'productType': 'usdt-futures'}
+                if instId: plan_params['symbol'] = instId
+                
+                plan_data = self.exchange.private_get_mix_order_orders_plan_pending(plan_params)
+                if plan_data.get('code') == '00000':
+                    raw_plans = plan_data.get('data', [])
+                    for p in raw_plans:
+                        # Map to a simplified format for detection
+                        all_orders.append({
+                            'info': p,
+                            'type': 'stop', # Tag it as stop for detection
+                            'symbol': symbol or p.get('symbol')
+                        })
+            except Exception as e_plan:
+                # print(f"[PLAN FETCH DEBUG] {e_plan}")
+                pass
             
             return all_orders
-        except: return []
+        except Exception as e:
+            return []
 
     def place_order(self, symbol, side, amount, leverage=10, tp=None, sl=None):
         """Order Placement for Classic accounts (V2 Mix)"""
