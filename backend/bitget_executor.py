@@ -23,10 +23,16 @@ class BitgetExecutor:
                 'posMode': 'unilateral' # Hardcode for One-Way Mode
             }
         })
+        print(f"[INIT] Bitget API Key: {self.api_key[:5]}...{self.api_key[-5:]}")
         try:
+            # Set a very short timeout for this to avoid hanging
+            self.exchange.timeout = 5000 
             self.exchange.set_position_mode(False) # Attempt to set One-way (False)
-        except:
-            pass
+            self.exchange.timeout = 30000 # Reset to normal
+            print("[INIT] Position mode verified.")
+        except Exception as e:
+            print(f"[INIT] Position mode set failed (skipping): {e}")
+            self.exchange.timeout = 30000
 
     def _clean_symbol(self, s):
         """Standardizes any symbol format (BTCUSDT, BTC/USDT:USDT, BTCUSDT_UMCBL) to just 'BTC'"""
@@ -60,67 +66,57 @@ class BitgetExecutor:
         
         for pt in product_types:
             try:
-                ts = str(int(time.time() * 1000))
-                path = "/api/v2/mix/position/all-position"
-                # Some accounts require marginCoin=USDT, others don't.
-                query = f"productType={pt}&marginCoin=USDT"
-                
-                url = f"https://api.bitget.com{path}?{query}"
-                # ... signing logic ...
-                res = requests.get(url, headers=headers, timeout=10)
-                data = res.json()
-                
-                if data.get('code') != '00000':
-                    # Retry without marginCoin
+                # Try with marginCoin=USDT first, then without if it fails
+                for use_margin_coin in [True, False]:
+                    ts = str(int(time.time() * 1000))
+                    path = "/api/v2/mix/position/all-position"
                     query = f"productType={pt}"
+                    if use_margin_coin:
+                        query += "&marginCoin=USDT"
+                    
                     message = ts + "GET" + path + "?" + query
                     mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
                     sign = base64.b64encode(mac.digest()).decode('utf8')
-                    headers["ACCESS-SIGN"] = sign
+                    
+                    headers = {
+                        "ACCESS-KEY": self.api_key,
+                        "ACCESS-SIGN": sign,
+                        "ACCESS-TIMESTAMP": ts,
+                        "ACCESS-PASSPHRASE": self.passphrase,
+                        "Content-Type": "application/json"
+                    }
+                    
                     url = f"https://api.bitget.com{path}?{query}"
-                    res = requests.get(url, headers=headers, timeout=10)
+                    res = requests.get(url, headers=headers, timeout=10, verify=False)
                     data = res.json()
-                
-                message = ts + "GET" + path + "?" + query
-                mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
-                sign = base64.b64encode(mac.digest()).decode('utf8')
-                
-                headers = {
-                    "ACCESS-KEY": self.api_key,
-                    "ACCESS-SIGN": sign,
-                    "ACCESS-TIMESTAMP": ts,
-                    "ACCESS-PASSPHRASE": self.passphrase,
-                    "Content-Type": "application/json"
-                }
-                
-                url = f"https://api.bitget.com{path}?{query}"
-                res = requests.get(url, headers=headers, timeout=10)
-                data = res.json()
-                
-                # MENTAH LOG
-                print(f"📡 [RAW POS] PT: {pt} | Status: {data.get('code')} | Found: {len(data.get('data') or []) if isinstance(data.get('data'), list) else 'N/A'}")
-                
-                if data.get('code') == '00000' and data.get('data'):
-                    for p in data['data']:
-                        sz = float(p.get('total', 0) or p.get('available', 0) or p.get('size', 0) or 0)
-                        if sz > 0:
-                            instId = p.get('instId', '') or p.get('symbol', '')
-                            # Standardize symbol
-                            symbol = f"{instId.replace('USDT', '')}/USDT:USDT" if "USDT" in instId and ":" not in instId else instId
-                            
-                            all_pos.append({
-                                'symbol': symbol,
-                                'instId': instId,
-                                'side': p.get('holdSide', 'long'),
-                                'size': sz,
-                                'entry': float(p.get('openPrice', 0) or p.get('entryPrice', 0) or p.get('averageOpenPrice', 0)),
-                                'mark_price': float(p.get('markPrice', 0) or 0),
-                                'pnl': float(p.get('unrealizedPL', 0) or 0),
-                                'productType': pt
-                            })
+                    
+                    # MENTAH LOG
+                    if use_margin_coin or data.get('code') == '00000':
+                        print(f"[RAW POS] PT: {pt} | MarginCoin: {use_margin_coin} | Status: {data.get('code')} | Found: {len(data.get('data') or []) if isinstance(data.get('data'), list) else 'N/A'}")
+                    
+                    if data.get('code') == '00000':
+                        if data.get('data'):
+                            for p in data['data']:
+                                sz = float(p.get('total', 0) or p.get('available', 0) or p.get('size', 0) or 0)
+                                if sz > 0:
+                                    instId = p.get('instId', '') or p.get('symbol', '')
+                                    symbol = f"{instId.replace('USDT', '')}/USDT:USDT" if "USDT" in instId and ":" not in instId else instId
+                                    
+                                    all_pos.append({
+                                        'symbol': symbol,
+                                        'instId': instId,
+                                        'side': p.get('holdSide', 'long'),
+                                        'size': sz,
+                                        'entry': float(p.get('openPrice', 0) or p.get('entryPrice', 0) or p.get('averageOpenPrice', 0)),
+                                        'mark_price': float(p.get('markPrice', 0) or 0),
+                                        'pnl': float(p.get('unrealizedPL', 0) or 0),
+                                        'productType': pt
+                                    })
+                        break # Success with this PT, move to next PT
+                    
                 time.sleep(0.5)
             except Exception as e:
-                print(f"⚠️ [STATE ERROR] Gagal fetch posisi {pt}: {e}")
+                print(f"[STATE ERROR] Gagal fetch posisi {pt}: {e}")
         
         return all_pos
 
@@ -162,7 +158,7 @@ class BitgetExecutor:
                     data = res.json()
                     
                     # MENTAH LOG
-                    print(f"📡 [RAW PLAN] {pt}/{p_type}: {res.text[:150]}...")
+                    print(f"[RAW PLAN] {pt}/{p_type}: {res.text[:150]}...")
                     
                     if data.get('code') == '00000':
                         # Bitget V2 uses 'entrustedList'. Handle case where it might be null or missing.
@@ -388,7 +384,7 @@ class BitgetExecutor:
                     
                     # Log PNL periodically
                     if int(time.time()) % 300 < 35:
-                        print(f"📊 [MONITOR] {symbol} | PNL: {round(pnl, 2)}% | Price: {mark_price}")
+                        print(f"[MONITOR] {symbol} | PNL: {round(pnl, 2)}% | Price: {mark_price}")
                     
                     active_symbols.append(symbol)
                     
@@ -418,11 +414,11 @@ class BitgetExecutor:
                     
                     # [RISK GUARD] Verify SL Existence
                     if sl_price > 0:
-                        print(f"🛡️ [VERIFIED] Risk Guards for {symbol}: SL: ${sl_price} (ACTIVE) | TP: {'$' + str(tp_price) if tp_price > 0 else 'PENDING'}")
+                        print(f"[VERIFIED] Risk Guards for {symbol}: SL: ${sl_price} (ACTIVE) | TP: {'$' + str(tp_price) if tp_price > 0 else 'PENDING'}")
                     else:
                         # Safety First: Inject default SL if none found
                         default_sl = entry * 0.95 if side.lower() in ['long', 'buy'] else entry * 1.05
-                        print(f"⚠️ [RISK] {symbol} tidak memiliki Stop Loss! Memasang default SL di {round(default_sl, 4)}")
+                        print(f"[RISK] {symbol} tidak memiliki Stop Loss! Memasang default SL di {round(default_sl, 4)}")
                         self.update_sl_price(symbol, side, size, default_sl)
                     
                     # [RISK GUARD] Verify TP Existence

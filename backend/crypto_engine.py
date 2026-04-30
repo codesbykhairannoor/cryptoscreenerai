@@ -69,15 +69,15 @@ def run_crypto_engine():
                 open_bases = [executor._clean_symbol(s) for s in open_symbols]
                 
                 if int(time.time()) % 60 < 15:
-                    print(f"🕵️ [ENGINE DEBUG] Active Bases: {open_bases}")
+                    print(f"[ENGINE DEBUG] Active Bases: {open_bases}")
                 
                 if len(open_symbols) >= 10:
                     if int(time.time()) % 300 < 35:
-                        print(f"🚨 [CRYPTO LIMIT] Max positions reached ({len(open_symbols)}/10). Skipping new trades.")
+                        print(f"[CRYPTO LIMIT] Max positions reached ({len(open_symbols)}/10). Skipping new trades.")
                     time.sleep(30)
                     continue
             except Exception as e:
-                print(f"⚠️ [CRYPTO LIMIT ERROR] {e}")
+                print(f"[CRYPTO LIMIT ERROR] {e}")
                 open_symbols = []
             
             for coin in candidates[:5]:
@@ -99,7 +99,7 @@ def run_crypto_engine():
                 stats = get_performance_stats('crypto')
                 daily_pnl = stats.get('win_rate', 0) # Placeholder for real PNL logic
                 if daily_pnl < -50: # If win rate is suspiciously low or custom PNL check
-                     print(f"⚠️ [CIRCUIT BREAKER] Loss limit reached today. Standing down for 24h.")
+                     print(f"[CIRCUIT BREAKER] Loss limit reached today. Standing down for 24h.")
                      break
 
                 tech = get_technical_indicators(symbol)
@@ -115,7 +115,7 @@ def run_crypto_engine():
                 # SESSION GUARD: Anti-Liquidity Prank
                 if is_danger:
                     if int(time.time()) % 60 < 10:
-                        print(f"⚠️ [SESSION GUARD] Market Opening/Closing Detected. Holding all fire to avoid Stop Hunts.")
+                        print(f"[SESSION GUARD] Market Opening/Closing Detected. Holding all fire to avoid Stop Hunts.")
                     continue
 
                 # REFINED HUNTER LOGIC
@@ -142,17 +142,17 @@ def run_crypto_engine():
                     
                     # SENTIMENT BREAKER: Anti-Bearish Long (The user's XRP Request)
                     digest = get_market_news_digest()
-                    if digest['sentiment'] == 'BEARISH 📉':
-                        print(f"🛑 [SENTIMENT OVERRIDE] Market is BEARISH. Aborting {symbol} Long to avoid catching falling knives.")
+                    if digest['sentiment'] == 'BEARISH':
+                        print(f"[SENTIMENT OVERRIDE] Market is BEARISH. Aborting {symbol} Long to avoid catching falling knives.")
                         continue
 
-                    print(f"🏛️ [THE HUNTER] {symbol}: Targeting {reason}. Price vs VWAP: {vwap_dist}%")
+                    print(f"[THE HUNTER] {symbol}: Targeting {reason}. Price vs VWAP: {vwap_dist}%")
                     
                     # DXY OVERRIDE: Anti-Dollar Strength
                     from data_fetcher import get_forex_data
                     dxy = get_forex_data(symbol="DXY")
                     if dxy and dxy.get('trend') == 'BULLISH' and dxy.get('change', 0) > 0.2:
-                         print(f"🛑 [DXY OVERRIDE] Dollar too strong! Aborting {symbol} Long.")
+                         print(f"[DXY OVERRIDE] Dollar too strong! Aborting {symbol} Long.")
                          continue
 
                     # Calculate precise SL/TP

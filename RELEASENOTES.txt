@@ -1,0 +1,25 @@
+=== BOT TRADING INSTITUTIONAL RELEASE NOTES ===
+
+[VERSION 2.1.0] - 2026-04-30
+---------------------------
+STABILITAS & OBSERVABILITAS MEGA-UPDATE
+
+1. PERBAIKAN KRITIKAL (BITGET ENGINE):
+   - Perbaikan Typo 'entrustedList': Memungkinkan bot mendeteksi SL/TP yang sudah ada di Bitget V2.
+   - Dual-PT Scanning: Bot sekarang mengecek posisi di 'USDT-FUTURES' dan 'umcbl' sekaligus. Tidak ada lagi posisi yang "tidak terlihat".
+   - Anti-Double Trade: Logika pengecekan posisi diperkuat untuk mencegah bot membuka trade baru jika koin yang sama sudah running.
+   - Variable Safety: Memperbaiki UnboundLocalError (headers) dan KeyError (entryPrice) yang menyebabkan monitor crash.
+
+2. PENINGKATAN FOREX ENGINE (GOLD XAUUSD):
+   - Creative Scalping: Menambahkan logika RSI Extreme (Overbought >75 / Oversold <30). Bot bisa melakukan counter-trend scalp jika harga sudah terlalu jenuh, tanpa menunggu Dollar (DXY).
+   - Indentation & Syntax Fix: Menjamin kelancaran eksekusi tanpa error python.
+
+3. OPTIMASI TERMINAL (WINDOWS COMPATIBILITY):
+   - Global Emoji Removal: Menghapus seluruh emoji dari log sistem. Ini mencegah 'UnicodeEncodeError' yang sering membuat bot mati di terminal Windows/Powershell.
+   - Raw Diagnostic Logs: Menambahkan prefix [RAW POS] dan [RAW PLAN] untuk melihat data asli dari bursa saat dibutuhkan.
+
+4. SISTEM TESTING:
+   - Menambahkan file 'backend/scratch/test_bitget.py' untuk melakukan simulasi koneksi dan pengecekan posisi secara mandiri sebelum menjalankan engine utama.
+
+SISTEM SEKARANG BEROPERASI PADA LEVEL STABILITAS TINGGI.
+-------------------------------------------------------
