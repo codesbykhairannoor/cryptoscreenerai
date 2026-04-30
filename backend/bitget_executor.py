@@ -116,11 +116,11 @@ class BitgetExecutor:
             min_amount = market.get('limits', {}).get('amount', {}).get('min', 0.01)
             
             if formatted_amount < min_amount:
+                # Silently return 0 if balance too low for minimum trade
                 return 0
                 
             return formatted_amount
-        except Exception as e:
-            print(f"[MAX AVAILABLE ERROR] {e}")
+        except:
             return 0
 
     def get_all_positions(self):
@@ -146,33 +146,37 @@ class BitgetExecutor:
             return []
 
     def get_pending_plan_orders(self, symbol=None):
-        """Plan/Trigger Order Fetcher for Classic (V2 Mix) using Direct API"""
+        """Plan/Trigger Order Fetcher for Classic (V2 Mix) with Global Matching"""
         all_orders = []
         try:
             # 1. Normal Orders via CCXT
             params = {'productType': 'usdt-futures'}
             all_orders += self.exchange.fetch_open_orders(symbol, params=params)
             
-            # 2. Plan/Trigger Orders via Direct V2 Mix API
+            # 2. Plan Orders via Direct V2 Mix API (Fetch ALL and Filter for stability)
             try:
                 plan_params = {'productType': 'usdt-futures'}
-                if symbol:
-                    # Robust symbol conversion for Mix (e.g. BTC/USDT:USDT -> BTCUSDT)
-                    instId = symbol.replace('/', '').split(':')[0].replace('USDT', '') + 'USDT'
-                    plan_params['symbol'] = instId
-                
+                # Fetching ALL plan orders often works better than symbol-filtered on Classic
                 plan_data = self.exchange.private_get_mix_order_orders_plan_pending(plan_params)
+                
                 if plan_data.get('code') == '00000':
                     raw_plans = plan_data.get('data', [])
+                    target_clean = self._clean_symbol(symbol) if symbol else None
+                    
                     for p in raw_plans:
-                        all_orders.append({
-                            'info': p,
-                            'type': 'stop',
-                            'symbol': p.get('symbol', symbol)
-                        })
+                        p_sym = p.get('symbol', '')
+                        # Flexible matching
+                        if not target_clean or self._clean_symbol(p_sym) == target_clean:
+                            all_orders.append({
+                                'info': p,
+                                'type': 'stop',
+                                'symbol': p_sym
+                            })
             except: pass
+            
             return all_orders
-        except: return []
+        except Exception as e:
+            return []
 
     def place_order(self, symbol, side, amount, leverage=10, tp=None, sl=None):
         """Order Placement for Classic accounts (V2 Mix)"""
@@ -227,40 +231,30 @@ class BitgetExecutor:
         return self.sync_memory()
 
     def manage_open_positions(self):
-        """PINTER: Intelligent Position & Risk Monitoring for Classic"""
         try:
             positions = self.get_all_positions()
-            if not positions: return
-            
-            # Fetch all plan orders once to minimize API calls
-            all_plans = self.get_pending_plan_orders()
-            
             for pos in positions:
                 symbol = pos['symbol']
                 side = pos['side']
                 size = pos['size']
                 entry = pos['entry']
                 
-                # Check for existing SL/TP (PINTER: Matching normalized symbols)
-                clean_target = self._clean_symbol(symbol)
-                has_sl = False
+                # Verify SL/TP (PINTER: Check raw info for plan types)
+                plans = self.get_pending_plan_orders(symbol)
                 
-                for o in all_plans:
-                    plan_sym = self._clean_symbol(o.get('symbol', ''))
-                    if plan_sym == clean_target:
-                        info = str(o.get('info', {})).lower()
-                        otype = str(o.get('type', '')).lower()
-                        # Detect SL/TP markers in Bitget Mix V2
-                        if 'stop' in otype or 'plan' in info or 'profit_loss' in info or 'trigger' in info:
-                            has_sl = True
-                            break
+                # Check for existing SL/TP in both CCXT format and Raw Info
+                has_sl = False
+                for o in plans:
+                    info = str(o.get('info', {})).lower()
+                    otype = str(o.get('type', '')).lower()
+                    # Look for 'stop', 'loss', 'profit', or 'plan'
+                    if 'stop' in otype or 'plan' in info or 'loss' in info or 'profit' in info:
+                        has_sl = True
+                        break
                 
                 if not has_sl and entry > 0:
                     sl = entry * 0.95 if side.lower() in ['long', 'buy'] else entry * 1.05
-                    # Diagnostic: Only print if we are actually going to set it
-                    # print(f"[RISK DEBUG] {symbol} has no detected SL. Setting now...")
+                    # Avoid spamming if price is too close
                     self.update_sl_price(symbol, side, size, sl)
-                    
         except Exception as e:
-            if "timeout" not in str(e).lower():
-                print(f"[MANAGE POS ERROR] {e}")
+            print(f"[MANAGE POS ERROR] {e}")
