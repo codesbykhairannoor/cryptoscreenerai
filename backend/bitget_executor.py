@@ -62,7 +62,24 @@ class BitgetExecutor:
             try:
                 ts = str(int(time.time() * 1000))
                 path = "/api/v2/mix/position/all-position"
+                # Some accounts require marginCoin=USDT, others don't.
                 query = f"productType={pt}&marginCoin=USDT"
+                
+                url = f"https://api.bitget.com{path}?{query}"
+                # ... signing logic ...
+                res = requests.get(url, headers=headers, timeout=10)
+                data = res.json()
+                
+                if data.get('code') != '00000':
+                    # Retry without marginCoin
+                    query = f"productType={pt}"
+                    message = ts + "GET" + path + "?" + query
+                    mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
+                    sign = base64.b64encode(mac.digest()).decode('utf8')
+                    headers["ACCESS-SIGN"] = sign
+                    url = f"https://api.bitget.com{path}?{query}"
+                    res = requests.get(url, headers=headers, timeout=10)
+                    data = res.json()
                 
                 message = ts + "GET" + path + "?" + query
                 mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
@@ -97,6 +114,7 @@ class BitgetExecutor:
                                 'side': p.get('holdSide', 'long'),
                                 'size': sz,
                                 'entry': float(p.get('openPrice', 0) or p.get('entryPrice', 0) or p.get('averageOpenPrice', 0)),
+                                'mark_price': float(p.get('markPrice', 0) or 0),
                                 'pnl': float(p.get('unrealizedPL', 0) or 0),
                                 'productType': pt
                             })
@@ -313,8 +331,12 @@ class BitgetExecutor:
         """
         print("🔄 [SYNC] Synchronizing bot memory with Bitget...")
         try:
-            active_positions = self.get_all_positions()
-            active_symbols = [p['symbol'] for p in active_positions]
+            positions = self.get_all_positions()
+            open_symbols = [p['symbol'].upper() for p in positions] if isinstance(positions, list) else []
+            open_bases = [self._clean_symbol(s) for s in open_symbols]
+            
+            if int(time.time()) % 60 < 15:
+                print(f"🕵️ [ENGINE DEBUG] Active Bases: {open_bases}")
             
             from database import get_connection
             conn = get_connection()
@@ -328,7 +350,7 @@ class BitgetExecutor:
                 # Map DB symbol to Bitget symbol format
                 clean_sym = f"{db_symbol.replace('USDT','')}/USDT:USDT" if not ":" in db_symbol else db_symbol
                 
-                if clean_sym not in active_symbols:
+                if clean_sym not in open_symbols:
                     print(f"⚠️ [RECOVERY] {db_symbol} not found on exchange. Marking as CLOSED.")
                     cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE id = %s", (trade_id,))
                     # Also cancel any orphaned SL/TP orders
@@ -353,28 +375,22 @@ class BitgetExecutor:
         try:
             # 1. Fetch current active positions and plan orders
             positions = self.get_all_positions()
-            # We will fetch plan orders per symbol inside the loop for better reliability
             active_symbols = []
             
             for pos in positions:
-                size = pos['size']
-                if size > 0:
-                    active_symbols.append(pos['symbol'])
-                    
+                try:
                     symbol = pos['symbol']
-                    entry_price = pos['entryPrice']
-                    mark_price = pos['markPrice']
                     side = pos['side']
+                    size = pos['size']
+                    entry = pos['entry']
+                    mark_price = pos['mark_price']
+                    pnl = pos['pnl']
                     
-                    # Calculate PNL percentage for monitoring and Trailing SL
-                    pnl_pct = 0
-                    if entry_price > 0:
-                        if side == 'long' or side == 'buy':
-                            pnl_pct = (mark_price - entry_price) / entry_price * 100
-                        else:
-                            pnl_pct = (entry_price - mark_price) / entry_price * 100
+                    # Log PNL periodically
+                    if int(time.time()) % 300 < 35:
+                        print(f"📊 [MONITOR] {symbol} | PNL: {round(pnl, 2)}% | Price: {mark_price}")
                     
-                    print(f"📊 [MONITOR] {symbol} | PNL: {round(pnl_pct, 2)}% | Price: {mark_price}")
+                    active_symbols.append(symbol)
                     
                     # [VERIFICATION LOG] Determine SL/TP Status from pending plan orders
                     sl_price = 0
@@ -394,10 +410,10 @@ class BitgetExecutor:
                                 # Logic to differentiate SL from TP based on side and price
                                 is_long = side.lower() in ['long', 'buy']
                                 if is_long:
-                                    if trigger > entry_price: tp_price = max(tp_price, trigger)
+                                    if trigger > entry: tp_price = max(tp_price, trigger)
                                     else: sl_price = max(sl_price, trigger)
                                 else:
-                                    if trigger < entry_price: tp_price = min(tp_price, trigger) if tp_price > 0 else trigger
+                                    if trigger < entry: tp_price = min(tp_price, trigger) if tp_price > 0 else trigger
                                     else: sl_price = min(sl_price, trigger) if sl_price > 0 else trigger
                     
                     # [RISK GUARD] Verify SL Existence
@@ -405,30 +421,30 @@ class BitgetExecutor:
                         print(f"🛡️ [VERIFIED] Risk Guards for {symbol}: SL: ${sl_price} (ACTIVE) | TP: {'$' + str(tp_price) if tp_price > 0 else 'PENDING'}")
                     else:
                         # Safety First: Inject default SL if none found
-                        default_sl = entry_price * 0.95 if side == 'long' else entry_price * 1.05
+                        default_sl = entry * 0.95 if side.lower() in ['long', 'buy'] else entry * 1.05
                         print(f"⚠️ [RISK] {symbol} tidak memiliki Stop Loss! Memasang default SL di {round(default_sl, 4)}")
                         self.update_sl_price(symbol, side, size, default_sl)
                     
                     # [RISK GUARD] Verify TP Existence
                     if tp_price == 0:
-                        default_tp = entry_price * 1.05 if side.lower() in ['long', 'buy'] else entry_price * 0.95
+                        default_tp = entry * 1.05 if side.lower() in ['long', 'buy'] else entry * 0.95
                         print(f"🎯 [TP CHECK] {symbol} Take Profit is MISSING. Memasang default TP di {round(default_tp, 4)}")
                         self.update_sl_price(symbol, side, size, default_tp, is_tp=True)
                     
                     # [INSTITUTIONAL UPGRADE] Trailing SL
-                    if pnl_pct >= 2.0:
+                    if pnl >= 2.0:
                         # Move to Break Even + small profit to cover fees
-                        be_sl = entry_price * 1.002 if side == 'long' else entry_price * 0.998
+                        be_sl = entry * 1.002 if side.lower() in ['long', 'buy'] else entry * 0.998
                         
                         # Trailing SL: 1.5% behind current mark price
-                        trail_sl = mark_price * 0.985 if side == 'long' else mark_price * 1.015
+                        trail_sl = mark_price * 0.985 if side.lower() in ['long', 'buy'] else mark_price * 1.015
                         
                         # Choose the best SL (BE or Trailing)
-                        best_sl = max(be_sl, trail_sl) if side == 'long' else min(be_sl, trail_sl)
+                        best_sl = max(be_sl, trail_sl) if side.lower() in ['long', 'buy'] else min(be_sl, trail_sl)
                         
                         update_sl = False
-                        if side == 'long' and (sl_price == 0 or best_sl > sl_price): update_sl = True
-                        if side == 'short' and (sl_price == 0 or best_sl < sl_price): update_sl = True
+                        if side.lower() in ['long', 'buy'] and (sl_price == 0 or best_sl > sl_price): update_sl = True
+                        if side.lower() in ['short', 'sell'] and (sl_price == 0 or best_sl < sl_price): update_sl = True
                         
                         # Prevent updating too frequently (e.g., only if it moves by >0.5%)
                         if update_sl and sl_price > 0:
@@ -437,7 +453,7 @@ class BitgetExecutor:
                                 update_sl = False
                         
                         if update_sl:
-                            print(f"🏃 [TRAIL] Menggeser Trailing Stop {symbol} ke ${round(best_sl, 4)} (PNL: {round(pnl_pct, 2)}%).")
+                            print(f"🏃 [TRAILING] Moving {symbol} SL to {round(best_sl, 4)} (PNL: {round(pnl, 2)}%)")
                             self.update_sl_price(symbol, side, size, best_sl)
 
             # 2. ORPHANED ORDER CLEANUP (Database Sync)

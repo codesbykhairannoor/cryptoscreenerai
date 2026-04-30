@@ -66,6 +66,10 @@ def run_crypto_engine():
             try:
                 positions = executor.get_all_positions()
                 open_symbols = [p['symbol'].upper() for p in positions] if isinstance(positions, list) else []
+                open_bases = [executor._clean_symbol(s) for s in open_symbols]
+                
+                if int(time.time()) % 60 < 15:
+                    print(f"🕵️ [ENGINE DEBUG] Active Bases: {open_bases}")
                 
                 if len(open_symbols) >= 10:
                     if int(time.time()) % 300 < 35:
