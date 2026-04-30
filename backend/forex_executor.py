@@ -16,6 +16,28 @@ class ForexExecutor:
         self.account_id = os.getenv("FOREX_ACCOUNT_ID")
         self.base_url = "https://mt-client-api-v1.london.agiliumtrade.ai"
         self.is_active = self.api_token is not None and self.account_id is not None
+        
+        # Institutional Forex Audit
+        if self.is_active:
+            try:
+                info = self.get_account_information()
+                if info:
+                    print(f"🌍 [FOREX STARTUP AUDIT] MT5 Balance: ${info.get('balance', 0)} (Equity: ${info.get('equity', 0)})")
+                
+                # Check for active positions on startup
+                pos_url = f"{self.base_url}/users/current/accounts/{self.account_id}/positions"
+                headers = {"auth-token": self.api_token}
+                pos_res = requests.get(pos_url, headers=headers, timeout=10)
+                if pos_res.status_code == 200:
+                    positions = pos_res.json()
+                    if positions:
+                        print(f"📊 [FOREX STARTUP AUDIT] Active Positions: {len(positions)}")
+                        for p in positions:
+                            print(f"   > {p.get('symbol')} | Vol: {p.get('volume')} | ID: {p.get('id')}")
+                    else:
+                        print("📊 [FOREX STARTUP AUDIT] No active trades found.")
+            except:
+                pass
 
     def get_account_information(self):
         if not self.is_active: return None

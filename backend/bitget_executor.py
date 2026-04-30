@@ -36,14 +36,24 @@ class BitgetExecutor:
         self.warmup_period = 15 # 15s observation phase
         
         try:
+            from shared_state import state
+            # Initialize health timestamps to prevent false red dots
+            state.last_order_update = self.startup_time
+            state.last_algo_update = self.startup_time
+            state.last_acc_update = self.startup_time
+            
             self.detect_account_mode()
             bal = self.get_balance()
             print(f"💰 [STARTUP AUDIT] USDT Balance: {bal['total']} (Available: {bal['free']})")
+            
+            # FORCE INITIAL REST SYNC to populate state
             pos = self.get_all_positions()
             if pos:
                 print(f"📊 [STARTUP AUDIT] Running Trades: {len(pos)}")
                 for p in pos:
                     print(f"   > {p['symbol']} | Side: {p['side']} | PNL: {p['pnl']}%")
+                    # Populating plans via REST so Guard is aware immediately
+                    self.get_pending_plan_orders(p['symbol'])
         except:
             pass
 
