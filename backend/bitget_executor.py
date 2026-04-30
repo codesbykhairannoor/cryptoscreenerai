@@ -263,8 +263,12 @@ class BitgetExecutor:
                         pnl_pct = (mark_price - entry_price) / entry_price * 100
                     else:
                         pnl_pct = (entry_price - mark_price) / entry_price * 100
-                    
                     print(f"📊 [MONITOR] {symbol} | PNL: {round(pnl_pct, 2)}% | Price: {mark_price}")
+                    
+                    # [VERIFICATION LOG] Confirm SL/TP Status
+                    sl_status = "ACTIVE" if pos.get('stopLoss') or pos.get('slPrice') else "PENDING"
+                    tp_status = "ACTIVE" if pos.get('takeProfit') or pos.get('tpPrice') else "PENDING"
+                    print(f"🛡️ [VERIFIED] Risk Guards for {symbol}: SL [{sl_status}] | TP [{tp_status}]")
                     
                     # [INSTITUTIONAL UPGRADE] Partial Take Profit & Safety Guard
                     if pnl_pct >= 2.0 and pnl_pct < 5.0:

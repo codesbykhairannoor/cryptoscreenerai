@@ -182,7 +182,9 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         url_cur = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={bg_interval}&limit=200&productType=USDT-FUTURES"
         res_cur = requests.get(url_cur, timeout=5)
         data_cur = res_cur.json()
-        if not data_cur or 'data' not in data_cur: return {}
+        if not data_cur or 'data' not in data_cur or not data_cur['data']: 
+            print(f"⏳ [DATA] Sinkronisasi data {clean_symbol} tertunda...")
+            return {}
         
         # Bitget Format: [ts, open, high, low, close, vol, qvol]
         df_cur = pd.DataFrame(data_cur['data'], columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'quoteVol'])
@@ -190,11 +192,13 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             df_cur[col] = df_cur[col].astype(float)
         df_cur = df_cur.sort_values('ts').reset_index(drop=True)
 
+        if len(df_cur) < 5: return {}
+
         # 2. Fetch HTF from BITGET
         url_htf = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={htf}&limit=200&productType=USDT-FUTURES"
         res_htf = requests.get(url_htf, timeout=5)
         data_htf = res_htf.json()
-        if not data_htf or 'data' not in data_htf:
+        if not data_htf or 'data' not in data_htf or not data_htf['data']:
             df_htf = df_cur.copy()
         else:
             df_htf = pd.DataFrame(data_htf['data'], columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'quoteVol'])
