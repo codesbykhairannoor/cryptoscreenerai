@@ -272,30 +272,36 @@ class BitgetExecutor:
                 # 1. Fetch Plans
                 plans = self.get_pending_plan_orders(symbol)
                 has_sl = False
-                existing_sl_price = 0
+                has_tp = False
+                sl_p = 0
+                tp_p = 0
                 
                 for o in plans:
                     info = o.get('info', {})
-                    # Bitget Classic V2 Plan Order Detection
-                    if 'triggerPrice' in info or 'executePrice' in info or 'stopPrice' in o:
+                    p_type = str(info.get('planType', '')).lower()
+                    # Bitget V2 Plan detection
+                    if 'stop' in p_type or 'loss' in p_type:
                         has_sl = True
-                        existing_sl_price = float(info.get('triggerPrice') or info.get('executePrice') or o.get('stopPrice') or 0)
-                        break
+                        sl_p = float(info.get('triggerPrice') or info.get('executePrice') or 0)
+                    elif 'profit' in p_type:
+                        has_tp = True
+                        tp_p = float(info.get('triggerPrice') or info.get('executePrice') or 0)
                 
-                # Diagnostic Log
+                # Diagnostic Log (SL & TP)
                 if int(now) % 30 < 5:
-                    print(f"💎 [REAL-TIME MONITOR] {symbol} | PNL: {pnl}% | SL: {'SET ('+str(existing_sl_price)+')' if has_sl else 'NOT DETECTED'}")
+                    sl_status = f"SL: {sl_p}" if has_sl else "SL: MISSING"
+                    tp_status = f"TP: {tp_p}" if has_tp else "TP: MISSING"
+                    print(f"💎 [REAL-TIME MONITOR] {symbol} | PNL: {pnl}% | {sl_status} | {tp_status}")
 
                 # 2. PROGRESSIVE TRAILING LOGIC (PINTER)
                 new_sl = 0
                 if pnl >= 60.0: new_sl = entry * 1.25 if side in ['long', 'buy'] else entry * 0.75
                 elif pnl >= 40.0: new_sl = entry * 1.10 if side in ['long', 'buy'] else entry * 0.90
-                elif pnl >= 20.0: new_sl = entry # Move to Breakeven
+                elif pnl >= 20.0: new_sl = entry 
                 
                 if new_sl > 0:
-                    # Update only if better than existing
-                    is_better = (side in ['long', 'buy'] and new_sl > existing_sl_price) or \
-                                (side in ['short', 'sell'] and (new_sl < existing_sl_price or existing_sl_price == 0))
+                    is_better = (side in ['long', 'buy'] and new_sl > sl_p) or \
+                                (side in ['short', 'sell'] and (new_sl < sl_p or sl_p == 0))
                     
                     if is_better:
                         # Avoid updating too frequently (every 2 mins for trailing)
