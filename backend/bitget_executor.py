@@ -101,40 +101,48 @@ class BitgetExecutor:
         """Fetches all pending trigger/plan orders (SL/TP) via Bitget V2"""
         import requests, time, hmac, hashlib, base64
         max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                ts = str(int(time.time() * 1000))
-                path = "/api/v2/mix/order/orders-plan-pending"
-                query = "productType=usdt-futures&planType=profit_loss"
-                if symbol:
-                    clean_sym = symbol.split('_')[0].split(':')[0].replace('/', '')
-                    query += f"&symbol={clean_sym}"
-                
-                message = ts + "GET" + path + "?" + query
-                mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
-                sign = base64.b64encode(mac.digest()).decode('utf8')
-                
-                headers = {
-                    "ACCESS-KEY": self.api_key,
-                    "ACCESS-SIGN": sign,
-                    "ACCESS-TIMESTAMP": ts,
-                    "ACCESS-PASSPHRASE": self.passphrase,
-                    "Content-Type": "application/json"
-                }
-                
-                url = f"https://api.bitget.com{path}?{query}"
-                res = requests.get(url, headers=headers, timeout=5)
-                data = res.json()
-                
-                if data.get('code') == '00000':
-                    return data.get('data', {}).get('entrustList', []) if isinstance(data.get('data'), dict) else data.get('data', [])
-                else:
-                    print(f"⚠️ [PLAN ERROR] API returned (Attempt {attempt+1}): {data}")
+        # Check both profit_loss (TP/SL) and normal_plan (Stop Orders)
+        plan_types = ['profit_loss', 'normal_plan']
+        all_plans = []
+        
+        for p_type in plan_types:
+            for attempt in range(max_retries):
+                try:
+                    ts = str(int(time.time() * 1000))
+                    path = "/api/v2/mix/order/orders-plan-pending"
+                    query = f"productType=usdt-futures&planType={p_type}"
+                    if symbol:
+                        clean_sym = symbol.split('_')[0].split(':')[0].replace('/', '').replace('USDT','') + "USDT"
+                        query += f"&symbol={clean_sym}"
+                    
+                    message = ts + "GET" + path + "?" + query
+                    mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
+                    sign = base64.b64encode(mac.digest()).decode('utf8')
+                    
+                    headers = {
+                        "ACCESS-KEY": self.api_key,
+                        "ACCESS-SIGN": sign,
+                        "ACCESS-TIMESTAMP": ts,
+                        "ACCESS-PASSPHRASE": self.passphrase,
+                        "Content-Type": "application/json"
+                    }
+                    
+                    url = f"https://api.bitget.com{path}?{query}"
+                    res = requests.get(url, headers=headers, timeout=5)
+                    data = res.json()
+                    
+                    if data.get('code') == '00000':
+                        entrusts = data.get('data', {}).get('entrustList', []) if isinstance(data.get('data'), dict) else (data.get('data') or [])
+                        if isinstance(entrusts, list):
+                            all_plans.extend(entrusts)
+                        break
+                    else:
+                        if attempt == max_retries - 1:
+                            print(f"⚠️ [PLAN ERROR] API returned ({p_type}): {data}")
+                        time.sleep(1)
+                except Exception as e:
                     time.sleep(1)
-            except Exception as e:
-                print(f"⚠️ [PLAN ERROR] Gagal fetch plan orders (Attempt {attempt+1}): {e}")
-                time.sleep(1)
-        return None
+        return all_plans
 
     def get_max_available(self, symbol, leverage):
         """
@@ -360,17 +368,18 @@ class BitgetExecutor:
                     
                     for plan in plan_orders:
                         plan_id = plan.get('instId', '') or plan.get('symbol', '')
-                        clean_plan_id = plan_id.split('_')[0]
+                        clean_plan_id = plan_id.split('_')[0].replace('USDT', '')
                         
-                        if clean_plan_id == clean_pos_id:
-                            trigger = float(plan.get('triggerPrice', 0))
+                        if clean_plan_id == clean_pos_id.replace('USDT', ''):
+                            trigger = float(plan.get('triggerPrice', 0) or plan.get('executePrice', 0))
                             if trigger > 0:
-                                if side == 'long':
-                                    if trigger > entry_price: tp_price = trigger
-                                    else: sl_price = trigger
+                                # Logic to differentiate SL from TP based on side and price
+                                if side.lower() == 'long':
+                                    if trigger > entry_price: tp_price = max(tp_price, trigger)
+                                    else: sl_price = max(sl_price, trigger)
                                 else:
-                                    if trigger < entry_price: tp_price = trigger
-                                    else: sl_price = trigger
+                                    if trigger < entry_price: tp_price = min(tp_price, trigger) if tp_price > 0 else trigger
+                                    else: sl_price = min(sl_price, trigger) if sl_price > 0 else trigger
                     
                     # [RISK GUARD] Verify SL Existence
                     if sl_price > 0:
@@ -450,13 +459,18 @@ class BitgetExecutor:
             # Format price precision
             formatted_sl = self.exchange.price_to_precision(symbol, new_sl)
             
-            # Bitget V2 Plan Type must be 'profit_loss' for TP/SL
-            self.exchange.create_order(symbol, 'market', tp_side, amount, params={
+            # Bitget V2 Strategy: Use 'normal_plan' for better execution and visibility
+            # This is equivalent to a 'Stop Market' order
+            params = {
                 'triggerPrice': formatted_sl,
                 'triggerType': 'mark_price',
-                'planType': 'profit_loss',
-                'reduceOnly': True
-            })
+                'executePrice': '0', # 0 means market execution on trigger
+                'reduceOnly': 'YES', # Bitget V2 expects 'YES' or 'NO' in some endpoints
+                'planType': 'normal_plan'
+            }
+            
+            # Use CCXT's unified trigger order if possible, or direct V2 params
+            self.exchange.create_order(symbol, 'market', tp_side, amount, params=params)
             label = "Take Profit" if is_tp else "Stop Loss"
             print(f"🛡️ [BITGET] {label} updated at {formatted_sl}")
         except Exception as e:
