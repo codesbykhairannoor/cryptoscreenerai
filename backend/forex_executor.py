@@ -113,7 +113,7 @@ class ForexExecutor:
                     liq_sweep = fx_data.get('is_liquidity_sweep', False)
                     inst_flow = fx_data.get('inst_flow', 'NORMAL')
                     
-                    if int(time.time()) % 60 < 15:
+                    if int(time.time()) % 20 < 10:
                         print(f"[FOREX DASHBOARD] Price: {fx_data['lastPrice']} | RSI: {rsi} | OB: {ob_status} | Flow: {inst_flow}")
                         if liq_sweep: print(f"🔥 [SMC ALERT] Liquidity Sweep Detected on Gold!")
 

@@ -155,7 +155,7 @@ class BitgetExecutor:
             
             # 2. Plan Orders (Direct V2 Mix API) - Polling multiple product types for safety
             # Bitget Classic uses different productTypes depending on account age/region
-            for pt in ['usdt-futures', 'umcbl']:
+            for pt in ['usdt-futures', 'umcbl', 'dmcbl', 'cmcbl']:
                 try:
                     plan_data = self.exchange.private_get_mix_order_orders_plan_pending({'productType': pt})
                     if plan_data.get('code') == '00000':
@@ -226,6 +226,9 @@ class BitgetExecutor:
     def manage_open_positions(self):
         """Intelligent Monitoring: SL/TP Verification + Trail to Entry"""
         try:
+            # Persistent cooldown to prevent log spamming
+            if not hasattr(self, '_last_sl_check'): self._last_sl_check = {}
+            
             positions = self.get_all_positions()
             for pos in positions:
                 symbol = pos['symbol']
@@ -233,6 +236,11 @@ class BitgetExecutor:
                 size = pos['size']
                 entry = pos['entry']
                 pnl = float(pos.get('pnl', 0))
+                
+                now = time.time()
+                last_check = self._last_sl_check.get(symbol, 0)
+                if now - last_check < 30: # Only check every 30s per symbol
+                    continue
                 
                 # 1. Check for existing SL/TP
                 plans = self.get_pending_plan_orders(symbol)
@@ -242,24 +250,27 @@ class BitgetExecutor:
                 for o in plans:
                     info = o.get('info', {})
                     # Bitget V2 Mix Plan Order detection
-                    if str(info).lower().find('stop') != -1 or str(info).lower().find('plan') != -1:
+                    if str(info).lower().find('stop') != -1 or str(info).lower().find('plan') != -1 or 'triggerPrice' in info:
                         has_sl = True
                         existing_sl_price = float(info.get('triggerPrice') or info.get('executePrice') or 0)
                         break
                 
                 # 2. TRAIL TO ENTRY LOGIC (PINTER)
-                # If PNL > 20%, move SL to Entry price to lock in profits
                 if pnl >= 20.0 and entry > 0:
                     if (side.lower() in ['long', 'buy'] and existing_sl_price < entry) or \
                        (side.lower() in ['short', 'sell'] and (existing_sl_price > entry or existing_sl_price == 0)):
                         print(f"📈 [TRAIL TO ENTRY] {symbol} Profit {round(pnl,1)}%! Moving SL to Entry: {entry}")
                         self.update_sl_price(symbol, side, size, entry)
-                        continue # Skip the "No SL" check for this loop
+                        self._last_sl_check[symbol] = now
+                        continue 
 
                 # 3. NO SL GUARD: If absolutely no SL exists, set default
                 if not has_sl and entry > 0:
                     sl = entry * 0.95 if side.lower() in ['long', 'buy'] else entry * 1.05
                     self.update_sl_price(symbol, side, size, sl)
+                
+                self._last_sl_check[symbol] = now
                     
         except Exception as e:
-            print(f"[MANAGE POS ERROR] {e}")
+            # print(f"[MANAGE POS ERROR] {e}")
+            pass
