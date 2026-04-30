@@ -453,25 +453,16 @@ class BitgetExecutor:
             tp_side = 'sell' if side.lower() in ['long', 'buy'] else 'buy'
             formatted_price = self.exchange.price_to_precision(symbol, new_price)
             
-            # Bitget V2 Strategy: Use 'profit_loss' for SL/TP visibility
+            # Bitget V2 Strategy: Use 'normal_plan' which is more widely accepted for stop/trigger orders
             params = {
                 'triggerPrice': formatted_price,
                 'triggerType': 'mark_price',
-                'executePrice': '0', # 0 means market execution
                 'reduceOnly': 'YES',
-                'planType': 'profit_loss' # Important for V2
+                'planType': 'normal_plan'
             }
             
-            # Try to cancel existing ones first to avoid duplicates
-            try:
-                # We don't have the order ID easily, but we can cancel by symbol if needed
-                # For now, let's just place the new one. Bitget V2 profit_loss orders 
-                # often overwrite or coexist depending on the account settings.
-                pass
-            except:
-                pass
-
-            self.exchange.create_order(symbol, 'market', tp_side, amount, params=params)
+            # We use None for price in market orders
+            self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=params)
             label = "Take Profit" if is_tp else "Stop Loss"
             print(f"🛡️ [BITGET] {label} updated at {formatted_price}")
         except Exception as e:
