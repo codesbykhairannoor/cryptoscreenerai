@@ -43,6 +43,24 @@ def get_orderbook_analysis(symbol):
         print(f"⚠️ [ORDERBOOK ERROR] {symbol}: {e}")
     return {"bid_vol": 0, "ask_vol": 0, "ratio": 1, "is_buying_wall": False, "is_selling_wall": False, "wall_sentiment": "UNKNOWN"}
 
+def get_funding_rate(symbol):
+    """
+    [MARKET OVERHEAT DETECTOR] - Tracks current funding rates
+    Logic: High Positive Funding = Overleveraged Longs (Dump Risk)
+    """
+    try:
+        clean_symbol = symbol.replace("/", "").split(":")[0]
+        url = f"https://api.bitget.com/api/v3/market/current-fund-rate?symbol={clean_symbol}"
+        res = requests.get(url, timeout=5)
+        data = res.json()
+        if data.get('code') == '00000' and 'data' in data:
+            rates = data['data']
+            if rates:
+                return float(rates[0].get('fundingRate', 0))
+    except:
+        pass
+    return 0
+
 def get_open_interest(symbol):
     """
     [INSTITUTIONAL OI ENGINE] - Tracks unsettled futures contracts
@@ -236,6 +254,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         inst_flow = detect_institutional_flow(df_cur)
         ob_analysis = get_orderbook_analysis(symbol)
         oi = get_open_interest(symbol)
+        funding = get_funding_rate(symbol)
         
         return {
             "rsi": round(rsi_cur.iloc[-1], 2) if not rsi_cur.empty else 50,
@@ -254,6 +273,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             "inst_flow": inst_flow,
             "ob_analysis": ob_analysis,
             "open_interest": oi,
+            "funding_rate": funding,
             "htf": htf
         }
     except Exception as e:
