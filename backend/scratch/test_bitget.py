@@ -12,37 +12,41 @@ except ImportError as e:
     print(f"[ERROR] Import failed: {e}")
     sys.exit(1)
 
-def test_v3_uta():
+def test_mode_detection():
     executor = BitgetExecutor()
     
     print("\n" + "="*50)
-    print("BITGET V3 (UTA) DIAGNOSTIC TEST")
+    print("BITGET HYBRID DIAGNOSTIC TEST")
     print("="*50)
     
-    # 1. Test Balance
-    print("\n[1] Testing Balance...")
+    # 1. Test Connection & Mode
+    success, msg = executor.test_connection()
+    print(f"[1] Connection Test: {msg}")
+    print(f"    Detected Mode: {'UTA' if executor.is_uta else 'Classic'}")
+    
+    # 2. Test Balance
+    print("\n[2] Testing Balance...")
     bal = executor.get_balance()
     print(f"[RESULT] Total: {bal['total']} USDT | Free: {bal['free']} USDT")
     
-    # 2. Test Positions
-    print("\n[2] Testing Get Positions (V3)...")
+    # 3. Test Positions
+    print("\n[3] Testing Get Positions...")
     positions = executor.get_all_positions()
     print(f"[RESULT] Found {len(positions)} positions.")
     for p in positions:
-        print(f" - {p['symbol']} | Side: {p['side']} | Entry: {p['entry']} | PNL: {p['pnl']}")
+        print(f" - {p['symbol']} | Side: {p['side']} | Entry: {p['entry']} | PNL: {p.get('pnl', 0)}")
     
-    # 3. Test Open Orders
-    print("\n[3] Testing Get Open Orders (V3)...")
-    orders = executor.get_pending_plan_orders()
-    print(f"[RESULT] Found {len(orders)} open/plan orders.")
-    for o in orders:
-        dtype = o.get('delegateType', 'normal')
-        price = o.get('triggerPrice') or o.get('price')
-        print(f" - ID: {o.get('orderId')} | Symbol: {o.get('symbol')} | Side: {o.get('side')} | Type: {dtype} | Price: {price}")
+    # 4. Test Max Available
+    print("\n[4] Testing Max Available...")
+    try:
+        max_q = executor.get_max_available("BTC/USDT:USDT")
+        print(f"[RESULT] Max BTC for 10x: {max_q}")
+    except Exception as e:
+        print(f"[ERROR] Max Available failed: {e}")
 
     print("\n" + "="*50)
     print("TEST COMPLETE")
     print("="*50)
 
 if __name__ == "__main__":
-    test_v3_uta()
+    test_mode_detection()
