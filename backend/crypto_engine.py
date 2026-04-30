@@ -29,29 +29,29 @@ def detect_volatility_spike(symbol, timeframe="1m"):
 
 def run_crypto_engine():
     """
-    Dedicated Crypto Trading Engine.
-    Isolated from Forex and Stocks.
+    [THE HUNTER] - Institutional-Grade Crypto Trading Engine.
+    Uses Whale Accumulation, SMC/FVG, and Intelligent Logging.
     """
     executor = BitgetExecutor()
     from database import check_pending_trades
     from sentiment import get_market_news_digest, get_crypto_news
-    print("🚀 [CRYPTO] Trading Engine AKTIF!")
+    print("🛰️ [SYSTEM] Crypto Hunter Engine AKTIF!")
     
     last_exec_time = 0
     last_news_report = 0
-    COOLDOWN_PERIOD = 600 
+    COOLDOWN_PERIOD = 900 # 15 Mins cooldown
     
     while True:
         try:
-            # 1. MONITOR ACTIVE POSITIONS (PNL Logging)
+            # 1. MONITOR ACTIVE POSITIONS (Intelligent Dashboard)
+            # This shows PNL, Trailing SL status, and Price Action in one line
             executor.manage_open_positions()
             check_pending_trades()
             
-            # 2. PERIODIC NEWS DIGEST (Every 10 Mins)
+            # 2. PERIODIC NEWS VELOCITY (Every 10 Mins)
             if time.time() - last_news_report > 600:
                 digest = get_market_news_digest()
-                print(f"🗞️ [NEWS DIGEST] Sentiment: {digest['sentiment']}")
-                print(f"🗞️ [TOP CRYPTO] {digest['crypto_top']}")
+                print(f"🗞️ [NEWS VELOCITY] Sentiment: {digest['sentiment']} | Top: {digest['crypto_top']}")
                 last_news_report = time.time()
 
             # 3. GLOBAL CONTEXT
@@ -71,55 +71,52 @@ def run_crypto_engine():
                 entry = coin['lastPrice']
                 
                 tech = get_technical_indicators(symbol)
-                rsi = tech.get('rsi', 50)
-                vwap = tech.get('vwap', entry)
+                is_danger = tech.get('is_session_danger', False)
+                is_whale = tech.get('is_whale_accumulation', False)
+                fvg_zones = tech.get('fvg_up', [])
                 vwap_dist = tech.get('vwap_dist', 0)
-                is_sweep = tech.get('is_liquidity_sweep', False)
                 
-                # 1. INSTITUTIONAL FAIR VALUE CHECK (Anti-FOMO)
-                # Don't buy if price is > 3% above VWAP (Price is too expensive/over-extended)
-                if vwap_dist > 3.0:
+                # SESSION GUARD: Anti-Liquidity Prank
+                if is_danger:
+                    if int(time.time()) % 60 < 10:
+                        print(f"⚠️ [SESSION GUARD] Market Opening/Closing Detected. Holding all fire to avoid Stop Hunts.")
                     continue
 
-                # 2. ORDER BOOK IMBALANCE (Whale Tracker)
-                from data_fetcher import get_order_book_details
-                ob = get_order_book_details(symbol)
-                # If Ask Wall is 2x Bid Wall,Institutions are likely pushing price down. Avoid.
-                if ob['ratio'] < 0.5:
-                    continue
-
-                is_vol_spike = detect_volatility_spike(symbol)
-                inst_flow = tech.get('inst_flow', "NORMAL")
-                
+                # REFINED HUNTER LOGIC
                 should_trade = False
                 reason = ""
                 
-                # REFINED STRATEGY: Institutional Reversals
-                if is_sweep:
+                # Logic A: Whale Accumulation (Buy the Bottom before the pump)
+                if is_whale and vwap_dist < 1.0:
                     should_trade = True
-                    reason = "INSTITUTIONAL LIQUIDITY SWEEP (STOP-HUNT REVERSAL)"
-                elif inst_flow == "INSTITUTIONAL_ACCUMULATION" and vwap_dist < 1.0:
-                    should_trade = True
-                    reason = "INSTITUTIONAL VWAP ACCUMULATION"
-                elif is_vol_spike and rsi < 55 and vwap_dist < 2.0:
-                    should_trade = True
-                    reason = "VWAP SUPPORT BREAKOUT"
+                    reason = "EARLY PUMP (WHALE ACCUMULATION)"
                 
+                # Logic B: SMC/FVG Return (Buy the Dip at institutional discount)
+                elif fvg_zones and vwap_dist < 0.5:
+                    should_trade = True
+                    reason = "SMC FVG RE-ENTRY (INSTITUTIONAL DISCOUNT)"
+
                 if should_trade:
-                    # 4. FUTURE PROJECTION: Combined News + Tech
+                    # ORDER DEPTH PROXY: Check for Supporting Walls
+                    from data_fetcher import get_order_book_details
+                    ob = get_order_book_details(symbol)
+                    if ob['ratio'] < 0.7: # Still want some buyer support
+                        continue
+
                     news_context = get_crypto_news(symbol)
-                    print(f"🏛️ [WALL STREET LOGIC] {symbol}: Trading with the Whales. Reason: {reason}. Price vs VWAP: {vwap_dist}%")
-                    print(f"🔮 [FUTURE OUTLOOK] RSI {rsi} & OrderBook Ratio {ob['ratio']} suggests upward momentum. {news_context}")
+                    print(f"🏛️ [THE HUNTER] {symbol}: Targeting {reason}. Price vs VWAP: {vwap_dist}%")
+                    print(f"🔮 [FUTURE OUTLOOK] OrderBook Ratio {ob['ratio']} confirms accumulation. {news_context}")
                     
                     tp = coin.get('tp_price') or (entry * 1.03) 
-                    sl = coin.get('sl_price') or (entry * 0.98) 
+                    sl = coin.get('sl_price') or (entry * 0.985) # Slightly wider SL for SMC
                     
-                    print(f"🔍 [CRYPTO AUTO-TRADE] Executing on {symbol} | Target: {round(tp, 4)} | SL: {round(sl, 4)}")
+                    print(f"🔍 [CRYPTO AUTO-TRADE] Snipping {symbol} | Entry: {entry} | TP: {round(tp, 4)}")
                     success, res = executor.place_futures_order(symbol, 'buy', tp_price=tp, sl_price=sl)
                     if success:
                         last_exec_time = time.time()
+                        from database import log_trade
                         log_trade(symbol, entry, tp, sl, market='crypto')
-                        print(f"✅ [CRYPTO SUCCESS] Auto-Order Filled at ${entry}")
+                        print(f"✅ [HUNTER SUCCESS] Position opened on {symbol}")
             
         except Exception as e:
             print(f"❌ [CRYPTO ERROR] {e}")

@@ -110,14 +110,29 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         ema_200_cur = closes_cur.ewm(span=200, adjust=False).mean()
         ema_200_htf = closes_htf.ewm(span=200, adjust=False).mean()
 
-        # 3. LIQUIDITY SWEEP DETECTION (Anti-Stop Hunt)
-        last_candle = df_cur.iloc[-1]
-        prev_candle = df_cur.iloc[-2]
-        avg_vol = df_cur['vol'].rolling(20).mean().iloc[-1]
-        is_sweep = False
-        if last_candle['low'] < prev_candle['low'] and last_candle['close'] > prev_candle['low']:
-            if float(last_candle['vol']) > float(avg_vol) * 1.5: 
-                is_sweep = True
+        # 3. VOLUME-TO-PRICE DIVERGENCE (Whale Accumulation Detector)
+        # Logic: Volume surge > 300% but price change < 2% (Whales buying quietly)
+        vol_surge = last_candle['vol'] / avg_vol if avg_vol > 0 else 1
+        price_change_abs = abs((last_candle['close'] - last_candle['open']) / last_candle['open'] * 100)
+        is_whale_accumulation = vol_surge > 3.0 and price_change_abs < 2.0
+
+        # 4. FAIR VALUE GAP (FVG) DETECTION (SMC)
+        # Logic: Gap between high of candle 1 and low of candle 3
+        fvg_up = []
+        if len(df_cur) >= 3:
+            for i in range(len(df_cur)-3, len(df_cur)):
+                c1, c2, c3 = df_cur.iloc[i-2], df_cur.iloc[i-1], df_cur.iloc[i]
+                if c1['high'] < c3['low']: # Bullish FVG
+                    fvg_up.append((c1['high'], c3['low']))
+
+        # 5. SESSION AWARENESS (Anti-Prank Guard)
+        # Identify London (07:00 UTC) and NY (12:00/13:00 UTC)
+        current_hour = time.gmtime().tm_hour
+        current_min = time.gmtime().tm_min
+        is_session_danger = False
+        # Avoid 15 mins around London/NY Open
+        if (current_hour == 7 or current_hour == 12 or current_hour == 13) and (current_min < 15 or current_min > 45):
+            is_session_danger = True
 
         # Smart detection
         pattern = detect_candle_patterns(df_cur)
@@ -130,6 +145,9 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             "vwap": last_vwap,
             "vwap_dist": round((closes_cur.iloc[-1] - last_vwap) / last_vwap * 100, 2) if last_vwap > 0 else 0,
             "is_liquidity_sweep": is_sweep,
+            "is_whale_accumulation": is_whale_accumulation,
+            "fvg_up": fvg_up,
+            "is_session_danger": is_session_danger,
             "ema_200": round(ema_200_cur.iloc[-1], 2) if not ema_200_cur.empty else 0,
             "ema_200_htf": round(ema_200_htf.iloc[-1], 2) if not ema_200_htf.empty else 0,
             "candle_pattern": pattern,

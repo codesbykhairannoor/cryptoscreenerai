@@ -177,31 +177,39 @@ class ForexExecutor:
                     dxy_trend = dxy_data.get('trend', 'NEUTRAL')
                     gold_inst_flow = fx_data.get('inst_flow', "NORMAL")
                     rsi = fx_data.get('rsi', 50)
-                    spread = fx_data.get('spread', 0)
-                    
-                    # LOGGING FOR AUDIT: Show user why we are NOT trading
-                    if int(time.time()) % 60 < 15: # Log every minute
-                        print(f"🕵️ [DEWA AUDIT] XAUUSD: {fx_data['lastPrice']} | RSI: {rsi} | Flow: {gold_inst_flow} | Spread: {spread}")
-                        print(f"🕵️ [DEWA AUDIT] DXY Index: {dxy_data['lastPrice']} | Trend: {dxy_trend}")
+                    spread = fx_data.get('sprea                    # 1. SESSION AWARENESS (Anti-Liquidity Prank)
+                    is_danger = fx_data.get('is_session_danger', False)
+                    if is_danger:
+                        if int(time.time()) % 60 < 10:
+                            print(f"⚠️ [SESSION GUARD] London/NY Opening Detected. Sniper holding fire to avoid volatility pranks.")
+                        continue
 
-                    # RELAXED LOGIC: Be more proactive
+                    # 2. SMC / FVG LOGIC (Institutional Re-entry)
+                    fvg_up = fx_data.get('fvg_up', [])
+                    vwap_dist = fx_data.get('vwap_dist', 0)
+                    
+                    # LOGGING FOR AUDIT
+                    if int(time.time()) % 60 < 15: # Log every minute
+                        print(f"🕵️ [ARCHITECT AUDIT] XAUUSD: {fx_data['lastPrice']} | RSI: {rsi} | FVG: {len(fvg_up) > 0} | VWAP Dist: {vwap_dist}%")
+                        print(f"🕵️ [ARCHITECT AUDIT] DXY Index: {dxy_data['lastPrice']} | Trend: {dxy_trend}")
+
                     should_auto = False
                     side = 'buy'
                     
-                    # BUY: DXY is not Bullish AND (Gold oversold OR Institutional Flow)
-                    if dxy_trend != 'BULLISH' and (rsi < 40 or gold_inst_flow == "INSTITUTIONAL_ACCUMULATION"):
+                    # THE ARCHITECT LOGIC: Precise Re-entries
+                    # BUY: DXY is Weak AND Gold is in FVG/VWAP discount zone
+                    if dxy_trend != 'BULLISH' and (fvg_up or rsi < 40) and vwap_dist < 0.5:
                         should_auto = True
                         side = 'buy'
-                    # SELL: DXY is not Bearish AND (Gold overbought OR Institutional Flow)
-                    elif dxy_trend != 'BEARISH' and (rsi > 65 or gold_inst_flow == "INSTITUTIONAL_ABSORPTION"):
+                    # SELL: DXY is Strong AND Gold is Overextended
+                    elif dxy_trend != 'BEARISH' and (rsi > 65) and vwap_dist > 1.0:
                         should_auto = True
                         side = 'sell'
                     
-                    # 2. Barrage Count Detection
+                    # 3. Barrage Count Detection
                     trades_to_open = 5 if abs(fx_data.get('price_change_5m', 0)) > 0.4 else 3
                         
                     if should_auto and (time.time() - last_auto_trade > AUTO_COOLDOWN):
-                        # 3. Final Equity Guard & Spread Guard
                         if not self.check_spread("XAUUSD"): continue
                         
                         account = self.get_account_information()
@@ -209,7 +217,7 @@ class ForexExecutor:
                             print("🚨 [SAFETY] Equity too low for Barrage Mode!")
                             continue
 
-                        print(f"🎯 [DEWA SNIPER] Correlation Match! DXY: {dxy_trend} | Gold: {gold_inst_flow}")
+                        print(f"🎯 [ARCHITECT SNIPER] Institutional Alignment! DXY: {dxy_trend} | FVG Detected: {len(fvg_up) > 0}")
                         price = fx_data['lastPrice']
                         atr = fx_data.get('atr', 1.5)
                         
@@ -219,6 +227,7 @@ class ForexExecutor:
                         success = self.place_xauusd_scalp_batch(side, trades_count=trades_to_open, volume=0.01, tp=tp, sl=sl)
                         if success:
                             last_auto_trade = time.time()
+              last_auto_trade = time.time()
                 
                 time.sleep(15) 
                 
