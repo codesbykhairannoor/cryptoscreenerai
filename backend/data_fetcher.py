@@ -126,6 +126,11 @@ def get_crypto_data(symbol, interval='5m'):
         
         # Sort by timestamp (Bitget usually returns newest first)
         df_cur = df_cur.sort_values('ts').reset_index(drop=True)
+        return df_cur
+
+    except Exception as e:
+        print(f"❌ [DATA FETCH ERROR] {symbol}: {e}")
+        return pd.DataFrame()
 
 def get_order_book_details(symbol):
     try:
