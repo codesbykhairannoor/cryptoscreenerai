@@ -258,10 +258,10 @@ class BitgetExecutor:
                             # Bitget V2: Must use triggerPrice and reduceOnly for SL to appear in 'Plan Orders'
                             self.exchange.create_order(symbol, 'market', tp_side, quantity, params={
                                 'triggerPrice': formatted_sl,
-                                'triggerType': 'mark',
+                                'triggerType': 'mark_price',
                                 'reduceOnly': True 
                             })
-                            print(f"🛡️ [BITGET] Stop Loss set at {formatted_sl} (Trigger: Mark)")
+                            print(f"🛡️ [BITGET] Stop Loss set at {formatted_sl} (Trigger: Mark Price)")
                             
                     except Exception as e_safety:
                         print(f"⚠️ [BITGET SAFETY] Entry Success, but SL/TP failed: {e_safety}")
@@ -445,7 +445,7 @@ class BitgetExecutor:
                 
             self.exchange.create_order(symbol, 'market', tp_side, amount, params={
                 'triggerPrice': str(new_sl),
-                'triggerType': 'mark',
+                'triggerType': 'mark_price',
                 'reduceOnly': True
             })
         except Exception as e:
