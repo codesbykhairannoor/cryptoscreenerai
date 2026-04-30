@@ -178,8 +178,8 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         htf = htf_map.get(interval, "1H")
         bg_interval = interval if interval != '1h' else '1H'
 
-        # 1. Fetch Current Interval from BITGET
-        url_cur = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={bg_interval}&limit=200&category=USDT-FUTURES"
+        # 1. Fetch Current Interval from BITGET (Global Domain to bypass local ISP block)
+        url_cur = f"https://api.bitgetapi.com/api/v3/market/candles?symbol={clean_symbol}&granularity={bg_interval}&limit=200&category=USDT-FUTURES"
         res_cur = requests.get(url_cur, timeout=5)
         data_cur = res_cur.json()
         if not data_cur or 'data' not in data_cur or not data_cur['data']: 
@@ -193,7 +193,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         if len(df_cur) < 5: return {}
 
         # 2. Fetch HTF from BITGET
-        url_htf = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={htf}&limit=200&category=USDT-FUTURES"
+        url_htf = f"https://api.bitgetapi.com/api/v3/market/candles?symbol={clean_symbol}&granularity={htf}&limit=200&category=USDT-FUTURES"
         res_htf = requests.get(url_htf, timeout=5)
         data_htf = res_htf.json()
         if not data_htf or 'data' not in data_htf or not data_htf['data']:
