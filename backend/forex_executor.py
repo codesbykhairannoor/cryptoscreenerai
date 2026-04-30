@@ -114,7 +114,9 @@ class ForexExecutor:
                     inst_flow = fx_data.get('inst_flow', 'NORMAL')
                     
                     if int(time.time()) % 20 < 10:
-                        print(f"[FOREX DASHBOARD] Price: {fx_data['lastPrice']} | RSI: {rsi} | OB: {ob_status} | Flow: {inst_flow}")
+                        total_lots = sum(float(p.get('volume', 0)) for p in positions)
+                        print(f"🌍 [FOREX DASHBOARD] Price: {fx_data['lastPrice']} | Trades: {len(positions)} | Lots: {round(total_lots, 2)}")
+                        print(f"📊 [FOREX METRICS] RSI: {rsi} | OB: {ob_status} | Flow: {inst_flow}")
                         if liq_sweep: print(f"🔥 [SMC ALERT] Liquidity Sweep Detected on Gold!")
 
                     # AGGRESSIVE STRATEGY: SMC + Sentiment

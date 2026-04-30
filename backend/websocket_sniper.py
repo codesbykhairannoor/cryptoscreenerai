@@ -112,15 +112,16 @@ class BitgetPrivateWS:
                         elif channel == "orders-algo" and "data" in data:
                             state.last_algo_update = time.time()
                             for plan in data["data"]:
-                                # V2 can use 'state' or 'status'
                                 status = plan.get("state") or plan.get("status")
+                                sym = plan.get("symbol")
+                                # RAW ALGO LOG: Help user see what Bitget is sending
+                                print(f"📡 [ALGO STREAM] {sym} | State: {status} | Type: {plan.get('planType')}")
+                                
                                 current_orders = state.orders
                                 current_orders = [o for o in current_orders if o.get('orderId') != plan.get('orderId')]
-                                # Active states for Bitget Algo
                                 if status in ['live', 'not_trigger', 'executed', 'partially_executed']: 
                                     current_orders.append(plan)
                                 state.update_orders(current_orders)
-                                # print(f"DEBUG [ALGO]: {plan.get('symbol')} {status}")
                                 
                         elif channel == "account":
                             state.last_acc_update = time.time()
