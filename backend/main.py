@@ -28,6 +28,13 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
+    # 0. Sync State Memory (Anti-Amnesia Pillar)
+    try:
+        executor = BitgetExecutor()
+        executor.sync_state_with_exchange()
+    except Exception as e:
+        print(f"⚠️ [SYSTEM] Gagal sinkronisasi state: {e}")
+
     # 1. Start Crypto Engine (Isolated)
     crypto_thread = threading.Thread(target=run_crypto_engine, daemon=True)
     crypto_thread.start()

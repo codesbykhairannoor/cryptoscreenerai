@@ -35,11 +35,50 @@ class BitgetExecutor:
                 # Method 1: Swap Type
                 balance = self.exchange.fetch_balance(params={'type': 'swap'})
                 if balance and 'USDT' in balance:
-                    return balance['USDT'].get('total', 0)
+                    return {
+                        'total': balance['USDT'].get('total', 0),
+                        'free': balance['USDT'].get('free', 0)
+                    }
             except Exception as e:
                 if i == retries - 1: print(f"Balance fetch error after {retries} attempts: {e}")
                 time.sleep(1) # Wait before retry
-        return 0
+        return {'total': 0, 'free': 0}
+
+    def get_all_positions(self):
+        """
+        [STATE MEMORY] - Fetches all currently active positions on Bitget
+        """
+        try:
+            positions = self.exchange.fetch_positions(params={'productType': 'usdt-futures'})
+            return [p for p in positions if float(p.get('contracts', 0)) > 0]
+        except Exception as e:
+            print(f"⚠️ [STATE ERROR] Gagal fetch posisi: {e}")
+            return []
+
+    def get_max_available(self, symbol, leverage):
+        """
+        [DYNAMIC SIZING] - Asks Bitget: "What's the max I can open for this koin?"
+        Prevents 'Insufficient Margin' errors.
+        """
+        try:
+            if not ":" in symbol:
+                symbol = f"{symbol}/USDT:USDT" if "USDT" not in symbol else f"{symbol.replace('USDT','')}/USDT:USDT"
+            
+            # Fetch max available from exchange
+            params = {
+                'symbol': symbol.replace("/","").replace(":USDT",""),
+                'leverage': leverage
+            }
+            # Bitget V3 specific endpoint via CCXT
+            res = self.exchange.private_get_mix_v1_account_account(params)
+            if res.get('code') == '00000':
+                return float(res['data'].get('available', 0))
+        except:
+            pass
+        
+        # Fallback to manual calc if API fails
+        bal = self.get_balance_robust()
+        return bal['free'] * 0.95 # Safe buffer
 
     def test_connection(self):
         try:
@@ -48,9 +87,9 @@ class BitgetExecutor:
             
             print(f"Testing connection with Key: {self.api_key[:10]}...")
             
-            usdt = self.get_balance_robust()
-            if usdt > 0:
-                return True, f"Bitget Futures OK (Saldo: ${round(usdt, 2)})"
+            bal = self.get_balance_robust()
+            if bal['total'] > 0:
+                return True, f"Bitget Futures OK (Saldo: ${round(bal['total'], 2)})"
             
             # Fallback to ticker proof
             try:
@@ -84,21 +123,20 @@ class BitgetExecutor:
                 except:
                     time.sleep(1)
             
-            # Get Available Balance (Free balance only to avoid locked funds error)
-            balance_data = self.exchange.fetch_balance(params={'type': 'swap'})
-            available_usdt = balance_data.get('USDT', {}).get('free', 0)
+            # 1. DYNAMIC SIZING (The "Anti-Margin Error" Pillar)
+            # Ask bursa: "Berapa max gue bisa open buat koin ini?"
+            max_available = self.get_max_available(symbol, leverage)
             
-            # Use 90% of AVAILABLE balance as a safety buffer for fees/slippage
-            actual_spend = available_usdt * 0.90
+            # Use 95% of MAX available as a safety buffer
+            actual_spend = max_available * 0.95
             
             if actual_spend < 5:
-                return False, f"Saldo tersedia tidak cukup (Min $5). Tersedia: ${round(available_usdt, 2)}."
+                return False, f"Saldo tersedia tidak cukup (Min $5). Max Available: ${round(max_available, 2)}."
 
             ticker = self.exchange.fetch_ticker(symbol)
             last_price = ticker['last']
             
             # SLIPPAGE PROTECTION: Calculate Limit Price (0.5% offset)
-            # This ensures we get fast execution but not at a crazy price
             if side == 'buy':
                 limit_price = last_price * 1.005 # Buy slightly higher to guarantee fill
             else:
@@ -161,6 +199,45 @@ class BitgetExecutor:
                     time.sleep(1)
         except Exception as e:
             return False, f"Error Executor: {str(e)}"
+
+    def sync_state_with_exchange(self):
+        """
+        [STATE RECOVERY ENGINE] - Cross-references DB with actual exchange positions.
+        Call this on startup to prevent 'Amnesia' after Railway restart.
+        """
+        print("🔄 [SYNC] Synchronizing bot memory with Bitget...")
+        try:
+            active_positions = self.get_all_positions()
+            active_symbols = [p['symbol'] for p in active_positions]
+            
+            from database import get_connection
+            conn = get_connection()
+            cursor = conn.cursor()
+            
+            # Find all trades that WE think are running
+            cursor.execute("SELECT id, symbol FROM trades WHERE status IN ('PENDING', 'RUNNING') AND market = 'crypto'")
+            db_trades = cursor.fetchall()
+            
+            for trade_id, db_symbol in db_trades:
+                # Map DB symbol to Bitget symbol format
+                clean_sym = f"{db_symbol.replace('USDT','')}/USDT:USDT" if not ":" in db_symbol else db_symbol
+                
+                if clean_sym not in active_symbols:
+                    print(f"⚠️ [RECOVERY] {db_symbol} not found on exchange. Marking as CLOSED.")
+                    cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE id = %s", (trade_id,))
+                    # Also cancel any orphaned SL/TP orders
+                    try:
+                        self.exchange.cancel_all_orders(clean_sym)
+                    except:
+                        pass
+                else:
+                    print(f"✅ [RECOVERY] {db_symbol} is active and verified.")
+            
+            conn.commit()
+            conn.close()
+            print("✨ [SYNC] Memory synchronization complete.")
+        except Exception as e:
+            print(f"❌ [SYNC ERROR] {e}")
 
     def manage_open_positions(self):
         """
