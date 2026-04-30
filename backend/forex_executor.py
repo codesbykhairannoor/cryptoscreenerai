@@ -119,19 +119,23 @@ class ForexExecutor:
                 dxy_data = get_forex_data("DXY") 
                 fx_data = get_forex_data("XAUUSD")
                 
-                # MONITOR ACTIVE FOREX POSITIONS
-                try:
-                    pos_url = f"{self.base_url}/users/current/accounts/{self.account_id}/positions"
-                    headers = {"auth-token": self.api_token}
-                    pos_res = requests.get(pos_url, headers=headers, timeout=10)
-                    positions = pos_res.json()
-                    if isinstance(positions, list):
-                        for pos in positions:
-                            if pos['symbol'].startswith('XAUUSD'):
-                                pnl = pos.get('unrealizedProfit', 0)
-                                print(f"📊 [FOREX MONITOR] Gold Position | PNL: ${round(pnl, 2)} | Price: {pos.get('currentPrice')}")
-                except:
-                    pass
+                    # MONITOR ACTIVE FOREX POSITIONS
+                    try:
+                        pos_url = f"{self.base_url}/users/current/accounts/{self.account_id}/positions"
+                        headers = {"auth-token": self.api_token}
+                        pos_res = requests.get(pos_url, headers=headers, timeout=10)
+                        positions = pos_res.json()
+                        
+                        active_count = 0
+                        if isinstance(positions, list):
+                            active_count = len([p for p in positions if p.get('symbol', '').startswith('XAUUSD')])
+                            # Only log summary every 1 minute to avoid spam
+                            if int(time.time()) % 60 < 15:
+                                print(f"📊 [FOREX MONITOR] Active Gold Positions: {active_count}/10")
+                    except Exception as e:
+                        print(f"⚠️ [FOREX MONITOR ERROR] Failed to fetch positions: {e}")
+                        positions = []
+                        active_count = 0
 
                 if dxy_data and fx_data:
                     dxy_trend = dxy_data.get('trend', 'NEUTRAL')
@@ -164,6 +168,11 @@ class ForexExecutor:
                     trades_to_open = 5 if abs(fx_data.get('price_change_5m', 0)) > 0.4 else 3
                         
                     if should_auto and (time.time() - last_auto_trade > AUTO_COOLDOWN):
+                        if active_count >= 10:
+                            if int(time.time()) % 300 < 15: # Log once every 5 mins
+                                print(f"🚨 [FOREX LIMIT] Max positions reached ({active_count}). Skipping trade.")
+                            continue
+
                         if not self.check_spread("XAUUSD"): continue
                         
                         account = self.get_account_information()

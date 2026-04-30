@@ -183,9 +183,19 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         try:
             url_v3 = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&interval={bg_interval}&limit=100&category=USDT-FUTURES"
             res = requests.get(url_v3, headers=headers, timeout=5)
-            data_cur = res.json()
+            
+            if res.status_code != 200:
+                print(f"⚠️ [V3 ERROR] {clean_symbol} HTTP {res.status_code}")
+                raise ValueError("HTTP Error")
+                
+            try:
+                data_cur = res.json()
+            except:
+                print(f"⚠️ [V3 JSON ERROR] {clean_symbol} response was not JSON: {res.text[:100]}")
+                raise ValueError("Not JSON")
+
             if not data_cur or 'data' not in data_cur or not data_cur['data']:
-                print(f"⚠️ [V3 DEBUG] {clean_symbol} Data Missing. Response: {res.text[:100]}")
+                print(f"⚠️ [V3 DEBUG] {clean_symbol} Data Missing.")
                 raise ValueError("V3 Empty")
         except Exception as e:
             # Fallback to V2 Mix API (Very Stable)
@@ -193,9 +203,17 @@ def get_technical_indicators(symbol, interval="15m", period=14):
                 v2_gran = interval if interval != '1h' else '1H'
                 url_v2 = f"https://api.bitget.com/api/v2/mix/market/candles?symbol={clean_symbol}&granularity={v2_gran}&limit=200&productType=usdt-futures"
                 res = requests.get(url_v2, headers=headers, timeout=5)
-                data_cur = res.json()
+                
+                if res.status_code != 200:
+                    raise ValueError(f"HTTP {res.status_code}")
+                    
+                try:
+                    data_cur = res.json()
+                except:
+                    raise ValueError("Not JSON")
+
                 if not data_cur or 'data' not in data_cur or not data_cur['data']:
-                    print(f"⚠️ [V2 DEBUG] {clean_symbol} Data Missing. Response: {res.text[:100]}")
+                    raise ValueError("V2 Empty")
             except Exception as e2:
                 print(f"❌ [API ERROR] V2/V3 failed for {clean_symbol}: {e2}")
 
