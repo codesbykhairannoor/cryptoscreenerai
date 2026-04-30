@@ -5,6 +5,44 @@ import time
 import os
 from patterns import detect_candle_patterns, detect_smart_money_concepts
 
+def get_orderbook_analysis(symbol):
+    """
+    [L2 DATA ENGINE] - Analyzes Bitget Order Book for 'Big Walls'
+    Logic: Detects where market makers are stacking orders (Order Flow)
+    """
+    try:
+        # Convert symbol for Bitget API (e.g., BTCUSDT)
+        clean_symbol = symbol.replace("/", "").split(":")[0]
+        url = f"https://api.bitget.com/api/v3/market/orderbook?category=USDT-FUTURES&symbol={clean_symbol}&limit=20"
+        res = requests.get(url, timeout=5)
+        data = res.json()
+        
+        if data.get('code') == '00000' and 'data' in data:
+            bids = data['data'].get('b', []) # Buying side
+            asks = data['data'].get('a', []) # Selling side
+            
+            # Calculate Total Volume on both sides (Top 20 levels)
+            bid_vol = sum([float(b[1]) for b in bids])
+            ask_vol = sum([float(a[1]) for a in asks])
+            
+            # Wall Detection: If one side is 2x stronger than other
+            ratio = bid_vol / ask_vol if ask_vol > 0 else 1.0
+            
+            is_buying_wall = ratio > 2.5
+            is_selling_wall = ratio < 0.4
+            
+            return {
+                "bid_vol": round(bid_vol, 2),
+                "ask_vol": round(ask_vol, 2),
+                "ratio": round(ratio, 2),
+                "is_buying_wall": is_buying_wall,
+                "is_selling_wall": is_selling_wall,
+                "wall_sentiment": "BULLISH (Whale Support)" if is_buying_wall else "BEARISH (Big Resistance)" if is_selling_wall else "NEUTRAL"
+            }
+    except Exception as e:
+        print(f"⚠️ [ORDERBOOK ERROR] {symbol}: {e}")
+    return {"bid_vol": 0, "ask_vol": 0, "ratio": 1, "is_buying_wall": False, "is_selling_wall": False, "wall_sentiment": "UNKNOWN"}
+
 def fetch_all_tickers():
     try:
         url = "https://data-api.binance.vision/api/v3/ticker/24hr"
@@ -151,6 +189,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         pattern = detect_candle_patterns(df_cur)
         smc = detect_smart_money_concepts(df_cur)
         inst_flow = detect_institutional_flow(df_cur)
+        ob_analysis = get_orderbook_analysis(symbol)
         
         return {
             "rsi": round(rsi_cur.iloc[-1], 2) if not rsi_cur.empty else 50,
@@ -167,6 +206,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             "order_block": smc["ob"],
             "fvg": smc["fvg"],
             "inst_flow": inst_flow,
+            "ob_analysis": ob_analysis,
             "htf": htf
         }
     except Exception as e:
