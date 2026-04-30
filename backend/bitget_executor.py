@@ -106,12 +106,12 @@ class BitgetExecutor:
         all_plans = []
         
         for p_type in plan_types:
-            for pt in ['USDT-FUTURES', 'umcbl']:
+            for pt in ['USDT-FUTURES', 'umcbl', 'usdt-futures']:
                 for attempt in range(max_retries):
                     try:
                         ts = str(int(time.time() * 1000))
                         path = "/api/v2/mix/order/orders-plan-pending"
-                        query = f"productType={pt}&planType={p_type}"
+                        query = f"productType={pt}&planType={p_type}&marginCoin=USDT"
                         
                         if symbol:
                             clean_sym = symbol.split('_')[0].split(':')[0].replace('/', '').replace('USDT','') + "USDT"
@@ -143,8 +143,9 @@ class BitgetExecutor:
                                         all_plans.append(e)
                             break
                         else:
+                            # Only log error for USDT-FUTURES to avoid spamming if other PTs fail
                             if attempt == max_retries - 1 and pt == 'USDT-FUTURES':
-                                print(f"⚠️ [PLAN ERROR] API returned ({p_type} on {pt}): {data}")
+                                print(f"⚠️ [PLAN DEBUG] PT: {pt} | Type: {p_type} | Res: {data}")
                             time.sleep(1)
                     except Exception as e:
                         time.sleep(1)
@@ -366,8 +367,14 @@ class BitgetExecutor:
                     
                     current_inst_id = pos.get('instId', '').upper().replace('_UMCBL', '')
                     
+                    if not plan_orders and int(time.time()) % 60 < 10:
+                        print(f"DEBUG: No plan orders fetched for {symbol}. instId: {current_inst_id}")
+
                     for plan in plan_orders:
                         plan_inst_id = (plan.get('instId', '') or plan.get('symbol', '')).upper().replace('_UMCBL', '')
+                        # Log every plan order found once in a while
+                        if int(time.time()) % 60 < 5:
+                            print(f"DEBUG: Comparing Plan {plan_inst_id} with Pos {current_inst_id}")
                         
                         if plan_inst_id == current_inst_id:
                             trigger = float(plan.get('triggerPrice', 0) or plan.get('executePrice', 0))
