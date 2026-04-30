@@ -43,26 +43,71 @@ def get_orderbook_analysis(symbol):
         print(f"⚠️ [ORDERBOOK ERROR] {symbol}: {e}")
     return {"bid_vol": 0, "ask_vol": 0, "ratio": 1, "is_buying_wall": False, "is_selling_wall": False, "wall_sentiment": "UNKNOWN"}
 
-def fetch_all_tickers():
+def get_open_interest(symbol):
+    """
+    [INSTITUTIONAL OI ENGINE] - Tracks unsettled futures contracts
+    Logic: Increasing OI = New Money Entering (Strong Trend)
+    """
     try:
-        url = "https://data-api.binance.vision/api/v3/ticker/24hr"
-        res = requests.get(url)
+        clean_symbol = symbol.replace("/", "").split(":")[0]
+        url = f"https://api.bitget.com/api/v3/market/open-interest?category=USDT-FUTURES&symbol={clean_symbol}"
+        res = requests.get(url, timeout=5)
         data = res.json()
-        if isinstance(data, list):
-            # FILTER: Only USDT pairs and exclude leveraged tokens/fiat pairs
-            filtered_data = [
-                d for d in data 
-                if d['symbol'].endswith('USDT') 
-                and not any(x in d['symbol'] for x in ['UPUSDT', 'DOWNUSDT', 'RUB', 'GBP', 'EUR', 'AUD', 'FDUSD', 'TUSD', 'BUSD', 'DAI'])
-            ]
-            df = pd.DataFrame(filtered_data)
-            for col in ['quoteVolume', 'priceChangePercent', 'lastPrice']:
-                df[col] = pd.to_numeric(df[col], errors='coerce').astype(float)
+        if data.get('code') == '00000' and 'data' in data:
+            oi_list = data['data'].get('list', [])
+            if oi_list:
+                return float(oi_list[0].get('openInterest', 0))
+    except:
+        pass
+    return 0
+
+def fetch_all_tickers():
+    """MIGRATED TO BITGET V3 ENGINE"""
+    try:
+        url = "https://api.bitget.com/api/v3/market/tickers?category=USDT-FUTURES"
+        res = requests.get(url, timeout=10)
+        data = res.json()
+        if data.get('code') == '00000' and 'data' in data:
+            raw_list = data['data']
+            # Map Bitget fields to our internal format
+            mapped_data = []
+            for d in raw_list:
+                mapped_data.append({
+                    "symbol": d['symbol'],
+                    "lastPrice": float(d['lastPr']),
+                    "priceChangePercent": float(d['change24h']) * 100, # Bitget is decimal
+                    "quoteVolume": float(d['quoteVolume'])
+                })
+            df = pd.DataFrame(mapped_data)
             return df
-        return pd.DataFrame()
     except Exception as e:
-        print(f"Error fetching tickers: {e}")
+        print(f"❌ [BITGET FETCH ERROR] {e}")
         return pd.DataFrame()
+
+def get_crypto_data(symbol, interval='5m'):
+    """MIGRATED TO BITGET V3 CANDLE ENGINE"""
+    try:
+        # Standardize symbol for Bitget (BTCUSDT)
+        clean_symbol = symbol.replace("/", "").split(":")[0]
+        
+        # 1. Fetch Candles from Bitget
+        # Mapping interval to Bitget format
+        bg_interval = interval if interval != '1h' else '1H'
+        url = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={bg_interval}&limit=200&productType=USDT-FUTURES"
+        res = requests.get(url, timeout=10)
+        raw_candles = res.json()
+        
+        if not isinstance(raw_candles, list): 
+            # Bitget V3 returns {code, msg, data} sometimes
+            raw_candles = raw_candles.get('data', [])
+
+        # Bitget Candle Format: [ts, open, high, low, close, vol, quoteVol]
+        df_cur = pd.DataFrame(raw_candles, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'quoteVol'])
+        for col in ['open', 'high', 'low', 'close', 'vol']:
+            df_cur[col] = df_cur[col].astype(float)
+        
+        # Sort by timestamp (Bitget usually returns newest first)
+        df_cur = df_cur.sort_values('ts').reset_index(drop=True)
 
 def get_order_book_details(symbol):
     try:
@@ -190,6 +235,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         smc = detect_smart_money_concepts(df_cur)
         inst_flow = detect_institutional_flow(df_cur)
         ob_analysis = get_orderbook_analysis(symbol)
+        oi = get_open_interest(symbol)
         
         return {
             "rsi": round(rsi_cur.iloc[-1], 2) if not rsi_cur.empty else 50,
@@ -207,6 +253,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             "fvg": smc["fvg"],
             "inst_flow": inst_flow,
             "ob_analysis": ob_analysis,
+            "open_interest": oi,
             "htf": htf
         }
     except Exception as e:
