@@ -199,10 +199,11 @@ class ForexExecutor:
                     should_auto = False
                     side = 'buy'
                     
-                    if dxy_trend != 'BULLISH' and (fvg_up or rsi < 40) and vwap_dist < 0.5:
+                    # CREATIVE SCALPING: Allow entries even if DXY is neutral/counter if RSI is extreme
+                    if (dxy_trend != 'BULLISH' and (fvg_up or rsi < 40) and vwap_dist < 0.5) or (rsi < 30):
                         should_auto = True
                         side = 'buy'
-                    elif dxy_trend != 'BEARISH' and (rsi > 65) and vwap_dist > 1.0:
+                    elif (dxy_trend != 'BEARISH' and (rsi > 60) and vwap_dist > 0.8) or (rsi > 75):
                         should_auto = True
                         side = 'sell'
                     
