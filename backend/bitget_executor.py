@@ -103,7 +103,7 @@ class BitgetExecutor:
         try:
             ts = str(int(time.time() * 1000))
             path = "/api/v2/mix/order/orders-plan-pending"
-            query = "productType=USDT-FUTURES"
+            query = "productType=usdt-futures"
             
             message = ts + "GET" + path + "?" + query
             mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
