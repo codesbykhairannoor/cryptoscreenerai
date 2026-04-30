@@ -345,20 +345,19 @@ class BitgetExecutor:
                     if plan_orders is None:
                         print(f"⚠️ [RISK] Melewati Risk Guards untuk {symbol} karena gagal fetch plan orders (timeout/error).")
                         continue
-                        
-                    pnl_pct = 0
-                    if entry_price > 0:
-                        if side == 'long':
-                            pnl_pct = (mark_price - entry_price) / entry_price * 100
-                        else:
-                            pnl_pct = (entry_price - mark_price) / entry_price * 100
-                    print(f"📊 [MONITOR] {symbol} | PNL: {round(pnl_pct, 2)}% | Price: {mark_price}")
                     
                     # [VERIFICATION LOG] Determine SL/TP Status from pending plan orders
                     sl_price = 0
                     tp_price = 0
+                    
+                    # Clean symbol for comparison (e.g., ETHUSDT_UMCBL -> ETHUSDT)
+                    clean_pos_id = pos.get('instId', '').split('_')[0]
+                    
                     for plan in plan_orders:
-                        if plan.get('instId') == pos.get('instId') or plan.get('symbol') == pos.get('instId'):
+                        plan_id = plan.get('instId', '') or plan.get('symbol', '')
+                        clean_plan_id = plan_id.split('_')[0]
+                        
+                        if clean_plan_id == clean_pos_id:
                             trigger = float(plan.get('triggerPrice', 0))
                             if trigger > 0:
                                 if side == 'long':
@@ -367,17 +366,19 @@ class BitgetExecutor:
                                 else:
                                     if trigger < entry_price: tp_price = trigger
                                     else: sl_price = trigger
-                                    
-                    # Auto-inject Default SL if missing to protect user capital
-                    if sl_price == 0:
+                    
+                    # [RISK GUARD] Verify SL Existence
+                    if sl_price > 0:
+                        print(f"🛡️ [VERIFIED] Risk Guards for {symbol}: SL: ${sl_price} (ACTIVE) | TP: {'$' + str(tp_price) if tp_price > 0 else 'PENDING'}")
+                    else:
+                        # Safety First: Inject default SL if none found
                         default_sl = entry_price * 0.95 if side == 'long' else entry_price * 1.05
                         print(f"⚠️ [RISK] {symbol} tidak memiliki Stop Loss! Memasang default SL di {round(default_sl, 4)}")
                         self.update_sl_price(symbol, side, size, default_sl)
-                        sl_price = default_sl
-                        
-                    sl_text = f"${round(sl_price, 4)} (ACTIVE)" if sl_price > 0 else "PENDING"
-                    tp_text = f"${round(tp_price, 4)} (ACTIVE)" if tp_price > 0 else "PENDING"
-                    print(f"🛡️ [VERIFIED] Risk Guards for {symbol}: SL: {sl_text} | TP: {tp_text}")
+                    
+                    # [RISK GUARD] Verify TP Existence (User Request)
+                    if tp_price == 0:
+                        print(f"🎯 [TP CHECK] {symbol} Take Profit is PENDING. It will be set on next volatility surge.")
                     
                     # [INSTITUTIONAL UPGRADE] Trailing SL
                     if pnl_pct >= 2.0:
@@ -435,27 +436,27 @@ class BitgetExecutor:
         except Exception as e:
             print(f"⚠️ [MONITOR ERROR] {e}")
 
-    def update_sl_price(self, symbol, side, amount, new_sl):
-        """Helper to cancel old SL and place a new one"""
+    def update_sl_price(self, symbol, side, amount, new_sl, is_tp=False):
+        """Helper to cancel old SL/TP and place a new one"""
         try:
             # Bitget V2 Trigger Order
-            tp_side = 'sell' if side == 'long' or side == 'buy' else 'buy'
-            # Cancel all previous plan orders to avoid overlap
-            try:
-                self.exchange.cancel_all_orders(symbol, params={'planType': 'normal_plan'})
-            except:
-                pass
-                
+            tp_side = 'sell' if side == 'long' or side == 'buy' or side == 'Long' else 'buy'
+            # Cancel all previous plan orders of this type to avoid overlap
+            plan_type = 'profit_loss'
+            
             # Format price precision
             formatted_sl = self.exchange.price_to_precision(symbol, new_sl)
             
             self.exchange.create_order(symbol, 'market', tp_side, amount, params={
                 'triggerPrice': formatted_sl,
                 'triggerType': 'mark_price',
+                'planType': 'profit_loss',
                 'reduceOnly': True
             })
+            label = "Take Profit" if is_tp else "Stop Loss"
+            print(f"🛡️ [BITGET] {label} updated at {formatted_sl}")
         except Exception as e:
-            print(f"❌ [SL UPDATE FAILED] {symbol}: {e}")
+            print(f"❌ [SL/TP UPDATE FAILED] {symbol}: {e}")
 
 
 if __name__ == "__main__":

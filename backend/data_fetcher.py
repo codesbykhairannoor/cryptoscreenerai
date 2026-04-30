@@ -82,7 +82,10 @@ def get_open_interest(symbol):
         pass
     
     if oi > 0:
-        print(f"🎯 [SENSORS] Open Interest {symbol}: ${round(oi/1e6, 2)}M")
+        if oi > 1e9:
+            print(f"🎯 [SENSORS] Open Interest {symbol}: ${round(oi/1e9, 2)}B")
+        else:
+            print(f"🎯 [SENSORS] Open Interest {symbol}: ${round(oi/1e6, 2)}M")
     return oi
 
 def fetch_all_tickers():

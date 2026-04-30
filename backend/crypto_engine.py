@@ -127,6 +127,13 @@ def run_crypto_engine():
                     if ob['ratio'] < 0.7: continue
 
                     news_context = get_crypto_news(symbol)
+                    
+                    # SENTIMENT BREAKER: Anti-Bearish Long (The user's XRP Request)
+                    digest = get_market_news_digest()
+                    if digest['sentiment'] == 'BEARISH 📉':
+                        print(f"🛑 [SENTIMENT OVERRIDE] Market is BEARISH. Aborting {symbol} Long to avoid catching falling knives.")
+                        continue
+
                     print(f"🏛️ [THE HUNTER] {symbol}: Targeting {reason}. Price vs VWAP: {vwap_dist}%")
                     
                     # DXY OVERRIDE: Anti-Dollar Strength
@@ -138,7 +145,7 @@ def run_crypto_engine():
 
                     # Calculate precise SL/TP
                     tp = mark_price * 1.03 # 3% Target
-                    sl = mark_price * 0.982 # 1.8% Stop Loss
+                    sl = mark_price * 0.98 # 2% Stop Loss
                     
                     print(f"🔍 [CRYPTO AUTO-TRADE] Snipping {symbol} | Entry: {mark_price} | TP: {round(tp, 4)}")
                     success, res = executor.place_futures_order(symbol, 'buy', tp_price=tp, sl_price=sl)
