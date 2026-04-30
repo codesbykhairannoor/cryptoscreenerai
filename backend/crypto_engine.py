@@ -65,14 +65,16 @@ def run_crypto_engine():
             # CHECK ACTIVE CRYPTO POSITIONS BEFORE TRADING
             try:
                 positions = executor.get_all_positions()
-                if isinstance(positions, list) and len(positions) >= 10:
+                open_symbols = [p['symbol'].upper() for p in positions] if isinstance(positions, list) else []
+                
+                if len(open_symbols) >= 10:
                     if int(time.time()) % 300 < 35:
-                        print(f"🚨 [CRYPTO LIMIT] Max positions reached ({len(positions)}/10). Skipping new trades.")
-                    # Still run the cooldown sleep and position management, but don't enter candidate loop
+                        print(f"🚨 [CRYPTO LIMIT] Max positions reached ({len(open_symbols)}/10). Skipping new trades.")
                     time.sleep(30)
                     continue
             except Exception as e:
                 print(f"⚠️ [CRYPTO LIMIT ERROR] {e}")
+                open_symbols = []
             
             for coin in candidates[:5]:
                 now = time.time()
@@ -80,6 +82,10 @@ def run_crypto_engine():
                     break
 
                 symbol = coin['symbol']
+                # Standardize symbol for comparison
+                clean_sym = f"{symbol.replace('USDT', '')}/USDT:USDT" if "USDT" in symbol and ":" not in symbol else symbol
+                if clean_sym.upper() in open_symbols:
+                    continue
                 
                 # 1. CIRCUIT BREAKER CHECK (Global Risk Manager)
                 # If we lost too much today, stop trading.
