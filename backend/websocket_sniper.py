@@ -31,6 +31,15 @@ class BitgetPrivateWS:
         mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
         return base64.b64encode(mac.digest()).decode('utf8')
 
+    async def heartbeat(self, ws):
+        """Send 'ping' every 20s to keep private connection alive"""
+        while self.is_running:
+            try:
+                await ws.send("ping")
+                await asyncio.sleep(20)
+            except:
+                break
+
     async def login(self, ws):
         ts = int(time.time() * 1000)
         login_msg = {
@@ -46,12 +55,12 @@ class BitgetPrivateWS:
         print("🔐 [PRIVATE WS] Login request sent...")
 
     async def subscribe(self, ws):
-        # Subscribe to Order & Account updates (UTA mode)
+        # Subscribe to Order & Account updates (USDT-FUTURES mode)
         subs = {
             "op": "subscribe",
             "args": [
-                {"instType": "UTA", "topic": "order"},
-                {"instType": "UTA", "topic": "account"}
+                {"instType": "USDT-FUTURES", "channel": "order", "instId": "default"},
+                {"instType": "USDT-FUTURES", "channel": "account", "instId": "default"}
             ]
         }
         await ws.send(json.dumps(subs))
@@ -61,10 +70,13 @@ class BitgetPrivateWS:
         while self.is_running:
             try:
                 async with websockets.connect(self.url) as ws:
-                    # 1. Login
+                    # 1. Start heartbeat
+                    asyncio.create_task(self.heartbeat(ws))
+                    
+                    # 2. Login
                     await self.login(ws)
                     
-                    # 2. Wait for login success
+                    # 3. Wait for login success
                     resp = await ws.recv()
                     print(f"🔓 [PRIVATE WS] Login Response: {resp}")
                     
@@ -78,9 +90,9 @@ class BitgetPrivateWS:
                         
                         data = json.loads(msg)
                         action = data.get("action")
-                        topic = data.get("arg", {}).get("topic")
+                        channel = data.get("arg", {}).get("channel")
                         
-                        if topic == "order" and "data" in data:
+                        if channel == "order" and "data" in data:
                             for order in data["data"]:
                                 status = order.get("orderStatus")
                                 symbol = order.get("symbol")
@@ -91,7 +103,7 @@ class BitgetPrivateWS:
                                     print(f"🔄 [STATE SYNC] Menjalankan sinkronisasi memori otomatis...")
                                     self.executor.sync_state_with_exchange()
                                     
-                        elif topic == "account":
+                        elif channel == "account":
                             print("💰 [PRIVATE WS] Update Saldo: Terdeteksi perubahan margin di bursa. Bot tetap sinkron.")
 
             except Exception as e:
