@@ -82,10 +82,16 @@ def get_open_interest(symbol):
         pass
     
     if oi > 0:
-        if oi > 1e9:
-            print(f"🎯 [SENSORS] Open Interest {symbol}: ${round(oi/1e9, 2)}B")
-        else:
+        # Bitget V3 Open Interest can be in USD or Contracts. 
+        # If it's very large, it might be raw USD. If small, it might be contracts.
+        # But typically Bitget returns USD value in 'openInterest'.
+        # We will assume it's in USD but format it properly.
+        if oi > 1e6:
             print(f"🎯 [SENSORS] Open Interest {symbol}: ${round(oi/1e6, 2)}M")
+        elif oi > 1e3:
+            print(f"🎯 [SENSORS] Open Interest {symbol}: ${round(oi/1e3, 2)}K")
+        else:
+            print(f"🎯 [SENSORS] Open Interest {symbol}: ${round(oi, 2)}")
     return oi
 
 def fetch_all_tickers():

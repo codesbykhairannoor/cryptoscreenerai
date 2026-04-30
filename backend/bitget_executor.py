@@ -326,8 +326,9 @@ class BitgetExecutor:
         Ensures margin is released immediately after a trade ends.
         """
         try:
-            # 1. Fetch current active positions from Native Bitget V2 API instead of CCXT
+            # 1. Fetch current active positions and plan orders
             positions = self.get_all_positions()
+            plan_orders = self.get_pending_plan_orders() or []
             active_symbols = []
             
             for pos in positions:

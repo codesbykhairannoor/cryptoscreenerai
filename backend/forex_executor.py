@@ -161,13 +161,16 @@ class ForexExecutor:
                             current_price = float(p.get('currentPrice', 0))
                             current_sl = float(p.get('stopLoss', 0) or 0)
                             
-                            # For Gold, trailing 1.5 distance when profit is at least 1.5 distance
-                            if pos_type == 'POSITION_TYPE_BUY' and current_price - open_price > 1.5:
-                                new_sl = current_price - 1.0
+                            # For Gold, trailing based on spread and volatility
+                            spread_pts = spread / 100 # Assuming spread is in points (e.g. 200 = $2.00)
+                            safety_buffer = max(1.5, spread_pts * 1.5)
+                            
+                            if pos_type == 'POSITION_TYPE_BUY' and current_price - open_price > safety_buffer:
+                                new_sl = current_price - (safety_buffer * 0.7)
                                 if new_sl > current_sl:
                                     self.update_forex_sl(pos_id, new_sl)
-                            elif pos_type == 'POSITION_TYPE_SELL' and open_price - current_price > 1.5:
-                                new_sl = current_price + 1.0
+                            elif pos_type == 'POSITION_TYPE_SELL' and open_price - current_price > safety_buffer:
+                                new_sl = current_price + (safety_buffer * 0.7)
                                 if current_sl == 0 or new_sl < current_sl:
                                     self.update_forex_sl(pos_id, new_sl)
                 except Exception as e:
