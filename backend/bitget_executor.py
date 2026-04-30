@@ -455,6 +455,8 @@ class BitgetExecutor:
                         if update_sl:
                             print(f"🏃 [TRAILING] Moving {symbol} SL to {round(best_sl, 4)} (PNL: {round(pnl, 2)}%)")
                             self.update_sl_price(symbol, side, size, best_sl)
+                except Exception as e_pos:
+                    print(f"⚠️ [MONITOR ERROR] Error processing {symbol if 'symbol' in locals() else 'unknown'}: {e_pos}")
 
             # 2. ORPHANED ORDER CLEANUP (Database Sync)
             from database import get_connection
