@@ -166,37 +166,43 @@ def get_order_book_details(symbol):
             "ask_wall_usdt": float(top_ask[0]) * float(top_ask[1])
         }
     except:
-        return {"ratio": 1.0, "bid_wall_price": 0, "bid_wall_usdt": 0, "ask_wall_price": 0, "ask_wall_usdt": 0}
-
-def get_technical_indicators(symbol, interval="15m", period=14):
+        return {"ratio": 1.0, "bid_wall_price": 0, "bid_wall_usdt": 0, "ask_wall_price": 0, "adef get_technical_indicators(symbol, interval="15m", period=14):
     try:
+        # Standardize symbol for Bitget
+        clean_symbol = symbol.replace("/", "").split(":")[0]
+        
         # Determine Higher Timeframe (HTF) for confirmation
-        htf_map = {"15m": "1h", "1h": "4h", "4h": "1d", "1d": "1w"}
-        htf = htf_map.get(interval, "1h")
-        
-        # Fetch Current Interval data
-        url_cur = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit=200"
-        res_cur = requests.get(url_cur)
-        data_cur = res_cur.json()
-        if not isinstance(data_cur, list) or len(data_cur) < period: return {}
+        htf_map = {"15m": "1H", "1h": "4H", "4h": "12H", "1d": "1D"}
+        htf = htf_map.get(interval, "1H")
+        bg_interval = interval if interval != '1h' else '1H'
 
-        df_cur = pd.DataFrame(data_cur, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
-        for col in ['open', 'high', 'low', 'close', 'vol']:
-            df_cur[col] = pd.to_numeric(df_cur[col], errors='coerce').astype(float)
+        # 1. Fetch Current Interval from BITGET
+        url_cur = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={bg_interval}&limit=200&productType=USDT-FUTURES"
+        res_cur = requests.get(url_cur, timeout=5)
+        data_cur = res_cur.json()
+        if not data_cur or 'data' not in data_cur: return {}
         
-        # Fetch HTF data for MTF Trend
-        url_htf = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={htf}&limit=200"
-        res_htf = requests.get(url_htf)
+        # Bitget Format: [ts, open, high, low, close, vol, qvol]
+        df_cur = pd.DataFrame(data_cur['data'], columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'quoteVol'])
+        for col in ['open', 'high', 'low', 'close', 'vol']:
+            df_cur[col] = df_cur[col].astype(float)
+        df_cur = df_cur.sort_values('ts').reset_index(drop=True)
+
+        # 2. Fetch HTF from BITGET
+        url_htf = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={htf}&limit=200&productType=USDT-FUTURES"
+        res_htf = requests.get(url_htf, timeout=5)
         data_htf = res_htf.json()
-        if not isinstance(data_htf, list): 
+        if not data_htf or 'data' not in data_htf:
             df_htf = df_cur.copy()
         else:
-            df_htf = pd.DataFrame(data_htf, columns=['time', 'open', 'high', 'low', 'close', 'vol', 'close_time', 'q_vol', 'trades', 'taker_base', 'taker_quote', 'ignore'])
+            df_htf = pd.DataFrame(data_htf['data'], columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'quoteVol'])
             for col in ['open', 'high', 'low', 'close', 'vol']:
-                df_htf[col] = pd.to_numeric(df_htf[col], errors='coerce').astype(float)
+                df_htf[col] = df_htf[col].astype(float)
+            df_htf = df_htf.sort_values('ts').reset_index(drop=True)
         
         closes_cur = df_cur['close']
         closes_htf = df_htf['close']
+        mark_price = float(df_cur['close'].iloc[-1])
         
         # RSI Current
         delta = closes_cur.diff()
@@ -207,12 +213,13 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         rs = avg_gain / avg_loss
         rsi_cur = 100 - (100 / (1 + rs.replace(0, np.nan))).fillna(100)
         
-        # ATR Current (Robust calc to avoid ufunc error)
+        # ATR Current
         high_low = (df_cur['high'].values - df_cur['low'].values)
         high_close = np.abs(df_cur['high'].values - df_cur['close'].shift().values)
         low_close = np.abs(df_cur['low'].values - df_cur['close'].shift().values)
         true_range = np.nanmax([high_low, high_close, low_close], axis=0)
         atr_cur = pd.Series(true_range).rolling(period).mean()
+ing(period).mean()
 
 
         # 1. VWAP CALCULATION (Institutional Benchmark)
@@ -269,6 +276,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         funding = get_funding_rate(symbol)
         
         return {
+            "mark_price": mark_price,
             "rsi": round(rsi_cur.iloc[-1], 2) if not rsi_cur.empty else 50,
             "atr": round(atr_cur.iloc[-1], 4) if not atr_cur.empty else 0,
             "vwap": last_vwap,

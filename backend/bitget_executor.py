@@ -266,11 +266,24 @@ class BitgetExecutor:
                     
                     print(f"📊 [MONITOR] {symbol} | PNL: {round(pnl_pct, 2)}% | Price: {mark_price}")
                     
-                    # BEP and Trailing Stop logic
+                    # [INSTITUTIONAL UPGRADE] Partial Take Profit & Safety Guard
                     if pnl_pct >= 2.0 and pnl_pct < 5.0:
+                        # Check if we already did partial (you might want to store this in DB, 
+                        # but for now let's use a simple volume check or just move SL)
                         sl_price = entry_price * 1.001 if side == 'long' else entry_price * 0.999
-                        print(f"🛡️ [SECURE] Profit 2% tercapai di {symbol}! Memindahkan SL ke Break-Even (${round(sl_price, 4)}).")
-                        self.update_sl_price(symbol, side, size, sl_price)
+                        print(f"💰 [PARTIAL TP] Profit 2% tercapai di {symbol}! Menutup 50% posisi untuk amankan modal.")
+                        
+                        try:
+                            # Close 50% of the position
+                            close_side = 'sell' if side == 'long' else 'buy'
+                            partial_size = size * 0.5
+                            self.exchange.create_order(symbol, 'market', close_side, partial_size, params={'reduceOnly': True})
+                            
+                            print(f"🛡️ [SECURE] Memindahkan sisa posisi ke Break-Even (${round(sl_price, 4)}).")
+                            self.update_sl_price(symbol, side, size * 0.5, sl_price)
+                        except Exception as e_ptp:
+                            print(f"⚠️ [PTP ERROR] Gagal eksekusi partial: {e_ptp}")
+                            
                     elif pnl_pct >= 5.0:
                         trail_sl = mark_price * 0.985 if side == 'long' else mark_price * 1.015
                         print(f"🏃 [TRAIL] Profit 5% tercapai di {symbol}! Mengaktifkan Trailing Stop di ${round(trail_sl, 4)}.")

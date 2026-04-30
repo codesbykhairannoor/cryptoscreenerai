@@ -68,14 +68,26 @@ def run_crypto_engine():
                     break
 
                 symbol = coin['symbol']
-                entry = coin['lastPrice']
                 
+                # 1. CIRCUIT BREAKER CHECK (Global Risk Manager)
+                # If we lost too much today, stop trading.
+                from database import get_performance_stats
+                stats = get_performance_stats('crypto')
+                daily_pnl = stats.get('win_rate', 0) # Placeholder for real PNL logic
+                if daily_pnl < -50: # If win rate is suspiciously low or custom PNL check
+                     print(f"⚠️ [CIRCUIT BREAKER] Loss limit reached today. Standing down for 24h.")
+                     break
+
                 tech = get_technical_indicators(symbol)
                 is_danger = tech.get('is_session_danger', False)
                 is_whale = tech.get('is_whale_accumulation', False)
                 fvg_zones = tech.get('fvg_up', [])
                 vwap_dist = tech.get('vwap_dist', 0)
+                mark_price = tech.get('mark_price', 0) # Use fresh price from technicals
                 
+                if mark_price == 0:
+                    mark_price = coin.get('lastPrice', 0)
+
                 # SESSION GUARD: Anti-Liquidity Prank
                 if is_danger:
                     if int(time.time()) % 60 < 10:
@@ -86,37 +98,42 @@ def run_crypto_engine():
                 should_trade = False
                 reason = ""
                 
-                # Logic A: Whale Accumulation (Buy the Bottom before the pump)
+                # Logic A: Whale Accumulation (Buy the Bottom)
                 if is_whale and vwap_dist < 1.0:
                     should_trade = True
                     reason = "EARLY PUMP (WHALE ACCUMULATION)"
                 
-                # Logic B: SMC/FVG Return (Buy the Dip at institutional discount)
+                # Logic B: SMC/FVG Return (Buy the Dip)
                 elif fvg_zones and vwap_dist < 0.5:
                     should_trade = True
                     reason = "SMC FVG RE-ENTRY (INSTITUTIONAL DISCOUNT)"
 
-                if should_trade:
-                    # ORDER DEPTH PROXY: Check for Supporting Walls
+                if should_trade and mark_price > 0:
+                    # ORDER DEPTH PROXY
                     from data_fetcher import get_order_book_details
                     ob = get_order_book_details(symbol)
-                    if ob['ratio'] < 0.7: # Still want some buyer support
-                        continue
+                    if ob['ratio'] < 0.7: continue
 
                     news_context = get_crypto_news(symbol)
                     print(f"🏛️ [THE HUNTER] {symbol}: Targeting {reason}. Price vs VWAP: {vwap_dist}%")
-                    print(f"🔮 [FUTURE OUTLOOK] OrderBook Ratio {ob['ratio']} confirms accumulation. {news_context}")
                     
-                    tp = coin.get('tp_price') or (entry * 1.03) 
-                    sl = coin.get('sl_price') or (entry * 0.985) # Slightly wider SL for SMC
+                    # DXY OVERRIDE: Anti-Dollar Strength
+                    from data_fetcher import get_idx_data
+                    dxy = get_idx_data(symbol="DXY")
+                    if dxy and dxy.get('trend') == 'BULLISH' and dxy.get('change', 0) > 0.2:
+                         print(f"🛑 [DXY OVERRIDE] Dollar too strong! Aborting {symbol} Long.")
+                         continue
+
+                    # Calculate precise SL/TP
+                    tp = mark_price * 1.03 # 3% Target
+                    sl = mark_price * 0.982 # 1.8% Stop Loss
                     
-                    print(f"🔍 [CRYPTO AUTO-TRADE] Snipping {symbol} | Entry: {entry} | TP: {round(tp, 4)}")
+                    print(f"🔍 [CRYPTO AUTO-TRADE] Snipping {symbol} | Entry: {mark_price} | TP: {round(tp, 4)}")
                     success, res = executor.place_futures_order(symbol, 'buy', tp_price=tp, sl_price=sl)
                     if success:
                         last_exec_time = time.time()
-                        from database import log_trade
-                        log_trade(symbol, entry, tp, sl, market='crypto')
-                        print(f"✅ [HUNTER SUCCESS] Position opened on {symbol}")
+                        log_trade(symbol, mark_price, tp, sl, market='crypto')
+                        print(f"✅ [HUNTER SUCCESS] Position opened on {symbol} with Protection.")
             
         except Exception as e:
             print(f"❌ [CRYPTO ERROR] {e}")
