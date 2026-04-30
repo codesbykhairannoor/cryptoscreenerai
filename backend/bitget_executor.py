@@ -153,30 +153,26 @@ class BitgetExecutor:
             params = {'productType': 'usdt-futures'}
             all_orders += self.exchange.fetch_open_orders(symbol, params=params)
             
-            # 2. Plan/Trigger Orders via Direct V2 Mix API (Essential for SL/TP detection)
+            # 2. Plan/Trigger Orders via Direct V2 Mix API
             try:
-                # Bitget V2 Mix Plan Endpoint: /api/v2/mix/order/orders-plan-pending
-                instId = symbol.replace('/', '').replace(':USDT', '') if symbol else None
                 plan_params = {'productType': 'usdt-futures'}
-                if instId: plan_params['symbol'] = instId
+                if symbol:
+                    # Robust symbol conversion for Mix (e.g. BTC/USDT:USDT -> BTCUSDT)
+                    instId = symbol.replace('/', '').split(':')[0].replace('USDT', '') + 'USDT'
+                    plan_params['symbol'] = instId
                 
                 plan_data = self.exchange.private_get_mix_order_orders_plan_pending(plan_params)
                 if plan_data.get('code') == '00000':
                     raw_plans = plan_data.get('data', [])
                     for p in raw_plans:
-                        # Map to a simplified format for detection
                         all_orders.append({
                             'info': p,
-                            'type': 'stop', # Tag it as stop for detection
-                            'symbol': symbol or p.get('symbol')
+                            'type': 'stop',
+                            'symbol': p.get('symbol', symbol)
                         })
-            except Exception as e_plan:
-                # print(f"[PLAN FETCH DEBUG] {e_plan}")
-                pass
-            
+            except: pass
             return all_orders
-        except Exception as e:
-            return []
+        except: return []
 
     def place_order(self, symbol, side, amount, leverage=10, tp=None, sl=None):
         """Order Placement for Classic accounts (V2 Mix)"""
@@ -231,30 +227,40 @@ class BitgetExecutor:
         return self.sync_memory()
 
     def manage_open_positions(self):
+        """PINTER: Intelligent Position & Risk Monitoring for Classic"""
         try:
             positions = self.get_all_positions()
+            if not positions: return
+            
+            # Fetch all plan orders once to minimize API calls
+            all_plans = self.get_pending_plan_orders()
+            
             for pos in positions:
                 symbol = pos['symbol']
                 side = pos['side']
                 size = pos['size']
                 entry = pos['entry']
                 
-                # Verify SL/TP (PINTER: Check raw info for plan types)
-                plans = self.get_pending_plan_orders(symbol)
-                
-                # Check for existing SL/TP in both CCXT format and Raw Info
+                # Check for existing SL/TP (PINTER: Matching normalized symbols)
+                clean_target = self._clean_symbol(symbol)
                 has_sl = False
-                for o in plans:
-                    info = str(o.get('info', {})).lower()
-                    otype = str(o.get('type', '')).lower()
-                    # Look for 'stop', 'loss', 'profit', or 'plan'
-                    if 'stop' in otype or 'plan' in info or 'loss' in info or 'profit' in info:
-                        has_sl = True
-                        break
+                
+                for o in all_plans:
+                    plan_sym = self._clean_symbol(o.get('symbol', ''))
+                    if plan_sym == clean_target:
+                        info = str(o.get('info', {})).lower()
+                        otype = str(o.get('type', '')).lower()
+                        # Detect SL/TP markers in Bitget Mix V2
+                        if 'stop' in otype or 'plan' in info or 'profit_loss' in info or 'trigger' in info:
+                            has_sl = True
+                            break
                 
                 if not has_sl and entry > 0:
                     sl = entry * 0.95 if side.lower() in ['long', 'buy'] else entry * 1.05
-                    # Avoid spamming if price is too close
+                    # Diagnostic: Only print if we are actually going to set it
+                    # print(f"[RISK DEBUG] {symbol} has no detected SL. Setting now...")
                     self.update_sl_price(symbol, side, size, sl)
+                    
         except Exception as e:
-            print(f"[MANAGE POS ERROR] {e}")
+            if "timeout" not in str(e).lower():
+                print(f"[MANAGE POS ERROR] {e}")
