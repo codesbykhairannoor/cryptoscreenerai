@@ -235,9 +235,13 @@ class BitgetExecutor:
     def manage_open_positions(self):
         """Institutional Monitoring: Progressive Trailing & SL Guard"""
         try:
+            # Persistent caches to prevent log spamming
             if not hasattr(self, '_last_sl_check'): self._last_sl_check = {}
+            if not hasattr(self, '_last_sl_set'): self._last_sl_set = {}
             
             positions = self.get_all_positions()
+            now = time.time()
+            
             for pos in positions:
                 symbol = pos['symbol']
                 side = pos['side']
@@ -245,25 +249,26 @@ class BitgetExecutor:
                 entry = pos['entry']
                 pnl = pos['pnl']
                 
-                now = time.time()
-                if now - self._last_sl_check.get(symbol, 0) < 20: continue
+                # Rate limit checks to prevent spam
+                if now - self._last_sl_check.get(symbol, 0) < 15: continue
+                self._last_sl_check[symbol] = now
                 
-                # 1. Fetch Plans and log for visibility
+                # 1. Fetch Plans
                 plans = self.get_pending_plan_orders(symbol)
                 has_sl = False
                 existing_sl_price = 0
                 
                 for o in plans:
                     info = o.get('info', {})
-                    # Standard CCXT detection + Raw Bitget detection
-                    if 'stop' in str(o.get('type', '')).lower() or 'triggerPrice' in info or 'executePrice' in info:
+                    # Bitget Classic V2 Plan Order Detection
+                    if 'triggerPrice' in info or 'executePrice' in info or 'stopPrice' in o:
                         has_sl = True
                         existing_sl_price = float(info.get('triggerPrice') or info.get('executePrice') or o.get('stopPrice') or 0)
                         break
                 
                 # Diagnostic Log
-                if int(time.time()) % 40 < 10:
-                    print(f"💎 [MONITOR] {symbol} | PNL: {pnl}% | SL: {'SET ('+str(existing_sl_price)+')' if has_sl else 'MISSING'}")
+                if int(now) % 30 < 5:
+                    print(f"💎 [REAL-TIME MONITOR] {symbol} | PNL: {pnl}% | SL: {'SET ('+str(existing_sl_price)+')' if has_sl else 'NOT DETECTED'}")
 
                 # 2. PROGRESSIVE TRAILING LOGIC (PINTER)
                 new_sl = 0
@@ -277,17 +282,21 @@ class BitgetExecutor:
                                 (side in ['short', 'sell'] and (new_sl < existing_sl_price or existing_sl_price == 0))
                     
                     if is_better:
-                        print(f"🔥 [PINTER TRAIL] {symbol} {pnl}% PNL! Moving SL to {new_sl}")
-                        self.update_sl_price(symbol, side, size, new_sl)
-                        self._last_sl_check[symbol] = now
+                        # Avoid updating too frequently (every 2 mins for trailing)
+                        if now - self._last_sl_set.get(symbol + "_trail", 0) > 120:
+                            print(f"🔥 [PINTER TRAIL] {symbol} {pnl}% PNL! Moving SL to {new_sl}")
+                            self.update_sl_price(symbol, side, size, new_sl)
+                            self._last_sl_set[symbol + "_trail"] = now
                         continue
 
                 # 3. NO SL GUARD: Initial SL placement
                 if not has_sl and entry > 0:
-                    sl_price = entry * 0.95 if side in ['long', 'buy'] else entry * 1.05
-                    self.update_sl_price(symbol, side, size, sl_price)
-                
-                self._last_sl_check[symbol] = now
+                    # Safety: Don't set SL again if we just set it in the last 5 minutes (waiting for exchange sync)
+                    if now - self._last_sl_set.get(symbol + "_init", 0) > 300:
+                        sl_price = entry * 0.95 if side in ['long', 'buy'] else entry * 1.05
+                        print(f"🛡️ [GUARD] Setting Initial SL for {symbol} at {sl_price}")
+                        self.update_sl_price(symbol, side, size, sl_price)
+                        self._last_sl_set[symbol + "_init"] = now
                     
         except Exception as e:
             pass
