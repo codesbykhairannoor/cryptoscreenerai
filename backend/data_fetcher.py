@@ -179,18 +179,25 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         bg_interval = interval if interval != '1h' else '1H'
 
         # 1. Fetch Current Interval from BITGET (Hybrid V3 with V2 Fallback)
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         try:
             url_v3 = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={bg_interval}&limit=200&category=USDT-FUTURES"
-            res = requests.get(url_v3, timeout=5)
+            res = requests.get(url_v3, headers=headers, timeout=5)
             data_cur = res.json()
             if not data_cur or 'data' not in data_cur or not data_cur['data']:
+                print(f"⚠️ [V3 DEBUG] {clean_symbol} Data Missing. Response: {res.text[:100]}")
                 raise ValueError("V3 Empty")
-        except:
+        except Exception as e:
             # Fallback to V2 Mix API (Very Stable)
-            v2_gran = interval if interval != '1h' else '1H'
-            url_v2 = f"https://api.bitget.com/api/v2/mix/market/candles?symbol={clean_symbol}_UMCBL&granularity={v2_gran}&limit=200&productType=usdt-futures"
-            res = requests.get(url_v2, timeout=5)
-            data_cur = res.json()
+            try:
+                v2_gran = interval if interval != '1h' else '1H'
+                url_v2 = f"https://api.bitget.com/api/v2/mix/market/candles?symbol={clean_symbol}_UMCBL&granularity={v2_gran}&limit=200&productType=usdt-futures"
+                res = requests.get(url_v2, headers=headers, timeout=5)
+                data_cur = res.json()
+                if not data_cur or 'data' not in data_cur or not data_cur['data']:
+                    print(f"⚠️ [V2 DEBUG] {clean_symbol} Data Missing. Response: {res.text[:100]}")
+            except Exception as e2:
+                print(f"❌ [API ERROR] V2/V3 failed for {clean_symbol}: {e2}")
 
         if not data_cur or 'data' not in data_cur or not data_cur['data']:
             print(f"⏳ [DATA] Sinkronisasi {clean_symbol} gagal di semua jalur...")
@@ -203,14 +210,17 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         # 2. Fetch HTF from BITGET (Hybrid)
         try:
             url_htf_v3 = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={htf}&limit=200&category=USDT-FUTURES"
-            res_h = requests.get(url_htf_v3, timeout=5)
+            res_h = requests.get(url_htf_v3, headers=headers, timeout=5)
             data_htf = res_h.json()
             if not data_htf or 'data' not in data_htf or not data_htf['data']:
-                raise ValueError("V3 Empty")
+                raise ValueError("V3 Empty HTF")
         except:
-            url_htf_v2 = f"https://api.bitget.com/api/v2/mix/market/candles?symbol={clean_symbol}_UMCBL&granularity={htf}&limit=200&productType=usdt-futures"
-            res_h = requests.get(url_htf_v2, timeout=5)
-            data_htf = res_h.json()
+            try:
+                url_htf_v2 = f"https://api.bitget.com/api/v2/mix/market/candles?symbol={clean_symbol}_UMCBL&granularity={htf}&limit=200&productType=usdt-futures"
+                res_h = requests.get(url_htf_v2, headers=headers, timeout=5)
+                data_htf = res_h.json()
+            except:
+                data_htf = {}
 
         if not data_htf or 'data' not in data_htf or not data_htf['data']:
             df_htf = df_cur.copy()
