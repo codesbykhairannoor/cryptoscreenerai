@@ -124,25 +124,34 @@ class BitgetExecutor:
             return 0
 
     def get_all_positions(self):
-        """Position Fetcher for Classic accounts (V2 Mix)"""
+        """Position Fetcher with Real-time PNL Calculation"""
         all_pos = []
         try:
-            # For Classic, we strictly use V2 Mix Position endpoint via CCXT
-            ccxt_pos = self.exchange.fetch_positions(params={'productType': 'USDT-FUTURES'})
+            ccxt_pos = self.exchange.fetch_positions(params={'productType': 'usdt-futures'})
             for p in ccxt_pos:
                 sz = float(p.get('contracts', 0) or 0)
                 if sz > 0:
+                    entry = float(p.get('entryPrice', 0))
+                    mark = float(p.get('markPrice', 0))
+                    side = p['side'].lower()
+                    
+                    # Manual PNL calculation for precision
+                    pnl_pct = 0
+                    if entry > 0:
+                        diff = (mark - entry) if side in ['long', 'buy'] else (entry - mark)
+                        pnl_pct = (diff / entry) * float(p.get('leverage', 10)) * 100
+                    
                     all_pos.append({
                         'symbol': p['symbol'],
-                        'side': p['side'],
+                        'side': side,
                         'size': sz,
-                        'entry': float(p.get('entryPrice', 0)),
-                        'mark_price': float(p.get('markPrice', 0)),
-                        'pnl': float(p.get('percentage', 0) or 0)
+                        'entry': entry,
+                        'mark_price': mark,
+                        'pnl': round(pnl_pct, 2)
                     })
             return all_pos
         except Exception as e:
-            print(f"[CLASSIC POS ERROR] {e}")
+            # print(f"[CLASSIC POS ERROR] {e}")
             return []
 
     def get_pending_plan_orders(self, symbol=None):
@@ -224,9 +233,8 @@ class BitgetExecutor:
         return self.sync_memory()
 
     def manage_open_positions(self):
-        """Intelligent Monitoring: SL/TP Verification + Trail to Entry"""
+        """Institutional Monitoring: Progressive Trailing & SL Guard"""
         try:
-            # Persistent cooldown to prevent log spamming
             if not hasattr(self, '_last_sl_check'): self._last_sl_check = {}
             
             positions = self.get_all_positions()
@@ -235,42 +243,51 @@ class BitgetExecutor:
                 side = pos['side']
                 size = pos['size']
                 entry = pos['entry']
-                pnl = float(pos.get('pnl', 0))
+                pnl = pos['pnl']
                 
                 now = time.time()
-                last_check = self._last_sl_check.get(symbol, 0)
-                if now - last_check < 30: # Only check every 30s per symbol
-                    continue
+                if now - self._last_sl_check.get(symbol, 0) < 20: continue
                 
-                # 1. Check for existing SL/TP
+                # 1. Fetch Plans and log for visibility
                 plans = self.get_pending_plan_orders(symbol)
                 has_sl = False
                 existing_sl_price = 0
                 
                 for o in plans:
                     info = o.get('info', {})
-                    # Bitget V2 Mix Plan Order detection
-                    if str(info).lower().find('stop') != -1 or str(info).lower().find('plan') != -1 or 'triggerPrice' in info:
+                    # Standard CCXT detection + Raw Bitget detection
+                    if 'stop' in str(o.get('type', '')).lower() or 'triggerPrice' in info or 'executePrice' in info:
                         has_sl = True
-                        existing_sl_price = float(info.get('triggerPrice') or info.get('executePrice') or 0)
+                        existing_sl_price = float(info.get('triggerPrice') or info.get('executePrice') or o.get('stopPrice') or 0)
                         break
                 
-                # 2. TRAIL TO ENTRY LOGIC (PINTER)
-                if pnl >= 20.0 and entry > 0:
-                    if (side.lower() in ['long', 'buy'] and existing_sl_price < entry) or \
-                       (side.lower() in ['short', 'sell'] and (existing_sl_price > entry or existing_sl_price == 0)):
-                        print(f"📈 [TRAIL TO ENTRY] {symbol} Profit {round(pnl,1)}%! Moving SL to Entry: {entry}")
-                        self.update_sl_price(symbol, side, size, entry)
-                        self._last_sl_check[symbol] = now
-                        continue 
+                # Diagnostic Log
+                if int(time.time()) % 40 < 10:
+                    print(f"💎 [MONITOR] {symbol} | PNL: {pnl}% | SL: {'SET ('+str(existing_sl_price)+')' if has_sl else 'MISSING'}")
 
-                # 3. NO SL GUARD: If absolutely no SL exists, set default
+                # 2. PROGRESSIVE TRAILING LOGIC (PINTER)
+                new_sl = 0
+                if pnl >= 60.0: new_sl = entry * 1.25 if side in ['long', 'buy'] else entry * 0.75
+                elif pnl >= 40.0: new_sl = entry * 1.10 if side in ['long', 'buy'] else entry * 0.90
+                elif pnl >= 20.0: new_sl = entry # Move to Breakeven
+                
+                if new_sl > 0:
+                    # Update only if better than existing
+                    is_better = (side in ['long', 'buy'] and new_sl > existing_sl_price) or \
+                                (side in ['short', 'sell'] and (new_sl < existing_sl_price or existing_sl_price == 0))
+                    
+                    if is_better:
+                        print(f"🔥 [PINTER TRAIL] {symbol} {pnl}% PNL! Moving SL to {new_sl}")
+                        self.update_sl_price(symbol, side, size, new_sl)
+                        self._last_sl_check[symbol] = now
+                        continue
+
+                # 3. NO SL GUARD: Initial SL placement
                 if not has_sl and entry > 0:
-                    sl = entry * 0.95 if side.lower() in ['long', 'buy'] else entry * 1.05
-                    self.update_sl_price(symbol, side, size, sl)
+                    sl_price = entry * 0.95 if side in ['long', 'buy'] else entry * 1.05
+                    self.update_sl_price(symbol, side, size, sl_price)
                 
                 self._last_sl_check[symbol] = now
                     
         except Exception as e:
-            # print(f"[MANAGE POS ERROR] {e}")
             pass
