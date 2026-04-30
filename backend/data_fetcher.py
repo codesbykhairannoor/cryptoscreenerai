@@ -169,6 +169,7 @@ def get_order_book_details(symbol):
         return {"ratio": 1.0, "bid_wall_price": 0, "bid_wall_usdt": 0, "ask_wall_price": 0, "ask_wall_usdt": 0}
 
 def get_technical_indicators(symbol, interval="15m", period=14):
+    try:
         # Standardize symbol for Bitget
         clean_symbol = symbol.replace("/", "").split(":")[0]
         
