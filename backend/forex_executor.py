@@ -177,7 +177,7 @@ class ForexExecutor:
                     dxy_trend = dxy_data.get('trend', 'NEUTRAL')
                     gold_inst_flow = fx_data.get('inst_flow', "NORMAL")
                     rsi = fx_data.get('rsi', 50)
-                    spread = fx_data.get('sprea                    # 1. SESSION AWARENESS (Anti-Liquidity Prank)
+                    spread = fx_data.get('spread', 0)
                     is_danger = fx_data.get('is_session_danger', False)
                     if is_danger:
                         if int(time.time()) % 60 < 10:

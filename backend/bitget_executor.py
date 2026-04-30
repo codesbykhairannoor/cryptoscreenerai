@@ -164,43 +164,67 @@ class BitgetExecutor:
 
     def manage_open_positions(self):
         """
-        SUPER SMART PROTECTION: BEP and Trailing Stop Logic.
-        Moves SL to lock in profit as the market moves in our favor.
+        [AUTO-CLEANUP ENGINE] - BEP, Trailing, and Orphaned Order Purge.
+        Ensures margin is released immediately after a trade ends.
         """
         try:
+            # 1. Fetch current active positions from Bitget
             positions = self.exchange.fetch_positions(params={'productType': 'usdt-futures'})
+            active_symbols = []
             for pos in positions:
                 size = float(pos.get('contracts', 0))
-                if size == 0: continue
-                
-                symbol = pos['symbol']
-                entry_price = float(pos['entryPrice'])
-                mark_price = float(pos['markPrice'])
-                side = pos['side'] # 'long' or 'short'
-                
-                # Calculate Profit %
-                pnl_pct = 0
-                if side == 'long':
-                    pnl_pct = (mark_price - entry_price) / entry_price * 100
-                else:
-                    pnl_pct = (entry_price - mark_price) / entry_price * 100
-                
-                # MONITOR LOG: Show user the current state
-                print(f"📊 [MONITOR] {symbol} | Side: {side.upper()} | PNL: {round(pnl_pct, 2)}% | Price: {mark_price}")
-                
-                # 1. BREAK-EVEN PROTECTION (At 2% profit)
-                # If we are up 2%, move SL to Entry + tiny buffer
-                if pnl_pct >= 2.0 and pnl_pct < 5.0:
-                    print(f"🛡️ [PROTECT] {symbol} Profit 2% reached. Moving SL to BEP.")
-                    sl_price = entry_price * 1.001 if side == 'long' else entry_price * 0.999
-                    self.update_sl_price(symbol, side, size, sl_price)
+                if size > 0:
+                    active_symbols.append(pos['symbol'])
+                    
+                    symbol = pos['symbol']
+                    entry_price = float(pos['entryPrice'])
+                    mark_price = float(pos['markPrice'])
+                    side = pos['side']
+                    
+                    pnl_pct = 0
+                    if side == 'long':
+                        pnl_pct = (mark_price - entry_price) / entry_price * 100
+                    else:
+                        pnl_pct = (entry_price - mark_price) / entry_price * 100
+                    
+                    print(f"📊 [MONITOR] {symbol} | PNL: {round(pnl_pct, 2)}% | Price: {mark_price}")
+                    
+                    # BEP and Trailing Stop logic
+                    if pnl_pct >= 2.0 and pnl_pct < 5.0:
+                        sl_price = entry_price * 1.001 if side == 'long' else entry_price * 0.999
+                        self.update_sl_price(symbol, side, size, sl_price)
+                    elif pnl_pct >= 5.0:
+                        trail_sl = mark_price * 0.985 if side == 'long' else mark_price * 1.015
+                        self.update_sl_price(symbol, side, size, trail_sl)
 
-                # 2. TRAILING STOP (At 5% profit and above)
-                # Lock in 80% of the gains
-                elif pnl_pct >= 5.0:
-                    print(f"🔥 [TRAIL] {symbol} Profit {round(pnl_pct, 2)}% reached. Trailing SL...")
-                    trail_sl = mark_price * 0.985 if side == 'long' else mark_price * 1.015
-                    self.update_sl_price(symbol, side, size, trail_sl)
+            # 2. ORPHANED ORDER CLEANUP (Database Sync)
+            from database import get_connection
+            conn = None
+            try:
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute("SELECT symbol FROM trades WHERE status IN ('PENDING', 'RUNNING') AND market = 'crypto'")
+                db_trades = cursor.fetchall()
+                
+                for (db_symbol,) in db_trades:
+                    # Check if this DB symbol is still active in Bitget
+                    # Note: db_symbol is like 'LUMIAUSDT', exchange symbol is like 'LUMIA/USDT:USDT'
+                    is_active = any(db_symbol.replace("USDT","") in s for s in active_symbols)
+                    
+                    if not is_active:
+                        print(f"🧹 [CLEANUP] {db_symbol} closed. Purging orphaned orders to release margin...")
+                        try:
+                            clean_sym = f"{db_symbol.replace('USDT','')}/USDT:USDT" if not ":" in db_symbol else db_symbol
+                            self.exchange.cancel_all_orders(clean_sym)
+                            cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE symbol = %s AND market = 'crypto'", (db_symbol,))
+                            conn.commit()
+                        except Exception as e_clean:
+                            print(f"⚠️ [CLEANUP ERROR] {db_symbol}: {e_clean}")
+            except Exception as e_db:
+                print(f"DB Monitor Error: {e_db}")
+            finally:
+                if conn:
+                    conn.close()
                     
         except Exception as e:
             print(f"Position Management Error: {e}")
