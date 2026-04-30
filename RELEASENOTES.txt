@@ -18,3 +18,28 @@ UPGRADE FULL BITGET V3 & CLASSIC COMPATIBILITY
 
 SISTEM SEKARANG MENDUKUNG SELURUH JENIS AKUN BITGET.
 -------------------------------------------------------
+
+[VERSION 2.5.0] - 2026-04-30 (Institutional Upgrade)
+---------------------------
+UPGRADE: REAL-TIME PRIVATE WS & PROGRESSIVE TRAILING
+
+1. INSTITUTIONAL PINTER STRATEGY:
+   - Progressive Trailing SL: Auto-moves SL to Entry (20% PNL), +10% (40% PNL), and +25% (60% PNL).
+   - High-Res PNL Tracking: Real-time manual PNL calculation based on Mark Price vs Entry Price.
+
+2. REAL-TIME UNIFICATION (SHARED STATE):
+   - Private WS Integration: Bot reads data from WebSocket first, reducing REST API latency.
+   - Algo-Stream Recognition: Full support for Bitget V2 'orders-algo' channel (PSL/PTP detection).
+   - Placement Cache: Resolves redundant SL/TP spam by remembering recent API commands.
+
+3. OPERATIONAL DASHBOARD:
+   - Granular Monitoring: Live O/A/B (Order, Algo, Balance) stream health indicators.
+   - Raw Algo Logging: Mode '📡 [ALGO STREAM]' for audit-level transparency.
+   - Enhanced Forex Monitor: Real-time lot sizes, trade counts, and SMC trigger visibility.
+
+4. SMC SNIPER V2 (FOREX):
+   - Liquidity Sweep Detection: Automated entries for Gold (XAUUSD) during institutional sweeps.
+   - Multi-Account Support: High-reliability connection via MetaAPI (MT5 Real).
+
+SISTEM SEKARANG BEROPERASI PADA LEVEL INSTITUSIONAL DENGAN LATENCY MINIMAL.
+-------------------------------------------------------
