@@ -1,25 +1,20 @@
-=== BOT TRADING INSTITUTIONAL RELEASE NOTES ===
-
-[VERSION 2.1.0] - 2026-04-30
+[VERSION 2.2.0] - 2026-04-30 (Hybrid Mode Release)
 ---------------------------
-STABILITAS & OBSERVABILITAS MEGA-UPDATE
+UPGRADE FULL BITGET V3 & CLASSIC COMPATIBILITY
 
-1. PERBAIKAN KRITIKAL (BITGET ENGINE):
-   - Perbaikan Typo 'entrustedList': Memungkinkan bot mendeteksi SL/TP yang sudah ada di Bitget V2.
-   - Dual-PT Scanning: Bot sekarang mengecek posisi di 'USDT-FUTURES' dan 'umcbl' sekaligus. Tidak ada lagi posisi yang "tidak terlihat".
-   - Anti-Double Trade: Logika pengecekan posisi diperkuat untuk mencegah bot membuka trade baru jika koin yang sama sudah running.
-   - Variable Safety: Memperbaiki UnboundLocalError (headers) dan KeyError (entryPrice) yang menyebabkan monitor crash.
+1. BITGET HYBRID ENGINE:
+   - Auto-Detection: Bot mendeteksi mode akun (UTA vs Classic) secara otomatis. Jika dapet error 40084, bot langsung fallback ke endpoint Classic (Mix) tanpa intervensi user.
+   - V3 UTA Support: Full migrasi ke /api/v3/ untuk akun yang sudah upgrade. Mendukung 'Preset SL/TP' saat open posisi.
+   - V3 Signed Body: Memperbaiki sistem enkripsi request untuk mendukung POST body pada API V3.
 
-2. PENINGKATAN FOREX ENGINE (GOLD XAUUSD):
-   - Creative Scalping: Menambahkan logika RSI Extreme (Overbought >75 / Oversold <30). Bot bisa melakukan counter-trend scalp jika harga sudah terlalu jenuh, tanpa menunggu Dollar (DXY).
-   - Indentation & Syntax Fix: Menjamin kelancaran eksekusi tanpa error python.
+2. BUG FIXES & STABILITY:
+   - Restored Methods: Mengembalikan fungsi 'get_max_available' dan 'sync_state_with_exchange' yang sempat hilang.
+   - Logic Sync: Standardisasi pembersihan nama symbol (BTCUSDT -> BTC) untuk akurasi sinkronisasi memori bot dengan bursa.
+   - Timeout Hardening: Menaikkan timeout ke 20 detik untuk menangani koneksi internet yang tidak stabil.
 
-3. OPTIMASI TERMINAL (WINDOWS COMPATIBILITY):
-   - Global Emoji Removal: Menghapus seluruh emoji dari log sistem. Ini mencegah 'UnicodeEncodeError' yang sering membuat bot mati di terminal Windows/Powershell.
-   - Raw Diagnostic Logs: Menambahkan prefix [RAW POS] dan [RAW PLAN] untuk melihat data asli dari bursa saat dibutuhkan.
+3. RISK MANAGEMENT:
+   - V3 Plan Orders: Menggunakan endpoint /api/v3/trade/place-plan-order untuk memasang SL/TP pengaman pada posisi yang sudah running.
+   - Precision Field Mapping: Mapping harga entry menggunakan 'avgPrice' (UTA) dan 'entryPrice' (Classic) secara dinamis.
 
-4. SISTEM TESTING:
-   - Menambahkan file 'backend/scratch/test_bitget.py' untuk melakukan simulasi koneksi dan pengecekan posisi secara mandiri sebelum menjalankan engine utama.
-
-SISTEM SEKARANG BEROPERASI PADA LEVEL STABILITAS TINGGI.
+SISTEM SEKARANG MENDUKUNG SELURUH JENIS AKUN BITGET.
 -------------------------------------------------------
