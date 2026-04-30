@@ -291,10 +291,14 @@ class BitgetExecutor:
                 if int(now) % 10 < 3:
                     sl_status = f"SL: {sl_p}" if has_sl else "SL: MISSING"
                     tp_status = f"TP: {tp_p}" if has_tp else "TP: MISSING"
-                    # Add WS status indicator
+                    
+                    # Granular WS Health Tracking (O=Order, A=Algo, B=Balance)
                     from shared_state import state
-                    ws_active = "🟢 WS" if (time.time() - state.last_update < 60) else "🔴 REST"
-                    print(f"💎 [MONITOR {ws_active}] {symbol} | PNL: {pnl}% | {sl_status} | {tp_status}")
+                    o_h = "🟢O" if (now - state.last_order_update < 60) else "🔴O"
+                    a_h = "🟢A" if (now - state.last_algo_update < 60) else "🔴A"
+                    b_h = "🟢B" if (now - state.last_acc_update < 60) else "🔴B"
+                    
+                    print(f"💎 [MONITOR {o_h}{a_h}{b_h}] {symbol} | PNL: {pnl}% | {sl_status} | {tp_status}")
 
                 # 2. PROGRESSIVE TRAILING LOGIC (PINTER)
                 new_sl = 0

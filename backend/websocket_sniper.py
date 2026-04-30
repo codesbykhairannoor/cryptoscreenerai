@@ -91,42 +91,41 @@ class BitgetPrivateWS:
                         
                         data = json.loads(msg)
                         action = data.get("action")
-                        channel = data.get("arg", {}).get("channel")
+                        arg = data.get("arg", {})
+                        channel = arg.get("channel")
+                        from shared_state import state
                         
                         if channel == "order" and "data" in data:
-                            from shared_state import state
+                            state.last_order_update = time.time()
                             for order in data["data"]:
                                 status = order.get("orderStatus")
                                 symbol = order.get("symbol")
-                                
-                                # Instantly update Shared State
                                 current_orders = state.orders
-                                # Remove if exists and update with new status
                                 current_orders = [o for o in current_orders if o.get('orderId') != order.get('orderId')]
                                 if status not in ['filled', 'canceled']:
                                     current_orders.append(order)
                                 state.update_orders(current_orders)
-                                
                                 if status == "filled":
-                                    print(f"✅ [PRIVATE WS] EKSEKUSI TERDETEKSI: {symbol} berhasil terisi!")
+                                    print(f"✅ [PRIVATE WS] EKSEKUSI: {symbol} filled!")
                                     self.executor.sync_state_with_exchange()
                                     
                         elif channel == "orders-algo" and "data" in data:
-                            from shared_state import state
+                            state.last_algo_update = time.time()
                             for plan in data["data"]:
-                                status = plan.get("state") # V2 uses 'state' for algo
-                                # Instantly update Shared State with Algo Orders
+                                # V2 can use 'state' or 'status'
+                                status = plan.get("state") or plan.get("status")
                                 current_orders = state.orders
                                 current_orders = [o for o in current_orders if o.get('orderId') != plan.get('orderId')]
-                                if status in ['live', 'not_trigger', 'executed']: 
+                                # Active states for Bitget Algo
+                                if status in ['live', 'not_trigger', 'executed', 'partially_executed']: 
                                     current_orders.append(plan)
                                 state.update_orders(current_orders)
+                                # print(f"DEBUG [ALGO]: {plan.get('symbol')} {status}")
                                 
                         elif channel == "account":
-                            from shared_state import state
+                            state.last_acc_update = time.time()
                             for acc in data.get("data", []):
                                 state.update_balance(acc.get('marginCoin'), acc)
-                            # print("💰 [PRIVATE WS] Update Saldo Real-time.")
 
             except Exception as e:
                 print(f"🔄 [PRIVATE WS RECONNECT] Error: {e}")

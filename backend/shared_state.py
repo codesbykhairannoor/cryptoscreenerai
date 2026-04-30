@@ -10,6 +10,9 @@ class SharedState:
             cls._instance.orders = []
             cls._instance.balances = {}
             cls._instance.last_update = 0
+            cls._instance.last_order_update = 0
+            cls._instance.last_algo_update = 0
+            cls._instance.last_acc_update = 0
             cls._instance.sl_placement_cache = {}
         return cls._instance
 
