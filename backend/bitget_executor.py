@@ -340,11 +340,15 @@ class BitgetExecutor:
                     mark_price = pos['markPrice']
                     side = pos['side']
                     
-                    # Fetch pending plan orders for this specific symbol
-                    plan_orders = self.get_pending_plan_orders(symbol=symbol)
-                    if plan_orders is None:
-                        print(f"⚠️ [RISK] Melewati Risk Guards untuk {symbol} karena gagal fetch plan orders (timeout/error).")
-                        continue
+                    # Calculate PNL percentage for monitoring and Trailing SL
+                    pnl_pct = 0
+                    if entry_price > 0:
+                        if side == 'long' or side == 'buy':
+                            pnl_pct = (mark_price - entry_price) / entry_price * 100
+                        else:
+                            pnl_pct = (entry_price - mark_price) / entry_price * 100
+                    
+                    print(f"📊 [MONITOR] {symbol} | PNL: {round(pnl_pct, 2)}% | Price: {mark_price}")
                     
                     # [VERIFICATION LOG] Determine SL/TP Status from pending plan orders
                     sl_price = 0
@@ -440,13 +444,12 @@ class BitgetExecutor:
         """Helper to cancel old SL/TP and place a new one"""
         try:
             # Bitget V2 Trigger Order
-            tp_side = 'sell' if side == 'long' or side == 'buy' or side == 'Long' else 'buy'
-            # Cancel all previous plan orders of this type to avoid overlap
-            plan_type = 'profit_loss'
+            tp_side = 'sell' if side.lower() in ['long', 'buy'] else 'buy'
             
             # Format price precision
             formatted_sl = self.exchange.price_to_precision(symbol, new_sl)
             
+            # Bitget V2 Plan Type must be 'profit_loss' for TP/SL
             self.exchange.create_order(symbol, 'market', tp_side, amount, params={
                 'triggerPrice': formatted_sl,
                 'triggerType': 'mark_price',
