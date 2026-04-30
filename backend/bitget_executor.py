@@ -97,38 +97,44 @@ class BitgetExecutor:
             print(f"⚠️ [STATE ERROR] Gagal fetch posisi V2: {e}")
             return []
 
-    def get_pending_plan_orders(self):
+    def get_pending_plan_orders(self, symbol=None):
         """Fetches all pending trigger/plan orders (SL/TP) via Bitget V2"""
         import requests, time, hmac, hashlib, base64
-        try:
-            ts = str(int(time.time() * 1000))
-            path = "/api/v2/mix/order/orders-plan-pending"
-            query = "productType=usdt-futures"
-            
-            message = ts + "GET" + path + "?" + query
-            mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
-            sign = base64.b64encode(mac.digest()).decode('utf8')
-            
-            headers = {
-                "ACCESS-KEY": self.api_key,
-                "ACCESS-SIGN": sign,
-                "ACCESS-TIMESTAMP": ts,
-                "ACCESS-PASSPHRASE": self.passphrase,
-                "Content-Type": "application/json"
-            }
-            
-            url = f"https://api.bitget.com{path}?{query}"
-            res = requests.get(url, headers=headers, timeout=5)
-            data = res.json()
-            
-            if data.get('code') == '00000':
-                return data.get('data', {}).get('entrustList', []) if isinstance(data.get('data'), dict) else data.get('data', [])
-            else:
-                print(f"⚠️ [PLAN ERROR] API returned: {data}")
-                return None
-        except Exception as e:
-            print(f"⚠️ [PLAN ERROR] Gagal fetch plan orders: {e}")
-            return None
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                ts = str(int(time.time() * 1000))
+                path = "/api/v2/mix/order/orders-plan-pending"
+                query = "productType=usdt-futures&planType=profit_loss"
+                if symbol:
+                    clean_sym = symbol.split('_')[0].split(':')[0].replace('/', '')
+                    query += f"&symbol={clean_sym}"
+                
+                message = ts + "GET" + path + "?" + query
+                mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
+                sign = base64.b64encode(mac.digest()).decode('utf8')
+                
+                headers = {
+                    "ACCESS-KEY": self.api_key,
+                    "ACCESS-SIGN": sign,
+                    "ACCESS-TIMESTAMP": ts,
+                    "ACCESS-PASSPHRASE": self.passphrase,
+                    "Content-Type": "application/json"
+                }
+                
+                url = f"https://api.bitget.com{path}?{query}"
+                res = requests.get(url, headers=headers, timeout=5)
+                data = res.json()
+                
+                if data.get('code') == '00000':
+                    return data.get('data', {}).get('entrustList', []) if isinstance(data.get('data'), dict) else data.get('data', [])
+                else:
+                    print(f"⚠️ [PLAN ERROR] API returned (Attempt {attempt+1}): {data}")
+                    time.sleep(1)
+            except Exception as e:
+                print(f"⚠️ [PLAN ERROR] Gagal fetch plan orders (Attempt {attempt+1}): {e}")
+                time.sleep(1)
+        return None
 
     def get_max_available(self, symbol, leverage):
         """
@@ -324,12 +330,6 @@ class BitgetExecutor:
             positions = self.get_all_positions()
             active_symbols = []
             
-            # Fetch pending plan orders to check actual SL/TP
-            plan_orders = self.get_pending_plan_orders()
-            if plan_orders is None:
-                print("⚠️ [RISK] Melewati Risk Guards karena gagal fetch plan orders (timeout/error).")
-                return
-            
             for pos in positions:
                 size = pos['size']
                 if size > 0:
@@ -340,6 +340,12 @@ class BitgetExecutor:
                     mark_price = pos['markPrice']
                     side = pos['side']
                     
+                    # Fetch pending plan orders for this specific symbol
+                    plan_orders = self.get_pending_plan_orders(symbol=symbol)
+                    if plan_orders is None:
+                        print(f"⚠️ [RISK] Melewati Risk Guards untuk {symbol} karena gagal fetch plan orders (timeout/error).")
+                        continue
+                        
                     pnl_pct = 0
                     if entry_price > 0:
                         if side == 'long':
