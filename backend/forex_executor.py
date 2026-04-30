@@ -125,7 +125,7 @@ class ForexExecutor:
         """
         from data_fetcher import get_forex_data
         from database import log_trade
-        print("🌍 [SYSTEM] Dewa Scalper Engine (DXY Correlation) AKTIF!")
+        print("[SYSTEM] Dewa Scalper Engine (DXY Correlation) AKTIF!")
         
         last_auto_trade = 0
         AUTO_COOLDOWN = 1800 # 30 Mins cooldown

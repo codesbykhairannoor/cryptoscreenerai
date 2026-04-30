@@ -35,7 +35,7 @@ def run_crypto_engine():
     executor = BitgetExecutor()
     from database import check_pending_trades
     from sentiment import get_market_news_digest, get_crypto_news
-    print("🛰️ [SYSTEM] Crypto Hunter Engine AKTIF!")
+    print("[SYSTEM] Crypto Hunter Engine AKTIF!")
     
     last_exec_time = 0
     last_news_report = 0
@@ -44,20 +44,19 @@ def run_crypto_engine():
     while True:
         try:
             # 1. MONITOR ACTIVE POSITIONS (Intelligent Dashboard)
-            # This shows PNL, Trailing SL status, and Price Action in one line
             executor.manage_open_positions()
             check_pending_trades()
             
             # 2. PERIODIC NEWS VELOCITY (Every 10 Mins)
             if time.time() - last_news_report > 600:
                 digest = get_market_news_digest()
-                print(f"🗞️ [NEWS VELOCITY] Sentiment: {digest['sentiment']} | Top: {digest['crypto_top']}")
+                print(f"[NEWS VELOCITY] Sentiment: {digest['sentiment']} | Top: {digest['crypto_top']}")
                 last_news_report = time.time()
 
             # 3. GLOBAL CONTEXT
             global_context = get_global_market_data()
             if int(time.time()) % 300 < 35:
-                print(f"🌍 [GLOBAL] {global_context}")
+                print(f"[GLOBAL] {global_context}")
             
             raw_data = fetch_all_tickers()
             candidates = analyze_and_sort(raw_data)
@@ -94,11 +93,10 @@ def run_crypto_engine():
                     continue
                 
                 # 1. CIRCUIT BREAKER CHECK (Global Risk Manager)
-                # If we lost too much today, stop trading.
                 from database import get_performance_stats
                 stats = get_performance_stats('crypto')
-                daily_pnl = stats.get('win_rate', 0) # Placeholder for real PNL logic
-                if daily_pnl < -50: # If win rate is suspiciously low or custom PNL check
+                daily_pnl = stats.get('win_rate', 0) 
+                if daily_pnl < -50: 
                      print(f"[CIRCUIT BREAKER] Loss limit reached today. Standing down for 24h.")
                      break
 
@@ -107,7 +105,7 @@ def run_crypto_engine():
                 is_whale = tech.get('is_whale_accumulation', False)
                 fvg_zones = tech.get('fvg_up', [])
                 vwap_dist = tech.get('vwap_dist', 0)
-                mark_price = tech.get('mark_price', 0) # Use fresh price from technicals
+                mark_price = tech.get('mark_price', 0) 
                 
                 if mark_price == 0:
                     mark_price = coin.get('lastPrice', 0)
@@ -159,14 +157,15 @@ def run_crypto_engine():
                     tp = mark_price * 1.03 # 3% Target
                     sl = mark_price * 0.98 # 2% Stop Loss
                     
-                    print(f"🔍 [CRYPTO AUTO-TRADE] Snipping {symbol} | Entry: {mark_price} | TP: {round(tp, 4)}")
-                    success, res = executor.place_futures_order(symbol, 'buy', tp_price=tp, sl_price=sl)
-                    if success:
-                        last_exec_time = time.time()
-                        log_trade(symbol, mark_price, tp, sl, market='crypto')
-                        print(f"✅ [HUNTER SUCCESS] Position opened on {symbol} with Protection.")
-            
+                    amount = executor.get_max_available(symbol, leverage=10)
+                    if amount > 0:
+                        print(f"[CRYPTO AUTO-TRADE] Snipping {symbol} | Entry: {mark_price} | TP: {tp}")
+                        success, order = executor.place_order(symbol, 'buy', amount, tp=tp, sl=sl)
+                        if success:
+                            log_trade(symbol, mark_price, tp, sl)
+                            last_exec_time = time.time()
+                
+            time.sleep(20)
         except Exception as e:
-            print(f"❌ [CRYPTO ERROR] {e}")
-        
-        time.sleep(30)
+            print(f"[ENGINE ERROR] {e}")
+            time.sleep(30)

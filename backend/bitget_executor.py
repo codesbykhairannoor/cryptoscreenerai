@@ -6,6 +6,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Suppress InsecureRequestWarning for institutional-grade log cleanliness
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
 class BitgetExecutor:
     def __init__(self):
         self.api_key = os.getenv("BITGET_API_KEY")
@@ -39,8 +43,16 @@ class BitgetExecutor:
         if not s: return ""
         return s.upper().replace('USDT', '').replace('/', '').split(':')[0].split('_')[0]
 
-    def get_balance_robust(self, retries=3):
-        """Helper to fetch balance with retry logic"""
+    def test_connection(self):
+        """Standard health check for API connectivity"""
+        try:
+            balance = self.get_balance()
+            return True, f"Bitget API Connected. Total Balance: {balance['total']} USDT"
+        except Exception as e:
+            return False, f"Connection Failed: {str(e)}"
+
+    def get_balance(self, retries=3):
+        """Fetches total and free USDT balance using CCXT"""
         for i in range(retries):
             try:
                 # Method 1: Swap Type
@@ -66,13 +78,13 @@ class BitgetExecutor:
         
         for pt in product_types:
             try:
-                # Try with marginCoin=USDT first, then without if it fails
-                for use_margin_coin in [True, False]:
+                # Institutional Retry: Try multiple marginCoin formats
+                for margin_val in ["USDT", "usdt", None]:
                     ts = str(int(time.time() * 1000))
                     path = "/api/v2/mix/position/all-position"
                     query = f"productType={pt}"
-                    if use_margin_coin:
-                        query += "&marginCoin=USDT"
+                    if margin_val:
+                        query += f"&marginCoin={margin_val}"
                     
                     message = ts + "GET" + path + "?" + query
                     mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
@@ -90,9 +102,9 @@ class BitgetExecutor:
                     res = requests.get(url, headers=headers, timeout=10, verify=False)
                     data = res.json()
                     
-                    # MENTAH LOG
-                    if use_margin_coin or data.get('code') == '00000':
-                        print(f"[RAW POS] PT: {pt} | MarginCoin: {use_margin_coin} | Status: {data.get('code')} | Found: {len(data.get('data') or []) if isinstance(data.get('data'), list) else 'N/A'}")
+                    # Log only if success or if we exhausted retries
+                    if data.get('code') == '00000' or margin_val is None:
+                        print(f"[RAW POS] PT: {pt} | Margin: {margin_val} | Status: {data.get('code')} | Found: {len(data.get('data') or []) if isinstance(data.get('data'), list) else 0}")
                     
                     if data.get('code') == '00000':
                         if data.get('data'):
@@ -102,19 +114,21 @@ class BitgetExecutor:
                                     instId = p.get('instId', '') or p.get('symbol', '')
                                     symbol = f"{instId.replace('USDT', '')}/USDT:USDT" if "USDT" in instId and ":" not in instId else instId
                                     
+                                    # Bitget V2 key diversity
+                                    entry = float(p.get('openPriceAvg') or p.get('openPrice') or p.get('entryPrice') or p.get('averageOpenPrice') or p.get('breakPrice') or 0)
+                                    
                                     all_pos.append({
                                         'symbol': symbol,
                                         'instId': instId,
                                         'side': p.get('holdSide', 'long'),
                                         'size': sz,
-                                        'entry': float(p.get('openPrice', 0) or p.get('entryPrice', 0) or p.get('averageOpenPrice', 0)),
+                                        'entry': entry,
                                         'mark_price': float(p.get('markPrice', 0) or 0),
                                         'pnl': float(p.get('unrealizedPL', 0) or 0),
                                         'productType': pt
                                     })
-                        break # Success with this PT, move to next PT
-                    
-                time.sleep(0.5)
+                        break # PT success
+                time.sleep(0.3)
             except Exception as e:
                 print(f"[STATE ERROR] Gagal fetch posisi {pt}: {e}")
         
@@ -124,22 +138,19 @@ class BitgetExecutor:
         """Fetches all pending trigger/plan orders (SL/TP) via Bitget V2"""
         import requests, time, hmac, hashlib, base64
         all_plans = []
-        
-        # Determine product types to check
-        pts = ['USDT-FUTURES', 'umcbl']
+        product_types = ['USDT-FUTURES', 'umcbl']
         plan_types = ['profit_loss', 'normal_plan']
         
-        for pt in pts:
+        for pt in product_types:
             for p_type in plan_types:
                 try:
                     ts = str(int(time.time() * 1000))
-                    path = "/api/v2/mix/order/orders-plan-pending"
+                    path = "/api/v2/mix/order/plan-order-pending"
                     query = f"productType={pt}&planType={p_type}"
-                    
                     if symbol:
-                        # Convert to Bitget V2 format (e.g. BTCUSDT)
-                        clean_sym = symbol.split('_')[0].split(':')[0].replace('/', '').replace('USDT','') + "USDT"
-                        query += f"&symbol={clean_sym}"
+                        # Convert symbol to instId if needed
+                        instId = symbol.replace('/', '').replace(':USDT', '')
+                        query += f"&symbol={instId}"
                     
                     message = ts + "GET" + path + "?" + query
                     mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
@@ -154,7 +165,7 @@ class BitgetExecutor:
                     }
                     
                     url = f"https://api.bitget.com{path}?{query}"
-                    res = requests.get(url, headers=headers, timeout=5)
+                    res = requests.get(url, headers=headers, timeout=10, verify=False)
                     data = res.json()
                     
                     # MENTAH LOG
@@ -175,155 +186,68 @@ class BitgetExecutor:
                                     all_plans.append(e)
                     else:
                         if data.get('code') not in ['00000', '400171']:
-                            print(f"❌ [PLAN ERROR] {pt}/{p_type}: {data}")
+                            print(f"[PLAN ERROR] {pt}/{p_type}: {data}")
                 except Exception as e:
                     pass
         return all_plans
 
     def get_max_available(self, symbol, leverage):
-        """
-        [DYNAMIC SIZING] - Asks Bitget: "What's the max I can open for this koin?"
-        Prevents 'Insufficient Margin' errors.
-        """
+        """Calculates max size for a trade based on balance and leverage"""
         try:
-            if not ":" in symbol:
-                symbol = f"{symbol}/USDT:USDT" if "USDT" not in symbol else f"{symbol.replace('USDT','')}/USDT:USDT"
+            balance = self.get_balance()
+            free_usdt = balance['free']
             
-            # Fetch max available from exchange
-            params = {
-                'symbol': symbol.replace("/","").replace(":USDT",""),
-                'leverage': leverage
-            }
-            # Bitget V3 specific endpoint via CCXT
-            res = self.exchange.private_get_mix_v1_account_account(params)
-            if res.get('code') == '00000':
-                return float(res['data'].get('available', 0))
-        except:
-            pass
-        
-        # Fallback to manual calc if API fails
-        bal = self.get_balance_robust()
-        return bal['free'] * 0.95 # Safe buffer
+            ticker = self.exchange.fetch_ticker(symbol)
+            price = ticker['last']
+            
+            # Use 95% of balance for safety
+            max_size = (free_usdt * leverage * 0.95) / price
+            return max_size
+        except Exception as e:
+            print(f"Error calculating max size: {e}")
+            return 0
 
-    def test_connection(self):
+    def place_order(self, symbol, side, amount, leverage=10, tp=None, sl=None):
+        """
+        Executes a professional trade with built-in SL/TP for Bitget V2.
+        """
         try:
-            if not self.api_key:
-                return False, "API Key Bitget tidak ditemukan di .env"
-            
-            print(f"Testing connection with Key: {self.api_key[:10]}...")
-            
-            bal = self.get_balance_robust()
-            if bal['total'] > 0:
-                return True, f"Bitget Futures OK (Saldo: ${round(bal['total'], 2)})"
-            
-            # Fallback to ticker proof
+            # 1. Set Leverage
             try:
-                ticker = self.exchange.fetch_ticker('BTC/USDT:USDT')
-                if ticker and 'last' in ticker:
-                    return True, f"Bitget OK (Izin Futures Terbatas - BTC: ${ticker['last']})"
+                self.exchange.set_leverage(leverage, symbol)
             except:
                 pass
-                
-            return False, "Koneksi gagal. Cek API Key & Izin Futures di Bitget."
+            
+            # 2. Set Margin Mode (Isolated)
+            try:
+                self.exchange.set_margin_mode('isolated', symbol)
+            except:
+                pass
+
+            # 3. Place Market Order
+            print(f"[BITGET] Executing {side.upper()} {symbol} (Size: {amount})")
+            
+            # Standard CCXT create_order
+            order = self.exchange.create_order(
+                symbol, 
+                'market', 
+                side, 
+                amount, 
+                params={
+                    'stopLossPrice': sl,
+                    'takeProfitPrice': tp,
+                    'marginCoin': 'USDT'
+                }
+            )
+            return True, order
         except Exception as e:
-            return False, f"Error: {str(e)}"
+            print(f"Error placing order: {e}")
+            return False, str(e)
 
-    def place_futures_order(self, symbol, side, leverage=5, amount_usdt=None, tp_price=None, sl_price=None, retries=3):
+    def sync_memory(self):
         """
-        Executes a 'Market-with-Protection' trade using Limit orders with offset.
-        Prevents buying at extreme prices (slippage protection).
-        """
-        try:
-            if not ":" in symbol:
-                if symbol.endswith("USDT"):
-                    symbol = f"{symbol.replace('USDT', '')}/USDT:USDT"
-                else:
-                    symbol = f"{symbol}/USDT:USDT"
-
-            # Set Leverage
-            for i in range(retries):
-                try:
-                    self.exchange.set_leverage(leverage, symbol)
-                    break
-                except:
-                    time.sleep(1)
-            
-            # 1. DYNAMIC SIZING (The "Anti-Margin Error" Pillar)
-            # Ask bursa: "Berapa max gue bisa open buat koin ini?"
-            max_available = self.get_max_available(symbol, leverage)
-            
-            # Use 95% of MAX available as a safety buffer
-            actual_spend = max_available * 0.95
-            
-            if actual_spend < 5:
-                return False, f"Saldo tersedia tidak cukup (Min $5). Max Available: ${round(max_available, 2)}."
-
-            ticker = self.exchange.fetch_ticker(symbol)
-            last_price = ticker['last']
-            
-            # SLIPPAGE PROTECTION: Calculate Limit Price (0.5% offset)
-            if side == 'buy':
-                limit_price = last_price * 1.005 # Buy slightly higher to guarantee fill
-            else:
-                limit_price = last_price * 0.995 # Sell slightly lower
-
-            quantity = (actual_spend * leverage) / limit_price
-            
-            # Enhanced Order Params for Bitget (TP/SL)
-            params = {
-                'takeProfitPrice': tp_price,
-                'stopLossPrice': sl_price
-            }
-
-            # Place Protected Limit Order
-            for i in range(retries):
-                try:
-                    # 1. Place Main Entry Order (STRICT One-Way Mode)
-                    # We send ONLY the essential params to avoid 40774 error
-                    order = self.exchange.create_order(
-                        symbol=symbol,
-                        type='limit',
-                        side=side,
-                        amount=quantity,
-                        price=limit_price,
-                        params={} # Empty params to avoid any hidden mode conflicts
-                    )
-                    print(f"✅ [BITGET] Entry Order Placed: {symbol}")
-                    
-                    # 2. Attach TP & SL separately using simple Market/Limit Close orders
-                    try:
-                        time.sleep(1) 
-                        tp_side = 'sell' if side == 'buy' else 'buy'
-                        
-                        # PRECISION FIX: Round prices according to exchange rules
-                        market = self.exchange.market(symbol)
-                        price_precision = market['precision']['price']
-                        
-                        formatted_tp = self.exchange.price_to_precision(symbol, tp_price) if tp_price else None
-                        formatted_sl = self.exchange.price_to_precision(symbol, sl_price) if sl_price else None
-
-                        if formatted_tp:
-                            # Use Plan Order for TP to ensure it's tracked as TP
-                            self.update_sl_price(symbol, side, quantity, tp_price, is_tp=True)
-                        
-                        if formatted_sl:
-                            # Use Plan Order for SL
-                            self.update_sl_price(symbol, side, quantity, sl_price, is_tp=False)
-                            
-                    except Exception as e_safety:
-                        print(f"⚠️ [BITGET SAFETY] Entry Success, but SL/TP failed: {e_safety}")
-
-                    return True, f"Trade {side.upper()} BERHASIL! Entry: {last_price} | Margin: {round(actual_spend, 2)}"
-                except Exception as e:
-                    if i == retries - 1: return False, f"Gagal Order Sniper: {str(e)}"
-                    time.sleep(1)
-        except Exception as e:
-            return False, f"Error Executor: {str(e)}"
-
-    def sync_state_with_exchange(self):
-        """
-        [STATE RECOVERY ENGINE] - Cross-references DB with actual exchange positions.
-        Call this on startup to prevent 'Amnesia' after Railway restart.
+        [STATE SYNC] - Verifies local database against exchange reality.
+        Marks any missing positions as CLOSED.
         """
         print("🔄 [SYNC] Synchronizing bot memory with Bitget...")
         try:
@@ -332,7 +256,7 @@ class BitgetExecutor:
             open_bases = [self._clean_symbol(s) for s in open_symbols]
             
             if int(time.time()) % 60 < 15:
-                print(f"🕵️ [ENGINE DEBUG] Active Bases: {open_bases}")
+                print(f"[ENGINE DEBUG] Active Bases: {open_bases}")
             
             from database import get_connection
             conn = get_connection()
@@ -347,7 +271,7 @@ class BitgetExecutor:
                 clean_sym = f"{db_symbol.replace('USDT','')}/USDT:USDT" if not ":" in db_symbol else db_symbol
                 
                 if clean_sym not in open_symbols:
-                    print(f"⚠️ [RECOVERY] {db_symbol} not found on exchange. Marking as CLOSED.")
+                    print(f"[RECOVERY] {db_symbol} not found on exchange. Marking as CLOSED.")
                     cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE id = %s", (trade_id,))
                     # Also cancel any orphaned SL/TP orders
                     try:
@@ -355,13 +279,13 @@ class BitgetExecutor:
                     except:
                         pass
                 else:
-                    print(f"✅ [RECOVERY] {db_symbol} is active and verified.")
+                    print(f"[RECOVERY] {db_symbol} is active and verified.")
             
             conn.commit()
             conn.close()
             print("✨ [SYNC] Memory synchronization complete.")
         except Exception as e:
-            print(f"❌ [SYNC ERROR] {e}")
+            print(f"[SYNC ERROR] {e}")
 
     def manage_open_positions(self):
         """
@@ -406,25 +330,25 @@ class BitgetExecutor:
                                 # Logic to differentiate SL from TP based on side and price
                                 is_long = side.lower() in ['long', 'buy']
                                 if is_long:
-                                    if trigger > entry: tp_price = max(tp_price, trigger)
+                                    if entry > 0 and trigger > entry: tp_price = max(tp_price, trigger)
                                     else: sl_price = max(sl_price, trigger)
                                 else:
-                                    if trigger < entry: tp_price = min(tp_price, trigger) if tp_price > 0 else trigger
+                                    if entry > 0 and trigger < entry: tp_price = min(tp_price, trigger) if tp_price > 0 else trigger
                                     else: sl_price = min(sl_price, trigger) if sl_price > 0 else trigger
                     
                     # [RISK GUARD] Verify SL Existence
                     if sl_price > 0:
                         print(f"[VERIFIED] Risk Guards for {symbol}: SL: ${sl_price} (ACTIVE) | TP: {'$' + str(tp_price) if tp_price > 0 else 'PENDING'}")
-                    else:
+                    elif entry > 0:
                         # Safety First: Inject default SL if none found
                         default_sl = entry * 0.95 if side.lower() in ['long', 'buy'] else entry * 1.05
                         print(f"[RISK] {symbol} tidak memiliki Stop Loss! Memasang default SL di {round(default_sl, 4)}")
                         self.update_sl_price(symbol, side, size, default_sl)
                     
                     # [RISK GUARD] Verify TP Existence
-                    if tp_price == 0:
+                    if tp_price == 0 and entry > 0:
                         default_tp = entry * 1.05 if side.lower() in ['long', 'buy'] else entry * 0.95
-                        print(f"🎯 [TP CHECK] {symbol} Take Profit is MISSING. Memasang default TP di {round(default_tp, 4)}")
+                        print(f"[TP CHECK] {symbol} Take Profit is MISSING. Memasang default TP di {round(default_tp, 4)}")
                         self.update_sl_price(symbol, side, size, default_tp, is_tp=True)
                     
                     # [INSTITUTIONAL UPGRADE] Trailing SL
@@ -449,10 +373,10 @@ class BitgetExecutor:
                                 update_sl = False
                         
                         if update_sl:
-                            print(f"🏃 [TRAILING] Moving {symbol} SL to {round(best_sl, 4)} (PNL: {round(pnl, 2)}%)")
+                            print(f"[TRAILING] Moving {symbol} SL to {round(best_sl, 4)} (PNL: {round(pnl, 2)}%)")
                             self.update_sl_price(symbol, side, size, best_sl)
                 except Exception as e_pos:
-                    print(f"⚠️ [MONITOR ERROR] Error processing {symbol if 'symbol' in locals() else 'unknown'}: {e_pos}")
+                    print(f"[MONITOR ERROR] Error processing {symbol if 'symbol' in locals() else 'unknown'}: {e_pos}")
 
             # 2. ORPHANED ORDER CLEANUP (Database Sync)
             from database import get_connection
@@ -468,7 +392,7 @@ class BitgetExecutor:
                     is_active = any(db_symbol.replace("USDT","") in s for s in active_symbols)
                     
                     if not is_active:
-                        print(f"🧹 [CLEANUP] {db_symbol} sudah tertutup di bursa. Membersihkan orphaned orders...")
+                        print(f"[CLEANUP] {db_symbol} sudah tertutup di bursa. Membersihkan orphaned orders...")
                         try:
                             clean_sym = f"{db_symbol.replace('USDT','')}/USDT:USDT" if not ":" in db_symbol else db_symbol
                             self.exchange.cancel_all_orders(clean_sym)
@@ -477,13 +401,13 @@ class BitgetExecutor:
                         except Exception as e_clean:
                             pass
             except Exception as e_db:
-                print(f"❌ [DB MONITOR ERROR] {e_db}")
+                print(f"[DB MONITOR ERROR] {e_db}")
             finally:
                 if conn:
                     conn.close()
                     
         except Exception as e:
-            print(f"⚠️ [MONITOR ERROR] {e}")
+            print(f"[MONITOR ERROR] {e}")
 
     def update_sl_price(self, symbol, side, amount, new_price, is_tp=False):
         """Helper to cancel old SL/TP and place a new one using Bitget V2 Plan Orders"""
@@ -502,9 +426,9 @@ class BitgetExecutor:
             # We use None for price in market orders
             self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=params)
             label = "Take Profit" if is_tp else "Stop Loss"
-            print(f"🛡️ [BITGET] {label} updated at {formatted_price}")
+            print(f"[BITGET] {label} updated at {formatted_price}")
         except Exception as e:
-            print(f"❌ [SL/TP UPDATE FAILED] {symbol}: {e}")
+            print(f"[SL/TP UPDATE FAILED] {symbol}: {e}")
 
 
 if __name__ == "__main__":
