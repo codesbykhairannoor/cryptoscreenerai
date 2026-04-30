@@ -146,33 +146,26 @@ class BitgetExecutor:
             return []
 
     def get_pending_plan_orders(self, symbol=None):
-        """Plan/Trigger Order Fetcher for Classic (V2 Mix) with Global Matching"""
+        """Plan/Trigger Order Fetcher for Classic (V2 Mix) with Multi-Type Polling"""
         all_orders = []
         try:
             # 1. Normal Orders via CCXT
-            params = {'productType': 'usdt-futures'}
-            all_orders += self.exchange.fetch_open_orders(symbol, params=params)
-            
-            # 2. Plan Orders via Direct V2 Mix API (Fetch ALL and Filter for stability)
-            try:
-                plan_params = {'productType': 'usdt-futures'}
-                # Fetching ALL plan orders often works better than symbol-filtered on Classic
-                plan_data = self.exchange.private_get_mix_order_orders_plan_pending(plan_params)
-                
-                if plan_data.get('code') == '00000':
-                    raw_plans = plan_data.get('data', [])
-                    target_clean = self._clean_symbol(symbol) if symbol else None
-                    
-                    for p in raw_plans:
-                        p_sym = p.get('symbol', '')
-                        # Flexible matching
-                        if not target_clean or self._clean_symbol(p_sym) == target_clean:
-                            all_orders.append({
-                                'info': p,
-                                'type': 'stop',
-                                'symbol': p_sym
-                            })
+            try: all_orders += self.exchange.fetch_open_orders(symbol, params={'productType': 'usdt-futures'})
             except: pass
+            
+            # 2. Plan Orders (Direct V2 Mix API) - Polling multiple product types for safety
+            # Bitget Classic uses different productTypes depending on account age/region
+            for pt in ['usdt-futures', 'umcbl']:
+                try:
+                    plan_data = self.exchange.private_get_mix_order_orders_plan_pending({'productType': pt})
+                    if plan_data.get('code') == '00000':
+                        raw_plans = plan_data.get('data', [])
+                        target_clean = self._clean_symbol(symbol) if symbol else None
+                        for p in raw_plans:
+                            p_sym = p.get('symbol', '')
+                            if not target_clean or self._clean_symbol(p_sym) == target_clean:
+                                all_orders.append({'info': p, 'type': 'stop', 'symbol': p_sym})
+                except: pass
             
             return all_orders
         except Exception as e:
@@ -231,6 +224,7 @@ class BitgetExecutor:
         return self.sync_memory()
 
     def manage_open_positions(self):
+        """Intelligent Monitoring: SL/TP Verification + Trail to Entry"""
         try:
             positions = self.get_all_positions()
             for pos in positions:
@@ -238,23 +232,34 @@ class BitgetExecutor:
                 side = pos['side']
                 size = pos['size']
                 entry = pos['entry']
+                pnl = float(pos.get('pnl', 0))
                 
-                # Verify SL/TP (PINTER: Check raw info for plan types)
+                # 1. Check for existing SL/TP
                 plans = self.get_pending_plan_orders(symbol)
-                
-                # Check for existing SL/TP in both CCXT format and Raw Info
                 has_sl = False
+                existing_sl_price = 0
+                
                 for o in plans:
-                    info = str(o.get('info', {})).lower()
-                    otype = str(o.get('type', '')).lower()
-                    # Look for 'stop', 'loss', 'profit', or 'plan'
-                    if 'stop' in otype or 'plan' in info or 'loss' in info or 'profit' in info:
+                    info = o.get('info', {})
+                    # Bitget V2 Mix Plan Order detection
+                    if str(info).lower().find('stop') != -1 or str(info).lower().find('plan') != -1:
                         has_sl = True
+                        existing_sl_price = float(info.get('triggerPrice') or info.get('executePrice') or 0)
                         break
                 
+                # 2. TRAIL TO ENTRY LOGIC (PINTER)
+                # If PNL > 20%, move SL to Entry price to lock in profits
+                if pnl >= 20.0 and entry > 0:
+                    if (side.lower() in ['long', 'buy'] and existing_sl_price < entry) or \
+                       (side.lower() in ['short', 'sell'] and (existing_sl_price > entry or existing_sl_price == 0)):
+                        print(f"📈 [TRAIL TO ENTRY] {symbol} Profit {round(pnl,1)}%! Moving SL to Entry: {entry}")
+                        self.update_sl_price(symbol, side, size, entry)
+                        continue # Skip the "No SL" check for this loop
+
+                # 3. NO SL GUARD: If absolutely no SL exists, set default
                 if not has_sl and entry > 0:
                     sl = entry * 0.95 if side.lower() in ['long', 'buy'] else entry * 1.05
-                    # Avoid spamming if price is too close
                     self.update_sl_price(symbol, side, size, sl)
+                    
         except Exception as e:
             print(f"[MANAGE POS ERROR] {e}")
