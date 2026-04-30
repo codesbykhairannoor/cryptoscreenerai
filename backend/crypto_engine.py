@@ -62,6 +62,18 @@ def run_crypto_engine():
             raw_data = fetch_all_tickers()
             candidates = analyze_and_sort(raw_data)
             
+            # CHECK ACTIVE CRYPTO POSITIONS BEFORE TRADING
+            try:
+                positions = executor.get_all_positions()
+                if isinstance(positions, list) and len(positions) >= 10:
+                    if int(time.time()) % 300 < 35:
+                        print(f"🚨 [CRYPTO LIMIT] Max positions reached ({len(positions)}/10). Skipping new trades.")
+                    # Still run the cooldown sleep and position management, but don't enter candidate loop
+                    time.sleep(30)
+                    continue
+            except Exception as e:
+                print(f"⚠️ [CRYPTO LIMIT ERROR] {e}")
+            
             for coin in candidates[:5]:
                 now = time.time()
                 if now - last_exec_time < COOLDOWN_PERIOD:

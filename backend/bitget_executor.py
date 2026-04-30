@@ -373,38 +373,30 @@ class BitgetExecutor:
                     tp_text = f"${round(tp_price, 4)} (ACTIVE)" if tp_price > 0 else "PENDING"
                     print(f"🛡️ [VERIFIED] Risk Guards for {symbol}: SL: {sl_text} | TP: {tp_text}")
                     
-                    # [INSTITUTIONAL UPGRADE] Partial Take Profit & Safety Guard
-                    if pnl_pct >= 2.0 and pnl_pct < 5.0:
-                        # Check if we already did partial by checking if SL is at Break-Even or better
-                        already_secured = False
-                        if side == 'long' and sl_price >= entry_price: already_secured = True
-                        if side == 'short' and sl_price <= entry_price and sl_price > 0: already_secured = True
+                    # [INSTITUTIONAL UPGRADE] Trailing SL
+                    if pnl_pct >= 2.0:
+                        # Move to Break Even + small profit to cover fees
+                        be_sl = entry_price * 1.002 if side == 'long' else entry_price * 0.998
                         
-                        if not already_secured:
-                            new_sl_price = entry_price * 1.002 if side == 'long' else entry_price * 0.998
-                            print(f"💰 [PARTIAL TP] Profit 2% tercapai di {symbol}! Menutup 50% posisi untuk amankan modal.")
-                            
-                            try:
-                                # Close 50% of the position
-                                close_side = 'sell' if side == 'long' else 'buy'
-                                partial_size = size * 0.5
-                                self.exchange.create_order(symbol, 'market', close_side, partial_size, params={'reduceOnly': True})
-                                
-                                print(f"🛡️ [SECURE] Memindahkan sisa posisi ke Break-Even (${round(new_sl_price, 4)}).")
-                                self.update_sl_price(symbol, side, partial_size, new_sl_price)
-                            except Exception as e_ptp:
-                                print(f"⚠️ [PTP ERROR] Gagal eksekusi partial: {e_ptp}")
-                                
-                    elif pnl_pct >= 5.0:
+                        # Trailing SL: 1.5% behind current mark price
                         trail_sl = mark_price * 0.985 if side == 'long' else mark_price * 1.015
                         
-                        update_trail = False
-                        if side == 'long' and trail_sl > sl_price: update_trail = True
-                        if side == 'short' and (sl_price == 0 or trail_sl < sl_price): update_trail = True
+                        # Choose the best SL (BE or Trailing)
+                        best_sl = max(be_sl, trail_sl) if side == 'long' else min(be_sl, trail_sl)
                         
-                        if update_trail:
-                            print(f"🏃 [TRAIL] Menggeser Trailing Stop {symbol} ke ${round(trail_sl, 4)}.")
-                            self.update_sl_price(symbol, side, size, trail_sl)
+                        update_sl = False
+                        if side == 'long' and (sl_price == 0 or best_sl > sl_price): update_sl = True
+                        if side == 'short' and (sl_price == 0 or best_sl < sl_price): update_sl = True
+                        
+                        # Prevent updating too frequently (e.g., only if it moves by >0.5%)
+                        if update_sl and sl_price > 0:
+                            diff_pct = abs(best_sl - sl_price) / sl_price * 100
+                            if diff_pct < 0.5:
+                                update_sl = False
+                        
+                        if update_sl:
+                            print(f"🏃 [TRAIL] Menggeser Trailing Stop {symbol} ke ${round(best_sl, 4)} (PNL: {round(pnl_pct, 2)}%).")
+                            self.update_sl_price(symbol, side, size, best_sl)
 
             # 2. ORPHANED ORDER CLEANUP (Database Sync)
             from database import get_connection

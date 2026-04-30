@@ -78,6 +78,24 @@ class ForexExecutor:
             return False
         return True
 
+    def update_forex_sl(self, position_id, new_sl):
+        """Update Stop Loss for an active MetaTrader 5 position."""
+        if not self.is_active: return False
+        try:
+            url = f"{self.base_url}/users/current/accounts/{self.account_id}/positions/{position_id}"
+            headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
+            payload = {"stopLoss": new_sl}
+            res = requests.put(url, headers=headers, json=payload, timeout=10)
+            
+            if res.status_code == 200 or res.status_code == 204:
+                print(f"🏃 [FOREX TRAIL] Position {position_id} SL moved to {round(new_sl, 2)}")
+                return True
+            return False
+        except Exception as e:
+            print(f"⚠️ [FOREX TRAIL ERROR] {e}")
+            return False
+
+
     def place_xauusd_scalp_batch(self, side, trades_count=5, volume=0.01, tp=None, sl=None):
         """
         INSTITUTIONAL BARRAGE: Uses Layering (Grid) to secure better average prices.
@@ -119,23 +137,43 @@ class ForexExecutor:
                 dxy_data = get_forex_data("DXY") 
                 fx_data = get_forex_data("XAUUSD")
                 
-                    # MONITOR ACTIVE FOREX POSITIONS
-                    try:
-                        pos_url = f"{self.base_url}/users/current/accounts/{self.account_id}/positions"
-                        headers = {"auth-token": self.api_token}
-                        pos_res = requests.get(pos_url, headers=headers, timeout=10)
-                        positions = pos_res.json()
-                        
-                        active_count = 0
-                        if isinstance(positions, list):
-                            active_count = len([p for p in positions if p.get('symbol', '').startswith('XAUUSD')])
-                            # Only log summary every 1 minute to avoid spam
-                            if int(time.time()) % 60 < 15:
-                                print(f"📊 [FOREX MONITOR] Active Gold Positions: {active_count}/10")
-                    except Exception as e:
-                        print(f"⚠️ [FOREX MONITOR ERROR] Failed to fetch positions: {e}")
-                        positions = []
-                        active_count = 0
+                # MONITOR ACTIVE FOREX POSITIONS
+                try:
+                    pos_url = f"{self.base_url}/users/current/accounts/{self.account_id}/positions"
+                    headers = {"auth-token": self.api_token}
+                    pos_res = requests.get(pos_url, headers=headers, timeout=10)
+                    positions = pos_res.json()
+                    
+                    active_count = 0
+                    if isinstance(positions, list):
+                        active_count = len([p for p in positions if p.get('symbol', '').startswith('XAUUSD')])
+                        # Only log summary every 1 minute to avoid spam
+                        if int(time.time()) % 60 < 15:
+                            print(f"📊 [FOREX MONITOR] Active Gold Positions: {active_count}/10")
+                            
+                        # Trailing Stop Loss Logic
+                        for p in positions:
+                            if not p.get('symbol', '').startswith('XAUUSD'): continue
+                            
+                            pos_id = p.get('id')
+                            pos_type = p.get('type', '')
+                            open_price = float(p.get('openPrice', 0))
+                            current_price = float(p.get('currentPrice', 0))
+                            current_sl = float(p.get('stopLoss', 0) or 0)
+                            
+                            # For Gold, trailing 1.5 distance when profit is at least 1.5 distance
+                            if pos_type == 'POSITION_TYPE_BUY' and current_price - open_price > 1.5:
+                                new_sl = current_price - 1.0
+                                if new_sl > current_sl:
+                                    self.update_forex_sl(pos_id, new_sl)
+                            elif pos_type == 'POSITION_TYPE_SELL' and open_price - current_price > 1.5:
+                                new_sl = current_price + 1.0
+                                if current_sl == 0 or new_sl < current_sl:
+                                    self.update_forex_sl(pos_id, new_sl)
+                except Exception as e:
+                    print(f"⚠️ [FOREX MONITOR ERROR] Failed to fetch positions: {e}")
+                    positions = []
+                    active_count = 0
 
                 if dxy_data and fx_data:
                     dxy_trend = dxy_data.get('trend', 'NEUTRAL')
