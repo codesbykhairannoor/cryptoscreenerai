@@ -113,9 +113,9 @@ class BitgetPrivateWS:
                             state.last_algo_update = time.time()
                             for plan in data["data"]:
                                 status = plan.get("state") or plan.get("status")
-                                sym = plan.get("symbol")
-                                # RAW ALGO LOG: Help user see what Bitget is sending
-                                print(f"📡 [ALGO STREAM] {sym} | State: {status} | Type: {plan.get('planType')}")
+                                sym = plan.get("symbol") or plan.get("instId")
+                                # RAW ALGO LOG: Now includes instId for identification
+                                print(f"📡 [ALGO STREAM] {sym} | State: {status} | Type: {plan.get('planType')} | ID: {plan.get('orderId')}")
                                 
                                 current_orders = state.orders
                                 current_orders = [o for o in current_orders if o.get('orderId') != plan.get('orderId')]

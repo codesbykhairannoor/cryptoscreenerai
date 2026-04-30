@@ -294,9 +294,10 @@ class BitgetExecutor:
                     
                     # Granular WS Health Tracking (O=Order, A=Algo, B=Balance)
                     from shared_state import state
-                    o_h = "🟢O" if (now - state.last_order_update < 60) else "🔴O"
-                    a_h = "🟢A" if (now - state.last_algo_update < 60) else "🔴A"
-                    b_h = "🟢B" if (now - state.last_acc_update < 60) else "🔴B"
+                    t_now = time.time()
+                    o_h = "🟢O" if (t_now - state.last_order_update < 120) else "🔴O"
+                    a_h = "🟢A" if (t_now - state.last_algo_update < 120) else "🔴A"
+                    b_h = "🟢B" if (t_now - state.last_acc_update < 120) else "🔴B"
                     
                     print(f"💎 [MONITOR {o_h}{a_h}{b_h}] {symbol} | PNL: {pnl}% | {sl_status} | {tp_status}")
 
