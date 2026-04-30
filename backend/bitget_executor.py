@@ -212,10 +212,19 @@ class BitgetExecutor:
                 # If UTA failed, we'll try CCXT below
             
             # Classic/Generic Fallback via CCXT
-            order = self.exchange.create_order(
-                symbol, 'market', side, amount, 
-                params={'stopLossPrice': sl, 'takeProfitPrice': tp}
-            )
+            # Some Bitget Mix accounts don't support simultaneous SL/TP in create_order
+            order = self.exchange.create_order(symbol, 'market', side, amount)
+            
+            # Place SL/TP separately as plan orders
+            if sl or tp:
+                time.sleep(1) # Small buffer
+                if sl:
+                    try: self.update_sl_price(symbol, side, amount, sl, is_tp=False)
+                    except: pass
+                if tp:
+                    try: self.update_sl_price(symbol, side, amount, tp, is_tp=True)
+                    except: pass
+            
             return True, order
         except Exception as e:
             print(f"Error placing order: {e}")
