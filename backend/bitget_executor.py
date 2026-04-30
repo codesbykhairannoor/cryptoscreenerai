@@ -106,42 +106,48 @@ class BitgetExecutor:
         all_plans = []
         
         for p_type in plan_types:
-            for attempt in range(max_retries):
-                try:
-                    ts = str(int(time.time() * 1000))
-                    path = "/api/v2/mix/order/orders-plan-pending"
-                    query = f"productType=USDT-FUTURES&planType={p_type}"
-                    if symbol:
-                        clean_sym = symbol.split('_')[0].split(':')[0].replace('/', '').replace('USDT','') + "USDT"
-                        query += f"&symbol={clean_sym}"
-                    
-                    message = ts + "GET" + path + "?" + query
-                    mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
-                    sign = base64.b64encode(mac.digest()).decode('utf8')
-                    
-                    headers = {
-                        "ACCESS-KEY": self.api_key,
-                        "ACCESS-SIGN": sign,
-                        "ACCESS-TIMESTAMP": ts,
-                        "ACCESS-PASSPHRASE": self.passphrase,
-                        "Content-Type": "application/json"
-                    }
-                    
-                    url = f"https://api.bitget.com{path}?{query}"
-                    res = requests.get(url, headers=headers, timeout=5)
-                    data = res.json()
-                    
-                    if data.get('code') == '00000':
-                        entrusts = data.get('data', {}).get('entrustList', []) if isinstance(data.get('data'), dict) else (data.get('data') or [])
-                        if isinstance(entrusts, list):
-                            all_plans.extend(entrusts)
-                        break
-                    else:
-                        if attempt == max_retries - 1:
-                            print(f"⚠️ [PLAN ERROR] API returned ({p_type}): {data}")
+            for pt in ['USDT-FUTURES', 'umcbl']:
+                for attempt in range(max_retries):
+                    try:
+                        ts = str(int(time.time() * 1000))
+                        path = "/api/v2/mix/order/orders-plan-pending"
+                        query = f"productType={pt}&planType={p_type}"
+                        
+                        if symbol:
+                            clean_sym = symbol.split('_')[0].split(':')[0].replace('/', '').replace('USDT','') + "USDT"
+                            query += f"&symbol={clean_sym}"
+                        
+                        message = ts + "GET" + path + "?" + query
+                        mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
+                        sign = base64.b64encode(mac.digest()).decode('utf8')
+                        
+                        headers = {
+                            "ACCESS-KEY": self.api_key,
+                            "ACCESS-SIGN": sign,
+                            "ACCESS-TIMESTAMP": ts,
+                            "ACCESS-PASSPHRASE": self.passphrase,
+                            "Content-Type": "application/json"
+                        }
+                        
+                        url = f"https://api.bitget.com{path}?{query}"
+                        res = requests.get(url, headers=headers, timeout=5)
+                        data = res.json()
+                        
+                        if data.get('code') == '00000':
+                            entrusts = data.get('data', {}).get('entrustList', []) if isinstance(data.get('data'), dict) else (data.get('data') or [])
+                            if isinstance(entrusts, list):
+                                for e in entrusts:
+                                    # Use orderId/id to avoid duplicates if same order shows up in multiple PTs
+                                    e_id = e.get('orderId') or e.get('id')
+                                    if not any((x.get('orderId') or x.get('id')) == e_id for x in all_plans):
+                                        all_plans.append(e)
+                            break
+                        else:
+                            if attempt == max_retries - 1 and pt == 'USDT-FUTURES':
+                                print(f"⚠️ [PLAN ERROR] API returned ({p_type} on {pt}): {data}")
+                            time.sleep(1)
+                    except Exception as e:
                         time.sleep(1)
-                except Exception as e:
-                    time.sleep(1)
         return all_plans
 
     def get_max_available(self, symbol, leverage):
@@ -358,13 +364,12 @@ class BitgetExecutor:
                     sl_price = 0
                     tp_price = 0
                     
+                    current_inst_id = pos.get('instId', '').upper().replace('_UMCBL', '')
+                    
                     for plan in plan_orders:
-                        plan_id = plan.get('instId', '') or plan.get('symbol', '')
-                        # Robust matching: Strip everything except the base coin name if possible
-                        clean_plan_id = plan_id.upper().replace('USDT', '').split('_')[0].split(':')[0].replace('/', '')
-                        clean_current_id = symbol.upper().replace('USDT', '').split('_')[0].split(':')[0].replace('/', '')
+                        plan_inst_id = (plan.get('instId', '') or plan.get('symbol', '')).upper().replace('_UMCBL', '')
                         
-                        if clean_plan_id == clean_current_id:
+                        if plan_inst_id == current_inst_id:
                             trigger = float(plan.get('triggerPrice', 0) or plan.get('executePrice', 0))
                             if trigger > 0:
                                 # Logic to differentiate SL from TP based on side and price
