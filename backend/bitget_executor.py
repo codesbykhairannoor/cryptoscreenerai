@@ -51,56 +51,60 @@ class BitgetExecutor:
 
     def get_all_positions(self):
         """
-        [STATE MEMORY] - Fetches all currently active positions on Bitget using V3 API directly.
+        [STATE MEMORY] - Fetches all currently active positions on Bitget.
+        Checks both USDT-FUTURES and umcbl for total coverage.
         """
         import requests, time, hmac, hashlib, base64
-        try:
-            ts = str(int(time.time() * 1000))
-            path = "/api/v2/mix/position/all-position"
-            query = "productType=USDT-FUTURES&marginCoin=USDT"
-            
-            message = ts + "GET" + path + "?" + query
-            mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
-            sign = base64.b64encode(mac.digest()).decode('utf8')
-            
-            headers = {
-                "ACCESS-KEY": self.api_key,
-                "ACCESS-SIGN": sign,
-                "ACCESS-TIMESTAMP": ts,
-                "ACCESS-PASSPHRASE": self.passphrase,
-                "Content-Type": "application/json"
-            }
-            
-            url = f"https://api.bitget.com{path}?{query}"
-            res = requests.get(url, headers=headers, timeout=5)
-            data = res.json()
-            
-            if data.get('code') == '00000' and 'data' in data:
-                positions = []
-                for p in data['data']:
-                    size = float(p.get('size', 0) or p.get('total', 0))
-                    if size > 0:
-                        instId = p.get('instId', '') or p.get('symbol', '')
-                        # Convert Bitget V2 instId/symbol to CCXT format
-                        symbol = f"{instId.replace('USDT', '')}/USDT:USDT" if "USDT" in instId and ":" not in instId else instId
-                        
-                        raw_entry = p.get('openPriceAvg') or p.get('averageOpenPrice') or p.get('entryPrice') or 0
-                        
-                        positions.append({
-                            'symbol': symbol, 
-                            'instId': instId,
-                            'size': size, 
-                            'entryPrice': float(raw_entry),
-                            'markPrice': float(p.get('markPrice', 0)),
-                            'side': p.get('holdSide', 'long')
-                        })
-                return positions
-            else:
-                print(f"⚠️ [STATE ERROR] V2 API Response: {res.text}")
-                return []
-        except Exception as e:
-            print(f"⚠️ [STATE ERROR] Gagal fetch posisi V2: {e}")
-            return []
+        all_pos = []
+        product_types = ['USDT-FUTURES', 'umcbl']
+        
+        for pt in product_types:
+            try:
+                ts = str(int(time.time() * 1000))
+                path = "/api/v2/mix/position/all-position"
+                query = f"productType={pt}&marginCoin=USDT"
+                
+                message = ts + "GET" + path + "?" + query
+                mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
+                sign = base64.b64encode(mac.digest()).decode('utf8')
+                
+                headers = {
+                    "ACCESS-KEY": self.api_key,
+                    "ACCESS-SIGN": sign,
+                    "ACCESS-TIMESTAMP": ts,
+                    "ACCESS-PASSPHRASE": self.passphrase,
+                    "Content-Type": "application/json"
+                }
+                
+                url = f"https://api.bitget.com{path}?{query}"
+                res = requests.get(url, headers=headers, timeout=10)
+                data = res.json()
+                
+                # MENTAH LOG
+                print(f"📡 [RAW POS] PT: {pt} | Status: {data.get('code')} | Found: {len(data.get('data') or []) if isinstance(data.get('data'), list) else 'N/A'}")
+                
+                if data.get('code') == '00000' and data.get('data'):
+                    for p in data['data']:
+                        sz = float(p.get('total', 0) or p.get('available', 0) or p.get('size', 0) or 0)
+                        if sz > 0:
+                            instId = p.get('instId', '') or p.get('symbol', '')
+                            # Standardize symbol
+                            symbol = f"{instId.replace('USDT', '')}/USDT:USDT" if "USDT" in instId and ":" not in instId else instId
+                            
+                            all_pos.append({
+                                'symbol': symbol,
+                                'instId': instId,
+                                'side': p.get('holdSide', 'long'),
+                                'size': sz,
+                                'entry': float(p.get('openPrice', 0) or p.get('entryPrice', 0) or p.get('averageOpenPrice', 0)),
+                                'pnl': float(p.get('unrealizedPL', 0) or 0),
+                                'productType': pt
+                            })
+                time.sleep(0.5)
+            except Exception as e:
+                print(f"⚠️ [STATE ERROR] Gagal fetch posisi {pt}: {e}")
+        
+        return all_pos
 
     def get_pending_plan_orders(self, symbol=None):
         """Fetches all pending trigger/plan orders (SL/TP) via Bitget V2"""
@@ -139,8 +143,8 @@ class BitgetExecutor:
                     res = requests.get(url, headers=headers, timeout=5)
                     data = res.json()
                     
-                    # MEGA DEBUG LOG REMOVED - Logic Refined
-                    # print(f"🔍 [PLAN DEBUG] PT: {pt} | Type: {p_type} | Symbol: {symbol} | Response: {res.text[:200]}...")
+                    # MENTAH LOG
+                    print(f"📡 [RAW PLAN] {pt}/{p_type}: {res.text[:150]}...")
                     
                     if data.get('code') == '00000':
                         # Bitget V2 uses 'entrustedList'. Handle case where it might be null or missing.
