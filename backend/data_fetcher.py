@@ -117,6 +117,12 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         prev_candle = df_cur.iloc[-2]
         avg_vol = df_cur['vol'].rolling(20).mean().iloc[-1]
         
+        # Bullish Sweep: Price drops below prev low then closes back above it
+        is_bull_sweep = last_candle['low'] < prev_candle['low'] and last_candle['close'] > prev_candle['low']
+        # Bearish Sweep: Price breaks above prev high then closes back below it
+        is_bear_sweep = last_candle['high'] > prev_candle['high'] and last_candle['close'] < prev_candle['high']
+        is_sweep = is_bull_sweep or is_bear_sweep
+        
         # 4. VOLUME-TO-PRICE DIVERGENCE (Whale Accumulation Detector)
         # Logic: Volume surge > 300% but price change < 2% (Whales buying quietly)
         vol_surge = last_candle['vol'] / avg_vol if avg_vol > 0 else 1
