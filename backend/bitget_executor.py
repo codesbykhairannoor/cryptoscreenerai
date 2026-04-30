@@ -31,9 +31,19 @@ class BitgetExecutor:
             }
         })
         
-        # Test mode on startup
+        # Startup Intelligence
+        self.startup_time = time.time()
+        self.warmup_period = 15 # 15s observation phase
+        
         try:
             self.detect_account_mode()
+            bal = self.get_balance()
+            print(f"💰 [STARTUP AUDIT] USDT Balance: {bal['total']} (Available: {bal['free']})")
+            pos = self.get_all_positions()
+            if pos:
+                print(f"📊 [STARTUP AUDIT] Running Trades: {len(pos)}")
+                for p in pos:
+                    print(f"   > {p['symbol']} | Side: {p['side']} | PNL: {p['pnl']}%")
         except:
             pass
 
@@ -305,9 +315,10 @@ class BitgetExecutor:
                     # Granular WS Health Tracking (O=Order, A=Algo, B=Balance)
                     from shared_state import state
                     t_now = time.time()
-                    o_h = "🟢O" if (t_now - state.last_order_update < 120) else "🔴O"
-                    a_h = "🟢A" if (t_now - state.last_algo_update < 120) else "🔴A"
-                    b_h = "🟢B" if (t_now - state.last_acc_update < 120) else "🔴B"
+                    # 5-min threshold for quiet markets
+                    o_h = "🟢O" if (t_now - state.last_order_update < 300) else "🔴O"
+                    a_h = "🟢A" if (t_now - state.last_algo_update < 300) else "🔴A"
+                    b_h = "🟢B" if (t_now - state.last_acc_update < 300) else "🔴B"
                     
                     print(f"💎 [MONITOR {o_h}{a_h}{b_h}] {symbol} | PNL: {pnl}% | {sl_status} | {tp_status}")
 
@@ -331,6 +342,12 @@ class BitgetExecutor:
 
                 # 3. NO SL GUARD: Initial SL placement
                 if not has_sl and entry > 0:
+                    # SAFETY: Don't set initial SL during warm-up or if WebSocket is still syncing
+                    if now - self.startup_time < self.warmup_period:
+                        if int(now) % 5 == 0:
+                            print(f"⏳ [WARM-UP] Observing {symbol}... Waiting for stream sync.")
+                        continue
+                        
                     # Safety: Don't set SL again if we just set it in the last 5 minutes (waiting for exchange sync)
                     if now - self._last_sl_set.get(symbol + "_init", 0) > 300:
                         sl_price = entry * 0.95 if side in ['long', 'buy'] else entry * 1.05
