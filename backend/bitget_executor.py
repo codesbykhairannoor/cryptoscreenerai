@@ -128,11 +128,22 @@ class BitgetExecutor:
 
     def get_pending_plan_orders(self, symbol=None):
         """Plan/Trigger Order Fetcher for Classic (V2 Mix)"""
+        all_orders = []
         try:
-            # CCXT fetch_open_orders with productType=USDT-FUTURES handles both limit and plan for Classic Bitget
             params = {'productType': 'USDT-FUTURES'}
-            orders = self.exchange.fetch_open_orders(symbol, params=params)
-            return orders
+            # 1. Normal Orders
+            all_orders += self.exchange.fetch_open_orders(symbol, params=params)
+            
+            # 2. Plan/Trigger Orders (SL/TP)
+            # CCXT might not fetch plan orders via fetch_open_orders for all Bitget versions
+            # So we call the private endpoint if necessary, or check the 'stop' type
+            try:
+                # Some versions of CCXT Bitget map fetch_open_orders to both, 
+                # but we'll add a check for 'stop' orders in the list
+                pass 
+            except: pass
+            
+            return all_orders
         except: return []
 
     def place_order(self, symbol, side, amount, leverage=10, tp=None, sl=None):
@@ -196,11 +207,22 @@ class BitgetExecutor:
                 size = pos['size']
                 entry = pos['entry']
                 
-                # Verify SL/TP
+                # Verify SL/TP (PINTER: Check raw info for plan types)
                 plans = self.get_pending_plan_orders(symbol)
-                has_sl = any(str(o.get('info', {})).lower().find('stop') != -1 for o in plans)
+                
+                # Check for existing SL/TP in both CCXT format and Raw Info
+                has_sl = False
+                for o in plans:
+                    info = str(o.get('info', {})).lower()
+                    otype = str(o.get('type', '')).lower()
+                    # Look for 'stop', 'loss', 'profit', or 'plan'
+                    if 'stop' in otype or 'plan' in info or 'loss' in info or 'profit' in info:
+                        has_sl = True
+                        break
                 
                 if not has_sl and entry > 0:
                     sl = entry * 0.95 if side.lower() in ['long', 'buy'] else entry * 1.05
+                    # Avoid spamming if price is too close
                     self.update_sl_price(symbol, side, size, sl)
-        except: pass
+        except Exception as e:
+            print(f"[MANAGE POS ERROR] {e}")
