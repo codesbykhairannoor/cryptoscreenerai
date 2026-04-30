@@ -78,11 +78,14 @@ class BitgetExecutor:
                         instId = p.get('instId', '') or p.get('symbol', '')
                         # Convert Bitget V2 instId/symbol to CCXT format
                         symbol = f"{instId.replace('USDT', '')}/USDT:USDT" if "USDT" in instId and ":" not in instId else instId
+                        
+                        raw_entry = p.get('openPriceAvg') or p.get('averageOpenPrice') or p.get('entryPrice') or 0
+                        
                         positions.append({
                             'symbol': symbol, 
                             'instId': instId,
                             'size': size, 
-                            'entryPrice': float(p.get('averageOpenPrice', p.get('entryPrice', 0))),
+                            'entryPrice': float(raw_entry),
                             'markPrice': float(p.get('markPrice', 0)),
                             'side': p.get('holdSide', 'long')
                         })
@@ -333,10 +336,11 @@ class BitgetExecutor:
                     side = pos['side']
                     
                     pnl_pct = 0
-                    if side == 'long':
-                        pnl_pct = (mark_price - entry_price) / entry_price * 100
-                    else:
-                        pnl_pct = (entry_price - mark_price) / entry_price * 100
+                    if entry_price > 0:
+                        if side == 'long':
+                            pnl_pct = (mark_price - entry_price) / entry_price * 100
+                        else:
+                            pnl_pct = (entry_price - mark_price) / entry_price * 100
                     print(f"📊 [MONITOR] {symbol} | PNL: {round(pnl_pct, 2)}% | Price: {mark_price}")
                     
                     # [VERIFICATION LOG] Determine SL/TP Status from pending plan orders
