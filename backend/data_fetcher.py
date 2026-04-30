@@ -110,7 +110,12 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         ema_200_cur = closes_cur.ewm(span=200, adjust=False).mean()
         ema_200_htf = closes_htf.ewm(span=200, adjust=False).mean()
 
-        # 3. VOLUME-TO-PRICE DIVERGENCE (Whale Accumulation Detector)
+        # 3. INSTITUTIONAL DATA PREP
+        last_candle = df_cur.iloc[-1]
+        prev_candle = df_cur.iloc[-2]
+        avg_vol = df_cur['vol'].rolling(20).mean().iloc[-1]
+        
+        # 4. VOLUME-TO-PRICE DIVERGENCE (Whale Accumulation Detector)
         # Logic: Volume surge > 300% but price change < 2% (Whales buying quietly)
         vol_surge = last_candle['vol'] / avg_vol if avg_vol > 0 else 1
         price_change_abs = abs((last_candle['close'] - last_candle['open']) / last_candle['open'] * 100)
