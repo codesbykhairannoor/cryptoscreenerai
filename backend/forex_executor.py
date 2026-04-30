@@ -42,22 +42,29 @@ class ForexExecutor:
         if not self.is_active: return False, "Inactive"
         try:
             actual_symbol = symbol
-            if "c" in symbol or self.account_id: 
-                actual_symbol = f"{symbol}c" if not symbol.endswith('c') else symbol
-
+            # Smart suffix detection: try provided symbol first, then 'c' if fails
             url = f"{self.base_url}/users/current/accounts/{self.account_id}/trade"
             headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
+            
             payload = {
                 "actionType": "ORDER_TYPE_BUY" if side.lower() == 'buy' else "ORDER_TYPE_SELL",
                 "symbol": actual_symbol,
                 "volume": volume,
                 "stopLoss": sl,
                 "takeProfit": tp,
-                "comment": "CryptoScreener AI Sniper"
+                "comment": "CryptoScreener AI Sniper V2"
             }
+            
             res = requests.post(url, headers=headers, json=payload, timeout=10)
             result = res.json()
             
+            # If symbol not found, try with 'c' suffix (common for Exness Pro/Raw)
+            if res.status_code != 200 and "symbol not found" in str(result).lower() and not actual_symbol.endswith('c'):
+                actual_symbol += 'c'
+                payload['symbol'] = actual_symbol
+                res = requests.post(url, headers=headers, json=payload, timeout=10)
+                result = res.json()
+
             if res.status_code == 200:
                 print(f"[FOREX SUCCESS] {side.upper()} {actual_symbol} placed!")
                 return True, result
@@ -72,7 +79,8 @@ class ForexExecutor:
         from data_fetcher import get_forex_data
         data = get_forex_data(symbol)
         spread = data.get('spread', 0)
-        if spread > 60:
+        # Relaxed spread limit for aggressiveness (from 60 to 100)
+        if spread > 100:
             print(f"[SPREAD ALERT] Spread {spread} too high! Sniper holding fire...")
             return False
         return True
@@ -113,7 +121,7 @@ class ForexExecutor:
                 price = get_forex_data("XAUUSD").get('lastPrice', 0)
                 log_trade("XAUUSD", price, tp, sl, market='forex')
             
-            time.sleep(0.2)
+            time.sleep(0.1) # Faster batch execution
             
         success_count = results.count(True)
         print(f"[BARRAGE SUCCESS] {success_count}/{trades_count} Layers Filled!")
@@ -121,14 +129,14 @@ class ForexExecutor:
 
     def monitor_forex_market(self):
         """
-        HEGE-FUND LEVEL SCANNER: SMC + Intermarket Correlation (DXY).
+        Dewa Scalper Engine V2: Aggressive SMC + DXY Correlation.
         """
         from data_fetcher import get_forex_data
         from database import log_trade
-        print("[SYSTEM] Dewa Scalper Engine (DXY Correlation) AKTIF!")
+        print("[SYSTEM] Dewa Scalper Engine V2 (AGRESSIVE) AKTIF!")
         
         last_auto_trade = 0
-        AUTO_COOLDOWN = 1800 # 30 Mins cooldown
+        AUTO_COOLDOWN = 300 # 5 Mins cooldown (Aggressive)
         
         while True:
             try:
@@ -144,14 +152,14 @@ class ForexExecutor:
                     
                     active_count = 0
                     if isinstance(positions, list):
-                        active_count = len([p for p in positions if p.get('symbol', '').startswith('XAUUSD')])
-                        # Only log summary every 1 minute to avoid spam
+                        active_count = len([p for p in positions if p.get('symbol', '').upper().startswith('XAUUSD')])
+                        
                         if int(time.time()) % 60 < 15:
-                            print(f"[FOREX MONITOR] Active Gold Positions: {active_count}/10")
+                            print(f"[FOREX MONITOR] Active Gold Positions: {active_count}/15")
                             
-                        # Trailing Stop Loss Logic
+                        # Trailing Stop Loss Logic (PINTER: Breakeven strategy)
                         for p in positions:
-                            if not p.get('symbol', '').startswith('XAUUSD'): continue
+                            if not p.get('symbol', '').upper().startswith('XAUUSD'): continue
                             
                             pos_id = p.get('id')
                             pos_type = p.get('type', '')
@@ -159,79 +167,79 @@ class ForexExecutor:
                             current_price = float(p.get('currentPrice', 0))
                             current_sl = float(p.get('stopLoss', 0) or 0)
                             
-                            # For Gold, trailing based on spread and volatility
                             spread = fx_data.get('spread', 0)
                             spread_pts = spread / 100 
-                            safety_buffer = max(1.5, spread_pts * 1.5)
+                            safety_buffer = max(1.0, spread_pts * 1.2) # Tightened buffer
                             
                             if pos_type == 'POSITION_TYPE_BUY' and current_price - open_price > safety_buffer:
-                                new_sl = current_price - (safety_buffer * 0.7)
+                                new_sl = open_price + 0.1 # Move to BE+1
                                 if new_sl > current_sl:
                                     self.update_forex_sl(pos_id, new_sl)
                             elif pos_type == 'POSITION_TYPE_SELL' and open_price - current_price > safety_buffer:
-                                new_sl = current_price + (safety_buffer * 0.7)
+                                new_sl = open_price - 0.1 # Move to BE+1
                                 if current_sl == 0 or new_sl < current_sl:
                                     self.update_forex_sl(pos_id, new_sl)
                 except Exception as e:
-                    print(f"[FOREX MONITOR ERROR] Failed to fetch positions: {e}")
+                    print(f"[FOREX MONITOR ERROR] {e}")
                     positions = []
                     active_count = 0
 
-                if dxy_data and fx_data:
-                    dxy_trend = dxy_data.get('trend', 'NEUTRAL')
+                if fx_data:
                     rsi = fx_data.get('rsi', 50)
-                    
-                    is_danger = fx_data.get('is_session_danger', False)
-                    if is_danger:
-                        if int(time.time()) % 60 < 10:
-                            print(f"[SESSION GUARD] London/NY Opening Detected. Sniper holding fire.")
-                        continue
-
-                    fvg_up = fx_data.get('fvg_up', [])
                     vwap_dist = fx_data.get('vwap_dist', 0)
+                    dxy_trend = dxy_data.get('trend', 'NEUTRAL') if dxy_data else 'NEUTRAL'
                     
                     if int(time.time()) % 60 < 15:
-                        print(f"[ARCHITECT AUDIT] XAUUSD: {fx_data['lastPrice']} | RSI: {rsi} | FVG: {len(fvg_up) > 0} | VWAP Dist: {vwap_dist}%")
-                        print(f"[ARCHITECT AUDIT] DXY Index: {dxy_data['lastPrice']} | Trend: {dxy_trend}")
+                        print(f"[ARCHITECT AUDIT] XAUUSD: {fx_data['lastPrice']} | RSI: {rsi} | VWAP Dist: {vwap_dist}%")
+                        if dxy_data: print(f"[ARCHITECT AUDIT] DXY Index: {dxy_data['lastPrice']} | Trend: {dxy_trend}")
 
                     should_auto = False
                     side = 'buy'
+                    confidence = 0
                     
-                    if (dxy_trend != 'BULLISH' and (fvg_up or rsi < 40) and vwap_dist < 0.5) or (rsi < 30):
+                    # AGGRESSIVE LONG LOGIC
+                    if rsi < 35 or (rsi < 45 and dxy_trend != 'BULLISH'):
                         should_auto = True
                         side = 'buy'
-                    elif (dxy_trend != 'BEARISH' and (rsi > 60) and vwap_dist > 0.8) or (rsi > 75):
+                        confidence = 1 if rsi < 30 else 0
+                        
+                    # AGGRESSIVE SHORT LOGIC
+                    elif rsi > 65 or (rsi > 55 and dxy_trend != 'BEARISH'):
                         should_auto = True
                         side = 'sell'
+                        confidence = 1 if rsi > 70 else 0
                     
-                    trades_to_open = 5 if abs(fx_data.get('price_change_5m', 0)) > 0.4 else 3
+                    # Dynamic Trade Sizing
+                    trades_to_open = 5 if confidence == 1 else 3
                         
                     if should_auto and (time.time() - last_auto_trade > AUTO_COOLDOWN):
-                        if active_count >= 10:
-                            if int(time.time()) % 300 < 15:
-                                print(f"[FOREX LIMIT] Max positions reached ({active_count}). Skipping trade.")
+                        if active_count >= 15: # Increased limit
                             continue
 
                         if not self.check_spread("XAUUSD"): continue
                         
                         account = self.get_account_information()
-                        if account and account.get('equity', 0) < 500: 
-                            print(f"[SAFETY] Equity too low for Barrage Mode!")
+                        if account and account.get('equity', 0) < 100: # Lower gate
+                            print(f"[SAFETY] Equity too low for AGGRESSIVE Mode!")
                             continue
 
-                        print(f"[ARCHITECT SNIPER] Institutional Alignment! DXY: {dxy_trend}")
+                        print(f"[ARCHITECT SNIPER] Aggressive Entry Triggered! Side: {side.upper()}")
                         price = fx_data['lastPrice']
-                        atr = fx_data.get('atr', 1.5)
+                        atr = fx_data.get('atr', 1.0)
                         
-                        tp = price + (atr * 2.5) if side == 'buy' else price - (atr * 2.5)
-                        sl = price - (atr * 1.5) if side == 'buy' else price + (atr * 1.5)
+                        # Institutional SL/TP Scaling
+                        tp_mult = 3.0 if confidence == 1 else 2.0
+                        sl_mult = 2.0
+                        
+                        tp = price + (atr * tp_mult) if side == 'buy' else price - (atr * tp_mult)
+                        sl = price - (atr * sl_mult) if side == 'buy' else price + (atr * sl_mult)
                             
                         success = self.place_xauusd_scalp_batch(side, trades_count=trades_to_open, volume=0.01, tp=tp, sl=sl)
                         if success:
                             last_auto_trade = time.time()
                 
-                time.sleep(15) 
+                time.sleep(10) # Faster scanning
                 
             except Exception as e:
                 print(f"[DEWA SCANNER ERROR] {e}")
-                time.sleep(10)
+                time.sleep(5)
