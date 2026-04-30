@@ -123,10 +123,12 @@ class BitgetExecutor:
             
             if data.get('code') == '00000':
                 return data.get('data', {}).get('entrustList', []) if isinstance(data.get('data'), dict) else data.get('data', [])
-            return []
+            else:
+                print(f"⚠️ [PLAN ERROR] API returned: {data}")
+                return None
         except Exception as e:
             print(f"⚠️ [PLAN ERROR] Gagal fetch plan orders: {e}")
-            return []
+            return None
 
     def get_max_available(self, symbol, leverage):
         """
@@ -324,6 +326,9 @@ class BitgetExecutor:
             
             # Fetch pending plan orders to check actual SL/TP
             plan_orders = self.get_pending_plan_orders()
+            if plan_orders is None:
+                print("⚠️ [RISK] Melewati Risk Guards karena gagal fetch plan orders (timeout/error).")
+                return
             
             for pos in positions:
                 size = pos['size']

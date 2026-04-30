@@ -118,8 +118,8 @@ def run_crypto_engine():
                     print(f"🏛️ [THE HUNTER] {symbol}: Targeting {reason}. Price vs VWAP: {vwap_dist}%")
                     
                     # DXY OVERRIDE: Anti-Dollar Strength
-                    from data_fetcher import get_idx_data
-                    dxy = get_idx_data(symbol="DXY")
+                    from data_fetcher import get_forex_data
+                    dxy = get_forex_data(symbol="DXY")
                     if dxy and dxy.get('trend') == 'BULLISH' and dxy.get('change', 0) > 0.2:
                          print(f"🛑 [DXY OVERRIDE] Dollar too strong! Aborting {symbol} Long.")
                          continue
