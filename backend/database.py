@@ -32,6 +32,11 @@ def init_db():
     conn.close()
 
 def log_trade(symbol, entry, tp, sl, market='crypto'):
+    # Safety: ensure all numeric values are standard python floats
+    entry = float(entry) if entry is not None else 0.0
+    tp = float(tp) if tp is not None else 0.0
+    sl = float(sl) if sl is not None else 0.0
+    
     conn = get_connection()
     cursor = conn.cursor()
     

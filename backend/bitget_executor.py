@@ -139,13 +139,18 @@ class BitgetExecutor:
                     res = requests.get(url, headers=headers, timeout=5)
                     data = res.json()
                     
-                    # MEGA DEBUG LOG
-                    print(f"🔍 [PLAN DEBUG] PT: {pt} | Type: {p_type} | Symbol: {symbol} | Response: {res.text[:200]}...")
+                    # MEGA DEBUG LOG REMOVED - Logic Refined
+                    # print(f"🔍 [PLAN DEBUG] PT: {pt} | Type: {p_type} | Symbol: {symbol} | Response: {res.text[:200]}...")
                     
                     if data.get('code') == '00000':
-                        entrusts = data.get('data', {}).get('entrustList', []) if isinstance(data.get('data'), dict) else (data.get('data') or [])
+                        # Bitget V2 uses 'entrustedList'. Handle case where it might be null or missing.
+                        res_data = data.get('data', {})
+                        if isinstance(res_data, dict):
+                            entrusts = res_data.get('entrustedList') or []
+                        else:
+                            entrusts = res_data or []
+                            
                         if isinstance(entrusts, list) and len(entrusts) > 0:
-                            print(f"✅ [PLAN FOUND] Found {len(entrusts)} orders for {pt}/{p_type}")
                             for e in entrusts:
                                 e_id = e.get('orderId') or e.get('id')
                                 if not any((x.get('orderId') or x.get('id')) == e_id for x in all_plans):
@@ -154,7 +159,7 @@ class BitgetExecutor:
                         if data.get('code') not in ['00000', '400171']:
                             print(f"❌ [PLAN ERROR] {pt}/{p_type}: {data}")
                 except Exception as e:
-                    print(f"❌ [PLAN CRITICAL] {e}")
+                    pass
         return all_plans
 
     def get_max_available(self, symbol, leverage):
@@ -375,8 +380,6 @@ class BitgetExecutor:
                     plan_orders = self.get_pending_plan_orders(symbol)
                     current_clean = self._clean_symbol(pos.get('instId') or pos.get('symbol'))
                     
-                    print(f"🔎 [MONITOR DEBUG] Checking {symbol} (Clean: {current_clean}). Found {len(plan_orders)} total plan orders.")
-
                     for plan in plan_orders:
                         plan_symbol = plan.get('instId') or plan.get('symbol')
                         plan_clean = self._clean_symbol(plan_symbol)
