@@ -443,8 +443,11 @@ class BitgetExecutor:
             except:
                 pass
                 
+            # Format price precision
+            formatted_sl = self.exchange.price_to_precision(symbol, new_sl)
+            
             self.exchange.create_order(symbol, 'market', tp_side, amount, params={
-                'triggerPrice': str(new_sl),
+                'triggerPrice': formatted_sl,
                 'triggerType': 'mark_price',
                 'reduceOnly': True
             })
