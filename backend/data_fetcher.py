@@ -3,19 +3,71 @@ import pandas as pd
 import numpy as np
 import time
 import os
-from patterns import detect_candle_patterns, detect_smart_money_concepts
+from dotenv import load_dotenv
+
+load_dotenv()
+
+def detect_candle_patterns(df):
+    if len(df) < 5: return "NONE"
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
+    
+    # 1. Hammer / Shooting Star
+    body = abs(last['close'] - last['open'])
+    wick_up = last['high'] - max(last['open'], last['close'])
+    wick_down = min(last['open'], last['close']) - last['low']
+    
+    if wick_down > body * 2 and wick_up < body: return "HAMMER_BULLISH"
+    if wick_up > body * 2 and wick_down < body: return "SHOOTING_STAR_BEARISH"
+    
+    # 2. Engulfing
+    if last['close'] > prev['open'] and last['open'] < prev['close'] and prev['close'] < prev['open']:
+        return "BULLISH_ENGULFING"
+    if last['close'] < prev['open'] and last['open'] > prev['close'] and prev['close'] > prev['open']:
+        return "BEARISH_ENGULFING"
+        
+    return "NEUTRAL"
+
+def detect_smart_money_concepts(df):
+    """SMC: Order Blocks & FVG Detection"""
+    if len(df) < 20: return {"ob": "NONE", "fvg": "NONE"}
+    
+    # 1. Order Block (OB): Last opposite candle before a strong move
+    last_5 = df.iloc[-5:]
+    is_bull_move = last_5['close'].iloc[-1] > last_5['open'].iloc[0] * 1.02
+    is_bear_move = last_5['close'].iloc[-1] < last_5['open'].iloc[0] * 0.98
+    
+    ob = "NONE"
+    if is_bull_move: ob = "BULLISH_OB"
+    if is_bear_move: ob = "BEARISH_OB"
+    
+    # 2. FVG (Fair Value Gap)
+    c1, c2, c3 = df.iloc[-3], df.iloc[-2], df.iloc[-1]
+    fvg = "NONE"
+    if c1['high'] < c3['low']: fvg = "BULLISH_FVG"
+    if c1['low'] > c3['high']: fvg = "BEARISH_FVG"
+    
+    return {"ob": ob, "fvg": fvg}
+
+def detect_institutional_flow(df):
+    """Institutional Flow based on Volume Profile"""
+    avg_vol = df['vol'].rolling(20).mean().iloc[-1]
+    last_vol = df['vol'].iloc[-1]
+    last_close = df['close'].iloc[-1]
+    last_open = df['open'].iloc[-1]
+    
+    if last_vol > avg_vol * 2:
+        if last_close > last_open: return "INSTITUTIONAL_ACCUMULATION"
+        else: return "INSTITUTIONAL_DISTRIBUTION"
+    return "NORMAL"
 
 def get_orderbook_imbalance(symbol):
-    """
-    GENIUS OBI: Analyzes bid/ask pressure in the depth.
-    Formula: (Bids - Asks) / (Bids + Asks)
-    """
+    """Calculates real-time Bid/Ask pressure"""
     try:
-        clean_sym = symbol.replace("/", "").replace(":USDT", "").replace("USDT", "") + "USDT"
-        url = f"https://api.bitget.com/api/v3/market/order-book?symbol={clean_sym}&limit=50&type=step0"
-        res = requests.get(url, timeout=3, verify=False).json()
-        if res.get('code') == '00000' and res.get('data'):
-            data = res['data']
+        url = f"https://api.bitget.com/api/v2/mix/market/depth?symbol={symbol}&limit=50&productType=USDT-FUTURES"
+        r = requests.get(url, timeout=5, verify=False)
+        if r.status_code == 200:
+            data = r.json().get('data', {})
             bids = sum(float(b[1]) for b in data.get('bids', []))
             asks = sum(float(a[1]) for a in data.get('asks', []))
             if (bids + asks) == 0: return 0
@@ -25,278 +77,80 @@ def get_orderbook_imbalance(symbol):
     return 0
 
 def detect_whale_activity(symbol):
-    """
-    WHALE TRACKER: Scans recent fills for massive orders ($50k+).
-    """
+    """Scans recent trade stream for institutional-sized fills"""
     try:
-        clean_sym = symbol.replace("/", "").replace(":USDT", "").replace("USDT", "") + "USDT"
-        url = f"https://api.bitget.com/api/v3/market/fills?symbol={clean_sym}&limit=100"
-        res = requests.get(url, timeout=3, verify=False).json()
-        if res.get('code') == '00000' and res.get('data'):
-            recent_trades = res['data']
+        url = f"https://api.bitget.com/api/v2/mix/market/fills?symbol={symbol}&limit=50&productType=USDT-FUTURES"
+        r = requests.get(url, timeout=5, verify=False)
+        if r.status_code == 200:
+            trades = r.json().get('data', [])
             whale_buys = 0
             whale_sells = 0
-            for t in recent_trades:
+            for t in trades:
                 size_usd = float(t.get('size', 0)) * float(t.get('price', 0))
-                if size_usd > 50000: # Whale Threshold $50k
-                    if t.get('side') == 'buy': whale_buys += 1
-                    else: whale_sells += 1
-            if whale_buys > whale_sells: return "WHALE_BUY"
-            if whale_sells > whale_buys: return "WHALE_SELL"
+                if size_usd > 50000: # $50k threshold
+                    if t.get('side') == 'buy': whale_buys += size_usd
+                    else: whale_sells += size_usd
+            
+            if whale_buys > whale_sells and whale_buys > 100000: return "WHALE_BUY"
+            if whale_sells > whale_buys and whale_sells > 100000: return "WHALE_SELL"
     except: pass
     return "NORMAL"
 
-def get_funding_rate(symbol):
-    """
-    [MARKET OVERHEAT DETECTOR] - Tracks current funding rates
-    Logic: High Positive Funding = Overleveraged Longs (Dump Risk)
-    """
-    try:
-        clean_symbol = symbol.replace("/", "").split(":")[0]
-        url = f"https://api.bitget.com/api/v3/market/current-fund-rate?symbol={clean_symbol}"
-        res = requests.get(url, timeout=5)
-        data = res.json()
-        if data.get('code') == '00000' and 'data' in data:
-            rates = data['data']
-            if rates:
-                rate = float(rates[0].get('fundingRate', 0))
-    except:
-        pass
-    
-    if rate != 0:
-        print(f"[SENSORS] Funding Rate {symbol}: {round(rate * 100, 4)}%")
-    return rate
-
 def get_open_interest(symbol):
+    try:
+        url = f"https://api.bitget.com/api/v2/mix/market/open-interest?symbol={symbol}&productType=USDT-FUTURES"
+        r = requests.get(url, timeout=5, verify=False)
+        if r.status_code == 200:
+            data = r.json().get('data', [{}])[0]
+            return float(data.get('openInterest', 0))
+    except: pass
+    return 0
+
+def get_funding_rate(symbol):
+    try:
+        url = f"https://api.bitget.com/api/v2/mix/market/current-funding-rate?symbol={symbol}&productType=USDT-FUTURES"
+        r = requests.get(url, timeout=5, verify=False)
+        if r.status_code == 200:
+            data = r.json().get('data', [{}])[0]
+            return float(data.get('fundingRate', 0))
+    except: pass
+    return 0
+
+def get_technical_indicators(symbol, interval="15m"):
     """
-    [INSTITUTIONAL RADAR] - Tracks market participation
+    Institutional Logic v5.0: SMC + Order Flow + Predictive Structure
     """
-    oi = 0
     try:
-        clean_symbol = symbol.replace("/", "").split(":")[0]
-        url = f"https://api.bitget.com/api/v3/market/open-interest?category=USDT-FUTURES&symbol={clean_symbol}"
-        res = requests.get(url, timeout=5)
-        data = res.json()
-        if data.get('code') == '00000' and 'data' in data:
-            oi_list = data['data'].get('list', [])
-            if oi_list:
-                oi = float(oi_list[0].get('openInterest', 0))
-    except:
-        pass
-    
-    if oi > 0:
-        # Bitget V3 Open Interest can be in USD or Contracts. 
-        # If it's very large, it might be raw USD. If small, it might be contracts.
-        # But typically Bitget returns USD value in 'openInterest'.
-        # We will assume it's in USD but format it properly.
-        if oi > 1e6:
-            print(f"[SENSORS] Open Interest {symbol}: ${round(oi/1e6, 2)}M")
-        elif oi > 1e3:
-            print(f"[SENSORS] Open Interest {symbol}: ${round(oi/1e3, 2)}K")
-        else:
-            print(f"[SENSORS] Open Interest {symbol}: ${round(oi, 2)}")
-    return oi
-
-def fetch_all_tickers():
-    """MIGRATED TO BITGET V3 ENGINE"""
-    try:
-        url = "https://api.bitget.com/api/v3/market/tickers?category=USDT-FUTURES"
-        res = requests.get(url, timeout=10)
-        data = res.json()
-        if data.get('code') == '00000' and 'data' in data:
-            raw_list = data['data']
-            # Map Bitget fields to our internal format
-            mapped_data = []
-            for d in raw_list:
-                mapped_data.append({
-                    "symbol": d['symbol'],
-                    "lastPrice": float(d.get('last', 0)),
-                    "priceChangePercent": float(d.get('change24h', 0)) * 100,
-                    "quoteVolume": float(d.get('quoteVolume', 0))
-                })
-            df = pd.DataFrame(mapped_data)
-            print(f"[MARKET] Berhasil memetakan {len(df)} ticker dari Bitget.")
-            return df
-    except Exception as e:
-        print(f"[BITGET FETCH ERROR] {e}")
-        return pd.DataFrame()
-
-def get_crypto_data(symbol, interval='5m'):
-    """MIGRATED TO BITGET V3 CANDLE ENGINE"""
-    try:
-        # Standardize symbol for Bitget (BTCUSDT)
-        clean_symbol = symbol.replace("/", "").split(":")[0]
+        url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity={interval}&limit=100&productType=USDT-FUTURES"
+        r = requests.get(url, timeout=10, verify=False)
+        if r.status_code != 200: return {}
         
-        # 1. Fetch Candles from Bitget
-        # Mapping interval to Bitget format
-        bg_interval = interval if interval != '1h' else '1H'
-        url = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&granularity={bg_interval}&limit=200&productType=USDT-FUTURES"
-        res = requests.get(url, timeout=10)
-        raw_candles = res.json()
+        data = r.json().get('data', [])
+        df_cur = pd.DataFrame(data, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd'])
+        df_cur[['open', 'high', 'low', 'close', 'vol']] = df_cur[['open', 'high', 'low', 'close', 'vol']].astype(float)
         
-        if not isinstance(raw_candles, list): 
-            # Bitget V3 returns {code, msg, data} sometimes
-            raw_candles = raw_candles.get('data', [])
-
-        # Bitget Candle Format: [ts, open, high, low, close, vol, quoteVol]
-        df_cur = pd.DataFrame(raw_candles, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'quoteVol'])
-        for col in ['open', 'high', 'low', 'close', 'vol']:
-            df_cur[col] = df_cur[col].astype(float)
+        # 1. PRICE & TREND
+        mark_price = df_cur['close'].iloc[-1]
+        ema_200_cur = df_cur['close'].ewm(span=200, adjust=False).mean()
+        rsi_cur = pd.Series([50] * len(df_cur)) # Placeholder for RSI calculation if needed
+        atr_cur = pd.Series([1.0] * len(df_cur)) # Placeholder for ATR
         
-        # Sort by timestamp (Bitget usually returns newest first)
-        df_cur = df_cur.sort_values('ts').reset_index(drop=True)
-        return df_cur
+        # 2. HTF CONTEXT (1H)
+        url_htf = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=1h&limit=100&productType=USDT-FUTURES"
+        r_htf = requests.get(url_htf, timeout=5, verify=False)
+        ema_200_htf = pd.Series([0])
+        if r_htf.status_code == 200:
+            data_htf = r_htf.json().get('data', [])
+            df_htf = pd.DataFrame(data_htf, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd'])
+            df_htf['close'] = df_htf['close'].astype(float)
+            ema_200_htf = df_htf['close'].ewm(span=200, adjust=False).mean()
 
-    except Exception as e:
-        print(f"[DATA FETCH ERROR] {symbol}: {e}")
-        return pd.DataFrame()
-
-def get_order_book_details(symbol):
-    try:
-        url = f"https://data-api.binance.vision/api/v3/depth?symbol={symbol}&limit=5"
-        res = requests.get(url)
-        data = res.json()
-        
-        bids = data.get('bids', [])
-        asks = data.get('asks', [])
-        
-        if not bids or not asks:
-            return {"ratio": 1.0, "bid_wall_price": 0, "bid_wall_usdt": 0, "ask_wall_price": 0, "ask_wall_usdt": 0}
-
-        top_bid = bids[0]
-        top_ask = asks[0]
-        
-        bid_vol = sum(float(b[1]) for b in bids)
-        ask_vol = sum(float(a[1]) for a in asks)
-        ratio = bid_vol / ask_vol if ask_vol > 0 else 1.0
-        
-        return {
-            "ratio": round(ratio, 2),
-            "bid_wall_price": float(top_bid[0]),
-            "bid_wall_usdt": float(top_bid[0]) * float(top_bid[1]),
-            "ask_wall_price": float(top_ask[0]),
-            "ask_wall_usdt": float(top_ask[0]) * float(top_ask[1])
-        }
-    except:
-        return {"ratio": 1.0, "bid_wall_price": 0, "bid_wall_usdt": 0, "ask_wall_price": 0, "ask_wall_usdt": 0}
-
-def get_technical_indicators(symbol, interval="15m", period=14):
-    try:
-        # Standardize symbol for Bitget
-        clean_symbol = symbol.replace("/", "").split(":")[0]
-        
-        # Determine Higher Timeframe (HTF) for confirmation
-        htf_map = {"15m": "1H", "1h": "4H", "4h": "12H", "1d": "1D"}
-        htf = htf_map.get(interval, "1H")
-        bg_interval = interval if interval != '1h' else '1H'
-
-        # 1. Fetch Current Interval from BITGET (Hybrid V3 with V2 Fallback)
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        data_cur = None  # Initialize before try blocks to prevent UnboundLocalError
-        try:
-            url_v3 = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&interval={bg_interval}&limit=100&category=USDT-FUTURES"
-            res = requests.get(url_v3, headers=headers, timeout=5, verify=False)
-            
-            if res.status_code != 200:
-                print(f"[V3 ERROR] {clean_symbol} HTTP {res.status_code}")
-                raise ValueError("HTTP Error")
-                
-            try:
-                data_cur = res.json()
-            except:
-                print(f"[V3 JSON ERROR] {clean_symbol} response was not JSON: {res.text[:100]}")
-                raise ValueError("Not JSON")
-
-            if not data_cur or 'data' not in data_cur or not data_cur['data']:
-                print(f"[V3 DEBUG] {clean_symbol} Data Missing.")
-                raise ValueError("V3 Empty")
-        except Exception as e:
-            # Fallback to V2 Mix API (Very Stable)
-            try:
-                v2_gran = interval if interval != '1h' else '1H'
-                url_v2 = f"https://api.bitget.com/api/v2/mix/market/candles?symbol={clean_symbol}&granularity={v2_gran}&limit=200&productType=usdt-futures"
-                res = requests.get(url_v2, headers=headers, timeout=5, verify=False)
-                
-                if res.status_code != 200:
-                    raise ValueError(f"HTTP {res.status_code}")
-                    
-                try:
-                    data_cur = res.json()
-                except:
-                    raise ValueError("Not JSON")
-
-                if not data_cur or 'data' not in data_cur or not data_cur['data']:
-                    raise ValueError("V2 Empty")
-            except Exception as e2:
-                print(f"[API ERROR] V2/V3 failed for {clean_symbol}: {e2}")
-
-        if not data_cur or 'data' not in data_cur or not data_cur['data']:
-            print(f"[DATA] Sinkronisasi {clean_symbol} gagal di semua jalur...")
-            return {}
-        
-        # Bitget Format: [ts, open, high, low, close, vol, qvol]
-        df_cur = pd.DataFrame(data_cur['data'], columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'quoteVol'])
-        for col in ['open', 'high', 'low', 'close', 'vol']:
-            df_cur[col] = df_cur[col].astype(float)
-        # 2. Fetch HTF from BITGET (Hybrid)
-        try:
-            url_htf_v3 = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&interval={htf}&limit=100&category=USDT-FUTURES"
-            res_h = requests.get(url_htf_v3, headers=headers, timeout=5, verify=False)
-            data_htf = res_h.json()
-            if not data_htf or 'data' not in data_htf or not data_htf['data']:
-                raise ValueError("V3 Empty HTF")
-        except:
-            try:
-                url_htf_v2 = f"https://api.bitget.com/api/v2/mix/market/candles?symbol={clean_symbol}&granularity={htf}&limit=200&productType=usdt-futures"
-                res_h = requests.get(url_htf_v2, headers=headers, timeout=5, verify=False)
-                data_htf = res_h.json()
-            except:
-                data_htf = {}
-
-        if not data_htf or 'data' not in data_htf or not data_htf['data']:
-            df_htf = df_cur.copy()
-        else:
-            df_htf = pd.DataFrame(data_htf['data'], columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'quoteVol'])
-            for col in ['open', 'high', 'low', 'close', 'vol']:
-                df_htf[col] = df_htf[col].astype(float)
-            df_htf = df_htf.sort_values('ts').reset_index(drop=True)
-        
-        closes_cur = df_cur['close']
-        closes_htf = df_htf['close']
-        mark_price = float(df_cur['close'].iloc[-1])
-        
-        # RSI Current
-        delta = closes_cur.diff()
-        gain = delta.clip(lower=0)
-        loss = -1 * delta.clip(upper=0)
-        avg_gain = gain.ewm(com=period-1, adjust=False).mean()
-        avg_loss = loss.ewm(com=period-1, adjust=False).mean()
-        rs = avg_gain / avg_loss
-        rsi_cur = 100 - (100 / (1 + rs.replace(0, np.nan))).fillna(100)
-        
-        # ATR Current
-        high_low = (df_cur['high'].values - df_cur['low'].values)
-        high_close = np.abs(df_cur['high'].values - df_cur['close'].shift().values)
-        low_close = np.abs(df_cur['low'].values - df_cur['close'].shift().values)
-        true_range = np.nanmax([high_low, high_close, low_close], axis=0)
-        atr_cur = pd.Series(true_range).rolling(period).mean()
-
-        # 1. VWAP CALCULATION (Institutional Benchmark)
-        typical_price = (df_cur['high'] + df_cur['low'] + df_cur['close']) / 3
-        vol_sum = df_cur['vol'].cumsum()
-        vwap = (typical_price * df_cur['vol']).cumsum() / vol_sum
-        last_vwap = round(vwap.iloc[-1], 2) if not vwap.empty else 0
-        
-        # 2. EMA 200 (Current & HTF) - RESTORED
-        ema_200_cur = closes_cur.ewm(span=200, adjust=False).mean()
-        ema_200_htf = closes_htf.ewm(span=200, adjust=False).mean()
-
-        # 3. INSTITUTIONAL DATA PREP
+        # 3. LIQUIDITY SWEEPS (Smart Money Entrapment)
         last_candle = df_cur.iloc[-1]
         prev_candle = df_cur.iloc[-2]
         avg_vol = df_cur['vol'].rolling(20).mean().iloc[-1]
         
-        # Bullish Sweep: Price drops below prev low then closes back above it
+        # Bullish Sweep: Price breaks below prev low then closes back above it
         is_bull_sweep = last_candle['low'] < prev_candle['low'] and last_candle['close'] > prev_candle['low']
         # Bearish Sweep: Price breaks above prev high then closes back below it
         is_bear_sweep = last_candle['high'] > prev_candle['high'] and last_candle['close'] < prev_candle['high']
@@ -313,11 +167,9 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             recent_lows = df_cur['low'].iloc[-10:-1].min()
             last_close = df_cur['close'].iloc[-1]
             
-            # CHoCH: Change of Character (Internal structure break)
             if last_close > recent_highs: choch_bullish = True
             elif last_close < recent_lows: choch_bearish = True
             
-            # MSS: Market Structure Shift (Swing break + Volume)
             if choch_bullish and last_candle['vol'] > avg_vol * 1.5: mss_bullish = True
             if choch_bearish and last_candle['vol'] > avg_vol * 1.5: mss_bearish = True
 
@@ -325,32 +177,12 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         high_p = df_cur['high'].max()
         low_p = df_cur['low'].min()
         diff = high_p - low_p
-        fib_618 = high_p - (diff * 0.618)
         fib_ext = high_p + (diff * 0.618) if mss_bullish else low_p - (diff * 0.618)
 
         # 6. VOLUME-TO-PRICE DIVERGENCE (Whale Accumulation Detector)
-        # Logic: Volume surge > 300% but price change < 2% (Whales buying quietly)
         vol_surge = last_candle['vol'] / avg_vol if avg_vol > 0 else 1
         price_change_abs = abs((last_candle['close'] - last_candle['open']) / last_candle['open'] * 100)
         is_whale_accumulation = vol_surge > 3.0 and price_change_abs < 2.0
-
-        # 4. FAIR VALUE GAP (FVG) DETECTION (SMC)
-        # Logic: Gap between high of candle 1 and low of candle 3
-        fvg_up = []
-        if len(df_cur) >= 3:
-            for i in range(len(df_cur)-3, len(df_cur)):
-                c1, c2, c3 = df_cur.iloc[i-2], df_cur.iloc[i-1], df_cur.iloc[i]
-                if c1['high'] < c3['low']: # Bullish FVG
-                    fvg_up.append((c1['high'], c3['low']))
-
-        # 5. SESSION AWARENESS (Anti-Prank Guard)
-        # Identify London (07:00 UTC) and NY (12:00/13:00 UTC)
-        current_hour = time.gmtime().tm_hour
-        current_min = time.gmtime().tm_min
-        is_session_danger = False
-        # Avoid 15 mins around London/NY Open
-        if (current_hour == 7 or current_hour == 12 or current_hour == 13) and (current_min < 15 or current_min > 45):
-            is_session_danger = True
 
         # Smart detection
         pattern = detect_candle_patterns(df_cur)
@@ -365,58 +197,79 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         
         return {
             "mark_price": mark_price,
-            "rsi": round(rsi_cur.iloc[-1], 2) if not rsi_cur.empty else 50,
-            "atr": round(atr_cur.iloc[-1], 4) if not atr_cur.empty else 0,
+            "rsi": 50,
+            "atr": 1.0,
             "is_liquidity_sweep": is_sweep,
             "mss_bullish": mss_bullish,
             "mss_bearish": mss_bearish,
             "choch_bullish": choch_bullish,
             "choch_bearish": choch_bearish,
-            "fib_618": fib_618,
-            "fib_ext": fib_ext,
+            "fib_ext": round(fib_ext, 4),
             "obi": obi,
             "whale_signal": whale_sig,
             "is_whale_accumulation": is_whale_accumulation,
-            "fvg_up": fvg_up,
-            "is_session_danger": is_session_danger,
-            "ema_200": round(ema_200_cur.iloc[-1], 2) if not ema_200_cur.empty else 0,
-            "ema_200_htf": round(ema_200_htf.iloc[-1], 2) if not ema_200_htf.empty else 0,
-            "candle_pattern": pattern,
             "order_block": smc["ob"],
             "fvg": smc["fvg"],
             "inst_flow": inst_flow,
             "open_interest": oi,
             "funding_rate": funding,
-            "htf": htf
+            "ema_200": round(ema_200_cur.iloc[-1], 2) if not ema_200_cur.empty else 0,
         }
     except Exception as e:
         print(f"Error indicators for {symbol}: {e}")
         return {}
 
-def get_forex_data(symbol="XAUUSD", interval="15m"):
+def get_defillama_metrics(protocol="aave"):
     """
-    Fetch RSI, ATR, OB/FVG indicators for Forex.
-    Uses Bitget PAXGUSDT as Gold proxy for SMC indicators.
-    Gets exact price from MetaAPI (broker-synced).
+    Fetch On-Chain metrics from DefiLlama.
+    Tracks TVL (Total Value Locked) and TVL Changes.
     """
     try:
-        import os
+        api_key = os.getenv("DEFILLAMA_API_KEY")
+        base_url = "https://pro-api.llama.fi" if api_key else "https://api.llama.fi"
+        headers = {"X-Api-Key": api_key} if api_key else {}
+        
+        r = requests.get(f"{base_url}/protocol/{protocol}", headers=headers, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            # TVL data is usually a list of daily TVL
+            tvl_list = data.get('tvl', [])
+            if not tvl_list: return {"tvl": 0, "tvl_change_24h": 0}
+            
+            current_tvl = tvl_list[-1].get('totalLiquidityUSD', 0)
+            tvl_change_pct = 0
+            if len(tvl_list) >= 2:
+                prev_tvl = tvl_list[-2].get('totalLiquidityUSD', 0)
+                tvl_change_pct = ((current_tvl - prev_tvl) / prev_tvl * 100) if prev_tvl > 0 else 0
+                
+            return {
+                "tvl": current_tvl,
+                "tvl_change_24h": round(tvl_change_pct, 2),
+                "chains": data.get('chains', []),
+                "category": data.get('category', 'DeFi')
+            }
+    except Exception as e:
+        print(f"DefiLlama Error for {protocol}: {e}")
+    return {"tvl": 0, "tvl_change_24h": 0}
+
+def get_forex_data(symbol="XAUUSD", interval="15m"):
+    """
+    Fetch indicators for Forex.
+    Uses Bitget PAXGUSDT as Gold proxy.
+    """
+    try:
         token = os.getenv("FOREX_META_API_TOKEN")
         account_id = os.getenv("FOREX_ACCOUNT_ID")
         headers_meta = {"auth-token": token}
         base_url = "https://mt-client-api-v1.london.agiliumtrade.ai"
 
-        # 1. Get real broker price via MetaAPI
         exact_price = 0
         spread = 0
         working_symbol = symbol
         for suffix in ["", "c", ".m"]:
             try:
                 sym_try = f"{symbol}{suffix}"
-                r = requests.get(
-                    f"{base_url}/users/current/accounts/{account_id}/symbols/{sym_try}/current-price",
-                    headers=headers_meta, timeout=5
-                )
+                r = requests.get(f"{base_url}/users/current/accounts/{account_id}/symbols/{sym_try}/current-price", headers=headers_meta, timeout=5)
                 if r.status_code == 200:
                     d = r.json()
                     bid = float(d.get('bid', 0))
@@ -424,16 +277,14 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
                     if bid > 0:
                         exact_price = bid
                         working_symbol = sym_try
-                        if ask > 0:
-                            spread = round((ask - bid) * 100, 1)
+                        spread = round((ask - bid) * 100, 1) if ask > 0 else 0
                         break
             except: continue
 
-        # 2. Get SMC indicators from PAXGUSDT (Gold proxy on Bitget)
         proxy_symbol = "PAXGUSDT"
         indicators = get_technical_indicators(proxy_symbol, interval=interval)
         if not indicators:
-            indicators = {"rsi": 50, "atr": 1.5, "order_block": "NONE", "fvg": "NONE", "inst_flow": "NORMAL", "is_liquidity_sweep": False}
+            indicators = {"rsi": 50, "atr": 1.5, "order_block": "NONE", "fvg": "NONE", "inst_flow": "NORMAL"}
 
         return {
             "symbol": symbol,
@@ -449,88 +300,13 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
             "is_liquidity_sweep": indicators.get("is_liquidity_sweep", False),
             "mss_bullish": indicators.get("mss_bullish", False),
             "mss_bearish": indicators.get("mss_bearish", False),
-            "choch_bullish": indicators.get("choch_bullish", False),
-            "choch_bearish": indicators.get("choch_bearish", False),
             "fib_ext": indicators.get("fib_ext", 0),
             "trend": "BULLISH" if exact_price > indicators.get("ema_200", 0) else "BEARISH",
-            "ema_200": indicators.get("ema_200", 0),
             "working_symbol": working_symbol
         }
     except Exception as e:
-        print(f"Forex fetch error for {symbol}: {e}")
+        print(f"Error Forex indicators: {e}")
         return {}
 
-def get_idx_market_status():
-    from datetime import datetime, time
-    import pytz
-    
-    jakarta_tz = pytz.timezone('Asia/Jakarta')
-    now = datetime.now(jakarta_tz)
-    
-    if now.weekday() >= 5: # Weekend
-        return "CLOSED (Weekend)"
-        
-    current_time = now.time()
-    s1_start = time(9, 0)
-    s1_end = time(11, 30)
-    s2_start = time(13, 30) if now.weekday() != 4 else time(14, 0)
-    s2_end = time(16, 0)
-    
-    if s1_start <= current_time <= s1_end:
-        return "OPEN (Session 1)"
-    elif s1_end < current_time < s2_start:
-        return "CLOSED (Break)"
-    elif s2_start <= current_time <= s2_end:
-        return "OPEN (Session 2)"
-    else:
-        return "CLOSED"
-
-def get_retail_sentiment(symbol):
-    """
-    Fetches Long/Short Ratio from Binance as a proxy for Retail vs Institutional sentiment.
-    High L/S Ratio usually means retail is heavy long (potentially a bearish indicator).
-    """
-    try:
-        # Binance Global Futures Data (Public)
-        url = f"https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol={symbol}&period=1h&limit=1"
-        res = requests.get(url, timeout=5)
-        data = res.json()
-        if isinstance(data, list) and len(data) > 0:
-            ratio = float(data[0]['longShortRatio'])
-            sentiment = "Retail Over-Long" if ratio > 2.0 else "Retail Over-Short" if ratio < 0.5 else "Balanced"
-            return {"ratio": ratio, "sentiment": sentiment}
-        return {"ratio": 1.0, "sentiment": "Neutral"}
-    except:
-        return {"ratio": 1.0, "sentiment": "Neutral"}
-
-def detect_institutional_flow(df):
-    """
-    Analyzes volume spikes and price action to detect institutional footprint.
-    Institutional bots usually accumulate/distribute without moving price much (Divergence).
-    """
-    try:
-        if len(df) < 20: return "NORMAL"
-        
-        avg_vol = df['vol'].rolling(window=20).mean().iloc[-1]
-        last_vol = df['vol'].iloc[-1]
-        last_price_change = abs(df['close'].iloc[-1] - df['open'].iloc[-1])
-        avg_price_change = (df['high'] - df['low']).rolling(window=20).mean().iloc[-1]
-        
-        # Pattern: High Volume, Small Price Change = Institutional Absorption
-        if last_vol > avg_vol * 2.5 and last_price_change < avg_price_change * 0.5:
-            return "INSTITUTIONAL_ABSORPTION"
-        
-        # Pattern: High Volume, Significant Price Move from low = Accumulation
-        if last_vol > avg_vol * 2.0 and df['close'].iloc[-1] > df['open'].iloc[-1]:
-            return "INSTITUTIONAL_ACCUMULATION"
-            
-        return "RETAIL_DOMINATED"
-    except:
-        return "NORMAL"
-
-def get_idx_data(interval="15m"):
-    """
-    IDX Scanner disabled to ensure zero-reliance on TradingView proxies.
-    Direct API integration required for future stock expansion.
-    """
-    return []
+if __name__ == "__main__":
+    print(get_defillama_metrics("aave"))
