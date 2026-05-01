@@ -2,6 +2,7 @@ import ccxt
 import os
 import time
 import json
+import traceback
 from dotenv import load_dotenv
 
 # Standard loading
@@ -9,21 +10,21 @@ load_dotenv()
 
 class BitgetExecutor:
     def __init__(self):
-        # Explicitly pull from env
-        api_key = os.getenv('BITGET_API_KEY')
-        api_secret = os.getenv('BITGET_API_SECRET')
-        passphrase = os.getenv('BITGET_PASSWORD')
+        # [STABLE] Exact environment variables from Commit ae01681
+        self.api_key = os.getenv("BITGET_API_KEY")
+        self.secret_key = os.getenv("BITGET_SECRET_KEY")
+        self.passphrase = os.getenv("BITGET_PASSPHRASE", "")
 
         self.exchange = ccxt.bitget({
-            'apiKey': api_key,
-            'secret': api_secret,
-            'password': passphrase,
+            'apiKey': self.api_key,
+            'secret': self.secret_key,
+            'password': self.passphrase,
             'enableRateLimit': True,
             'options': {'defaultType': 'swap'}
         })
         
         # Security Check
-        if not api_key or not api_secret:
+        if not self.api_key or not self.secret_key:
              print("❌ [CRITICAL] Bitget Credentials MISSING! Check your .env file.")
         
         self.is_mix = True
