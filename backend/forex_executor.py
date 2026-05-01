@@ -200,7 +200,7 @@ class ForexExecutor:
                             confidence = 1 if inst_flow == 'INSTITUTIONAL_ABSORPTION' else 0
 
                     # GENIUS DXY SHIELD: Don't fight the Dollar
-                    dxy_trend = fx_data.get('dxy_trend', 'NEUTRAL')
+                    dxy_trend = dxy_data.get('trend', 'NEUTRAL')
                     if should_trade:
                         if side == 'buy' and dxy_trend == 'BULLISH': should_trade = False
                         if side == 'sell' and dxy_trend == 'BEARISH': should_trade = False

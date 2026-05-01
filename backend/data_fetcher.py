@@ -274,9 +274,20 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
             except: continue
 
         indicators = get_technical_indicators("PAXGUSDT", interval=interval)
+        
+        # Calculate Trend based on EMA 200
+        last_price = exact_price if exact_price > 0 else indicators.get("mark_price", 0)
+        ema_200 = indicators.get("ema_200", 0)
+        trend = "NEUTRAL"
+        if last_price > ema_200 and ema_200 > 0: trend = "BULLISH"
+        elif last_price < ema_200 and ema_200 > 0: trend = "BEARISH"
+        
+        # Spread calculation (simplified if not available from MetaAPI)
+        spread = 50 # Default safe spread
+        
         return {
             "symbol": symbol,
-            "lastPrice": exact_price if exact_price > 0 else indicators.get("mark_price", 0),
+            "lastPrice": last_price,
             "rsi": indicators.get("rsi", 50),
             "order_block": indicators.get("order_block", "NONE"),
             "fvg": indicators.get("fvg", "NONE"),
@@ -289,6 +300,9 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
             "choch_bullish": indicators.get("choch_bullish", False),
             "choch_bearish": indicators.get("choch_bearish", False),
             "fib_ext": indicators.get("fib_ext", 0),
+            "trend": trend,
+            "dxy_trend": trend if symbol == "DXY" else "NEUTRAL",
+            "spread": spread,
             "working_symbol": working_symbol
         }
     except Exception as e:
