@@ -91,6 +91,12 @@ def run_crypto_engine():
                 
                 if clean_sym_base in open_bases:
                     continue
+
+                # ALTCOIN PRIORITY: If capital is small, skip BTC to focus on higher-alpha Alts
+                if clean_sym_base == 'BTC' and len(candidates) > 3:
+                    if int(time.time()) % 60 < 10:
+                        print(f"[ALT PRIORITY] Skipping BTC to focus on high-alpha Altcoins.")
+                    continue
                 
                 # 1. CIRCUIT BREAKER CHECK (Global Risk Manager)
                 from database import get_performance_stats

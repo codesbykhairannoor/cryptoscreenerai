@@ -110,7 +110,7 @@ class ForexExecutor:
         print("[SYSTEM] Dewa Scalper Engine V2 (SMC & OrderFlow) AKTIF!")
         
         last_auto_trade = 0
-        AUTO_COOLDOWN = 300 # 5 Mins
+        AUTO_COOLDOWN = 5 # 5s for Military Scalping
         
         while True:
             try:
@@ -163,18 +163,18 @@ class ForexExecutor:
                             print(f"📊 [FOREX ENGINE] Waiting for Setup... RSI: {rsi} | OB: {ob_status}")
 
                     if should_trade and (time.time() - last_auto_trade > AUTO_COOLDOWN):
-                        if active_count >= 10: continue
-                        if spread > 80: continue # Spread safety
+                        if len(positions) >= 100: continue
+                        if spread > 150: continue # Spread safety
                         
-                        # Barrage based on confidence
-                        trades_count = 5 if confidence == 1 else 3
+                        # Institutional Barrage (Military Style)
+                        trades_count = 10 if confidence == 1 else 5
                         atr = fx_data.get('atr', 1.0)
                         price = fx_data['lastPrice']
                         
-                        tp = price + (atr * 3) if side == 'buy' else price - (atr * 3)
-                        sl = price - (atr * 2) if side == 'buy' else price + (atr * 2)
+                        tp = price + (atr * 4) if side == 'buy' else price - (atr * 4)
+                        sl = price - (atr * 3) if side == 'buy' else price + (atr * 3)
                         
-                        print(f"[ARCHITECT SNIPER] SMC Entry: {side.upper()} | Confidence: {confidence}")
+                        print(f"[MILITARY FOREX] {side.upper()} Barrage Initiated! Count: {trades_count}")
                         
                         # Execute Batch
                         for i in range(trades_count):
