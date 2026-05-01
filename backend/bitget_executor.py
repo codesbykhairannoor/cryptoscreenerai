@@ -208,13 +208,13 @@ class BitgetExecutor:
                 ticker = self.exchange.fetch_ticker(symbol)
                 price = ticker['last']
 
-            # 1. MANDATORY SL (5%)
-            final_sl = sl if sl else (price * 0.95 if side.lower() in ['long', 'buy'] else price * 1.05)
+            # 1. MANDATORY SL (30% - High Breathing Room)
+            final_sl = sl if sl else (price * 0.70 if side.lower() in ['long', 'buy'] else price * 1.30)
             sl_params = {**params, 'stopLossPrice': final_sl}
             self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=sl_params)
 
-            # 2. MANDATORY TP (50%)
-            final_tp = tp if tp else (price * 1.50 if side.lower() in ['long', 'buy'] else price * 0.50)
+            # 2. MANDATORY TP (100% - Big Reward Capture)
+            final_tp = tp if tp else (price * 2.0 if side.lower() in ['long', 'buy'] else price * 0.10)
             tp_params = {**params, 'takeProfitPrice': final_tp}
             self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=tp_params)
             
@@ -320,19 +320,19 @@ class BitgetExecutor:
                 if int(now) % 30 < 2:
                     print(f"[MONITOR] {symbol} | PNL: {pnl}% | SL: {'OK' if has_sl else 'MISSING'} | TP: {'OK' if has_tp else 'MISSING'}")
 
-                # 1. EMERGENCY HARD EXIT (-20%)
-                if pnl <= -20:
-                    print(f"[HARD EXIT] Symbol {symbol} hit -20% PNL. Closing immediately.")
+                # 1. EMERGENCY HARD EXIT (-35%)
+                if pnl <= -35:
+                    print(f"[HARD EXIT] Symbol {symbol} hit -35% PNL. Closing immediately.")
                     self.exchange.create_order(symbol, 'market', 'sell' if side in ['long', 'buy'] else 'buy', size)
                     continue
 
-                # 2. INITIAL GUARD (SL & TP)
+                # 2. INITIAL GUARD (SL 30% & TP 100%)
                 if (not has_sl or not has_tp) and now - self.startup_time > self.warmup_period:
                     if now - self._last_sl_set.get(symbol, 0) > 60:
-                        print(f"[GUARD] Protecting {symbol} with SL/TP")
-                        # Tight SL (5%) and Institutional TP (50%)
-                        sl_price = entry * 0.95 if side in ['long', 'buy'] else entry * 1.05
-                        tp_price = entry * 1.50 if side in ['long', 'buy'] else entry * 0.50
+                        print(f"[GUARD] Protecting {symbol} with Aggressive SL/TP")
+                        # SL 30% and TP 100%
+                        sl_price = entry * 0.70 if side in ['long', 'buy'] else entry * 1.30
+                        tp_price = entry * 2.0 if side in ['long', 'buy'] else entry * 0.10
                         
                         # Set SL/TP via unified update
                         self.update_sl_price(symbol, side, size, sl_price)
