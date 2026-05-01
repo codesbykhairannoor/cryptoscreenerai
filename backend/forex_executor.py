@@ -238,19 +238,27 @@ class ForexExecutor:
                         
                         last_auto_trade = time.time()
 
-                    # GENIUS ATR TRAILING: Secure profits based on volatility
-                    atr = fx_data.get('atr', 1.0)
+                    # MILITARY PIP TRAILING (Secure Profits Dynamically)
                     for p in positions:
                         if 'XAU' not in p.get('symbol', '').upper(): continue
                         open_price = float(p.get('openPrice', 0))
                         current_price = float(p.get('currentPrice', 0))
                         pos_id = p.get('id')
+                        pos_type = p.get('type') # POSITION_TYPE_BUY or POSITION_TYPE_SELL
                         
-                        # Move to BE once profit is > 1.2 ATR points
-                        profit_dist = abs(current_price - open_price)
-                        if profit_dist > (atr * 1.5):
-                            new_sl = open_price + (atr * 0.2) if p.get('type') == 'POSITION_TYPE_BUY' else open_price - (atr * 0.2)
+                        # Calculate current profit in points (1.0 = 10 pips)
+                        profit_dist = (current_price - open_price) if pos_type == 'POSITION_TYPE_BUY' else (open_price - current_price)
+                        
+                        # 1. MOVE TO BREAKEVEN (At +10 Pips)
+                        if profit_dist >= 1.0: # 10 Pips
+                            new_sl = open_price + 0.1 if pos_type == 'POSITION_TYPE_BUY' else open_price - 0.1
                             self.update_forex_sl(pos_id, new_sl)
+                        
+                        # 2. PROGRESSIVE TRAIL (Every +5 Pips after BE)
+                        if profit_dist >= 1.5: # 15 Pips
+                            # Trail 5 pips behind current price
+                            trail_sl = current_price - 0.5 if pos_type == 'POSITION_TYPE_BUY' else current_price + 0.5
+                            self.update_forex_sl(pos_id, trail_sl)
 
                 time.sleep(1)
             except Exception as e:
