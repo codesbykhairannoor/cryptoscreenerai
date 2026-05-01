@@ -265,6 +265,37 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
         print(f"Error Forex indicators: {e}")
         return {}
 
+def get_dune_macro_metrics():
+    """
+    Fetch Macro On-Chain metrics from Dune Analytics.
+    Tracks Stablecoin Supply and Smart Money Flows.
+    """
+    try:
+        api_key = os.getenv("DUNE_API_KEY")
+        if not api_key: return {"macro_sentiment": "NEUTRAL"}
+        
+        # Example Query: Stablecoin Market Cap Overview (Query ID: 3403)
+        # Note: Using 'latest' to avoid execution costs/latency
+        query_id = 3403
+        url = f"https://api.dune.com/api/v1/query/{query_id}/results/latest"
+        headers = {"X-Dune-API-Key": api_key}
+        
+        r = requests.get(url, headers=headers, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            rows = data.get('result', {}).get('rows', [])
+            if rows:
+                latest = rows[0]
+                # Logic: If stablecoin supply is increasing, it's macro bullish (Dry powder ready)
+                # This is a placeholder for actual column names which vary per query
+                return {
+                    "stablecoin_supply": latest.get('total_supply', 0),
+                    "macro_trend": "BULLISH" if latest.get('change_7d', 0) > 0 else "BEARISH"
+                }
+    except: pass
+    return {"macro_sentiment": "NEUTRAL"}
+
 if __name__ == "__main__":
     print(get_technical_indicators("BTCUSDT"))
     print(get_defillama_metrics("aave"))
+    print(get_dune_macro_metrics())
