@@ -190,10 +190,77 @@ class BitgetPublicWS:
                 print(f"[PUBLIC WS ERROR] {e}")
                 await asyncio.sleep(5)
 
+class FinnhubWS:
+    """
+    [THE ORACLE] - Finnhub WebSocket for Global News & Prices
+    Tracks real-time news sentiment and high-fidelity global prices.
+    """
+    def __init__(self):
+        self.api_key = os.getenv("FINNHUB_API_KEY")
+        self.url = f"wss://ws.finnhub.io?token={self.api_key}"
+        self.is_running = True
+
+    async def subscribe(self, ws):
+        # Subscribe to News and Major Asset prices
+        targets = ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "IC MARKETS:1"] # 1 is Gold on some feeds
+        for t in targets:
+            await ws.send(json.dumps({"type": "subscribe", "symbol": t}))
+        
+        # Subscribe to real-time news
+        await ws.send(json.dumps({"type": "subscribe-news", "symbol": "AAPL"})) # Broad market news
+        print("[FINNHUB WS] Subscribed to Premium News and Global Assets!")
+
+    def analyze_sentiment(self, text):
+        # Simple high-speed institutional sentiment logic
+        positive = ["surge", "bullish", "growth", "win", "buy", "jump", "success", "approved", "inflow"]
+        negative = ["crash", "bearish", "dump", "fall", "sell", "drop", "failure", "rejected", "outflow", "warn"]
+        
+        score = 0
+        text = text.lower()
+        for p in positive: 
+            if p in text: score += 0.2
+        for n in negative: 
+            if n in text: score -= 0.2
+        return max(-1, min(1, score))
+
+    async def listen(self):
+        from shared_state import state
+        while self.is_running:
+            try:
+                async with websockets.connect(self.url) as ws:
+                    await self.subscribe(ws)
+                    while True:
+                        msg = await ws.recv()
+                        data = json.loads(msg)
+                        m_type = data.get("type")
+                        
+                        if m_type == "news" and "data" in data:
+                            for n in data["data"]:
+                                headline = n.get("headline", "")
+                                score = self.analyze_sentiment(headline)
+                                state.rt_news.append({"headline": headline, "score": score, "time": time.time()})
+                                if len(state.rt_news) > 50: state.rt_news.pop(0)
+                                print(f"📰 [NEWS] {headline[:60]}... | Sentiment: {score}")
+                                
+                        elif m_type == "trade" and "data" in data:
+                            for t in data["data"]:
+                                sym = t.get("s")
+                                price = float(t.get("p", 0))
+                                state.rt_price[f"FINNHUB:{sym}"] = price
+            except Exception as e:
+                print(f"[FINNHUB WS ERROR] {e}")
+                await asyncio.sleep(5)
+
 async def main():
     private_ws = BitgetPrivateWS()
     public_ws = BitgetPublicWS()
-    await asyncio.gather(private_ws.listen(), public_ws.listen())
+    finnhub_ws = FinnhubWS()
+    
+    await asyncio.gather(
+        private_ws.listen(),
+        public_ws.listen(),
+        finnhub_ws.listen()
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())

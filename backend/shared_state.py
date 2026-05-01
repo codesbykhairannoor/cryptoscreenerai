@@ -21,6 +21,10 @@ class SharedState:
             cls._instance.rt_whale = {} # Symbol -> signal (WHALE_BUY/SELL)
             cls._instance.rt_oi = {} # Symbol -> open interest
             cls._instance.rt_price = {} # Symbol -> last price
+            
+            # NEWS SENTIMENT (Finnhub)
+            cls._instance.news_sentiment = {} # Symbol -> score (-1 to 1)
+            cls._instance.rt_news = [] # List of recent headlines
         return cls._instance
 
     def update_positions(self, positions):
