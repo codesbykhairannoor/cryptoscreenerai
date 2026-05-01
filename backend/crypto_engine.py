@@ -158,6 +158,12 @@ def run_crypto_engine():
                     should_trade = True
                     side = "sell"
                     reason = "BEARISH SMC FVG REJECTION (PREMIUM)"
+                
+                # Logic E: Sentiment Momentum Short (Military Style)
+                elif not market_is_bullish and vwap_dist > 0.7:
+                    should_trade = True
+                    side = "sell"
+                    reason = "BEARISH MOMENTUM (RELIEF PUMP RELIANCE)"
 
                 if should_trade and mark_price > 0:
                     # ORDER DEPTH PROXY
