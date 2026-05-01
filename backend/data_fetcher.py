@@ -51,12 +51,13 @@ def detect_smart_money_concepts(df):
 
 def detect_institutional_flow(df):
     """Institutional Flow based on Volume Profile"""
+    if len(df) < 20: return "NORMAL"
     avg_vol = df['vol'].rolling(20).mean().iloc[-1]
     last_vol = df['vol'].iloc[-1]
     last_close = df['close'].iloc[-1]
     last_open = df['open'].iloc[-1]
     
-    if last_vol > avg_vol * 2:
+    if last_vol > avg_vol * 2.5:
         if last_close > last_open: return "INSTITUTIONAL_ACCUMULATION"
         else: return "INSTITUTIONAL_DISTRIBUTION"
     return "NORMAL"
@@ -87,7 +88,7 @@ def detect_whale_activity(symbol):
             whale_sells = 0
             for t in trades:
                 size_usd = float(t.get('size', 0)) * float(t.get('price', 0))
-                if size_usd > 50000: # $50k threshold
+                if size_usd > 50000:
                     if t.get('side') == 'buy': whale_buys += size_usd
                     else: whale_sells += size_usd
             
@@ -118,7 +119,7 @@ def get_funding_rate(symbol):
 
 def get_technical_indicators(symbol, interval="15m"):
     """
-    Institutional Logic v5.0: SMC + Order Flow + Predictive Structure
+    ULTIMATE INDICATOR ENGINE v5.1: SMC + Order Flow + Predictive Structure
     """
     try:
         url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity={interval}&limit=100&productType=USDT-FUTURES"
@@ -129,34 +130,29 @@ def get_technical_indicators(symbol, interval="15m"):
         df_cur = pd.DataFrame(data, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd'])
         df_cur[['open', 'high', 'low', 'close', 'vol']] = df_cur[['open', 'high', 'low', 'close', 'vol']].astype(float)
         
-        # 1. PRICE & TREND
+        # 1. EMA & TREND
         mark_price = df_cur['close'].iloc[-1]
         ema_200_cur = df_cur['close'].ewm(span=200, adjust=False).mean()
-        rsi_cur = pd.Series([50] * len(df_cur)) # Placeholder for RSI calculation if needed
-        atr_cur = pd.Series([1.0] * len(df_cur)) # Placeholder for ATR
         
         # 2. HTF CONTEXT (1H)
         url_htf = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=1h&limit=100&productType=USDT-FUTURES"
         r_htf = requests.get(url_htf, timeout=5, verify=False)
-        ema_200_htf = pd.Series([0])
+        ema_200_htf_val = 0
         if r_htf.status_code == 200:
             data_htf = r_htf.json().get('data', [])
             df_htf = pd.DataFrame(data_htf, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd'])
             df_htf['close'] = df_htf['close'].astype(float)
-            ema_200_htf = df_htf['close'].ewm(span=200, adjust=False).mean()
+            ema_htf = df_htf['close'].ewm(span=200, adjust=False).mean()
+            ema_200_htf_val = ema_htf.iloc[-1] if not ema_htf.empty else 0
 
-        # 3. LIQUIDITY SWEEPS (Smart Money Entrapment)
+        # 3. LIQUIDITY SWEEPS
         last_candle = df_cur.iloc[-1]
         prev_candle = df_cur.iloc[-2]
         avg_vol = df_cur['vol'].rolling(20).mean().iloc[-1]
-        
-        # Bullish Sweep: Price breaks below prev low then closes back above it
         is_bull_sweep = last_candle['low'] < prev_candle['low'] and last_candle['close'] > prev_candle['low']
-        # Bearish Sweep: Price breaks above prev high then closes back below it
         is_bear_sweep = last_candle['high'] > prev_candle['high'] and last_candle['close'] < prev_candle['high']
-        is_sweep = is_bull_sweep or is_bear_sweep
         
-        # 4. MARKET STRUCTURE SHIFT (MSS) & CHoCH (PREDICTING THE FUTURE)
+        # 4. MARKET STRUCTURE SHIFT (MSS)
         mss_bullish = False
         mss_bearish = False
         choch_bullish = False
@@ -166,40 +162,28 @@ def get_technical_indicators(symbol, interval="15m"):
             recent_highs = df_cur['high'].iloc[-10:-1].max()
             recent_lows = df_cur['low'].iloc[-10:-1].min()
             last_close = df_cur['close'].iloc[-1]
-            
             if last_close > recent_highs: choch_bullish = True
             elif last_close < recent_lows: choch_bearish = True
-            
             if choch_bullish and last_candle['vol'] > avg_vol * 1.5: mss_bullish = True
             if choch_bearish and last_candle['vol'] > avg_vol * 1.5: mss_bearish = True
 
-        # 5. FIBONACCI PREDICTIVE LEVELS
+        # 5. PREDICTIVE FIB
         high_p = df_cur['high'].max()
         low_p = df_cur['low'].min()
         diff = high_p - low_p
         fib_ext = high_p + (diff * 0.618) if mss_bullish else low_p - (diff * 0.618)
 
-        # 6. VOLUME-TO-PRICE DIVERGENCE (Whale Accumulation Detector)
-        vol_surge = last_candle['vol'] / avg_vol if avg_vol > 0 else 1
-        price_change_abs = abs((last_candle['close'] - last_candle['open']) / last_candle['open'] * 100)
-        is_whale_accumulation = vol_surge > 3.0 and price_change_abs < 2.0
-
-        # Smart detection
-        pattern = detect_candle_patterns(df_cur)
-        smc = detect_smart_money_concepts(df_cur)
-        inst_flow = detect_institutional_flow(df_cur)
-        oi = get_open_interest(symbol)
-        funding = get_funding_rate(symbol)
-        
-        # 7. ORDER BOOK & WHALE INTELLIGENCE (The Genius Layer)
+        # 6. WHALE & OBI
         obi = get_orderbook_imbalance(symbol)
         whale_sig = detect_whale_activity(symbol)
+        smc = detect_smart_money_concepts(df_cur)
+        inst_flow = detect_institutional_flow(df_cur)
         
         return {
             "mark_price": mark_price,
-            "rsi": 50,
+            "rsi": 50, # Placeholder
             "atr": 1.0,
-            "is_liquidity_sweep": is_sweep,
+            "is_liquidity_sweep": is_bull_sweep or is_bear_sweep,
             "mss_bullish": mss_bullish,
             "mss_bearish": mss_bearish,
             "choch_bullish": choch_bullish,
@@ -207,64 +191,45 @@ def get_technical_indicators(symbol, interval="15m"):
             "fib_ext": round(fib_ext, 4),
             "obi": obi,
             "whale_signal": whale_sig,
-            "is_whale_accumulation": is_whale_accumulation,
             "order_block": smc["ob"],
             "fvg": smc["fvg"],
             "inst_flow": inst_flow,
-            "open_interest": oi,
-            "funding_rate": funding,
             "ema_200": round(ema_200_cur.iloc[-1], 2) if not ema_200_cur.empty else 0,
+            "ema_200_htf": round(ema_200_htf_val, 2),
+            "open_interest": get_open_interest(symbol),
+            "funding_rate": get_funding_rate(symbol)
         }
     except Exception as e:
         print(f"Error indicators for {symbol}: {e}")
         return {}
 
 def get_defillama_metrics(protocol="aave"):
-    """
-    Fetch On-Chain metrics from DefiLlama.
-    Tracks TVL (Total Value Locked) and TVL Changes.
-    """
+    """Fetch On-Chain metrics from DefiLlama (FREE API)"""
     try:
-        api_key = os.getenv("DEFILLAMA_API_KEY")
-        base_url = "https://pro-api.llama.fi" if api_key else "https://api.llama.fi"
-        headers = {"X-Api-Key": api_key} if api_key else {}
-        
-        r = requests.get(f"{base_url}/protocol/{protocol}", headers=headers, timeout=10)
+        url = f"https://api.llama.fi/protocol/{protocol}"
+        r = requests.get(url, timeout=10)
         if r.status_code == 200:
             data = r.json()
-            # TVL data is usually a list of daily TVL
             tvl_list = data.get('tvl', [])
             if not tvl_list: return {"tvl": 0, "tvl_change_24h": 0}
-            
             current_tvl = tvl_list[-1].get('totalLiquidityUSD', 0)
             tvl_change_pct = 0
             if len(tvl_list) >= 2:
                 prev_tvl = tvl_list[-2].get('totalLiquidityUSD', 0)
                 tvl_change_pct = ((current_tvl - prev_tvl) / prev_tvl * 100) if prev_tvl > 0 else 0
-                
-            return {
-                "tvl": current_tvl,
-                "tvl_change_24h": round(tvl_change_pct, 2),
-                "chains": data.get('chains', []),
-                "category": data.get('category', 'DeFi')
-            }
-    except Exception as e:
-        print(f"DefiLlama Error for {protocol}: {e}")
+            return {"tvl": current_tvl, "tvl_change_24h": round(tvl_change_pct, 2)}
+    except: pass
     return {"tvl": 0, "tvl_change_24h": 0}
 
 def get_forex_data(symbol="XAUUSD", interval="15m"):
-    """
-    Fetch indicators for Forex.
-    Uses Bitget PAXGUSDT as Gold proxy.
-    """
+    """ULTIMATE FOREX ENGINE: MetaAPI Price + PAXG Proxy Indicators"""
     try:
         token = os.getenv("FOREX_META_API_TOKEN")
         account_id = os.getenv("FOREX_ACCOUNT_ID")
         headers_meta = {"auth-token": token}
         base_url = "https://mt-client-api-v1.london.agiliumtrade.ai"
-
+        
         exact_price = 0
-        spread = 0
         working_symbol = symbol
         for suffix in ["", "c", ".m"]:
             try:
@@ -272,26 +237,17 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
                 r = requests.get(f"{base_url}/users/current/accounts/{account_id}/symbols/{sym_try}/current-price", headers=headers_meta, timeout=5)
                 if r.status_code == 200:
                     d = r.json()
-                    bid = float(d.get('bid', 0))
-                    ask = float(d.get('ask', 0))
-                    if bid > 0:
-                        exact_price = bid
+                    if float(d.get('bid', 0)) > 0:
+                        exact_price = float(d.get('bid', 0))
                         working_symbol = sym_try
-                        spread = round((ask - bid) * 100, 1) if ask > 0 else 0
                         break
             except: continue
 
-        proxy_symbol = "PAXGUSDT"
-        indicators = get_technical_indicators(proxy_symbol, interval=interval)
-        if not indicators:
-            indicators = {"rsi": 50, "atr": 1.5, "order_block": "NONE", "fvg": "NONE", "inst_flow": "NORMAL"}
-
+        indicators = get_technical_indicators("PAXGUSDT", interval=interval)
         return {
             "symbol": symbol,
             "lastPrice": exact_price if exact_price > 0 else indicators.get("mark_price", 0),
-            "spread": spread,
             "rsi": indicators.get("rsi", 50),
-            "atr": indicators.get("atr", 1.5),
             "order_block": indicators.get("order_block", "NONE"),
             "fvg": indicators.get("fvg", "NONE"),
             "inst_flow": indicators.get("inst_flow", "NORMAL"),
@@ -300,8 +256,9 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
             "is_liquidity_sweep": indicators.get("is_liquidity_sweep", False),
             "mss_bullish": indicators.get("mss_bullish", False),
             "mss_bearish": indicators.get("mss_bearish", False),
+            "choch_bullish": indicators.get("choch_bullish", False),
+            "choch_bearish": indicators.get("choch_bearish", False),
             "fib_ext": indicators.get("fib_ext", 0),
-            "trend": "BULLISH" if exact_price > indicators.get("ema_200", 0) else "BEARISH",
             "working_symbol": working_symbol
         }
     except Exception as e:
@@ -309,4 +266,5 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
         return {}
 
 if __name__ == "__main__":
+    print(get_technical_indicators("BTCUSDT"))
     print(get_defillama_metrics("aave"))
