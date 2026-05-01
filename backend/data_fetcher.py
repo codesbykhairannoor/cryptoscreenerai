@@ -175,14 +175,16 @@ def get_technical_indicators(symbol, interval="15m"):
 
         # 6. WHALE & OBI
         obi = get_orderbook_imbalance(symbol)
-        whale_sig = detect_whale_activity(symbol)
+        whale_sig = detect_whale_activity(symbol) # Smart detection
+        pattern = detect_candle_patterns(df_cur)
         smc = detect_smart_money_concepts(df_cur)
         inst_flow = detect_institutional_flow(df_cur)
         
         return {
             "mark_price": mark_price,
-            "rsi": 50, # Placeholder
+            "rsi": 50,
             "atr": 1.0,
+            "candle_pattern": pattern,
             "is_liquidity_sweep": is_bull_sweep or is_bear_sweep,
             "mss_bullish": mss_bullish,
             "mss_bearish": mss_bearish,
@@ -197,11 +199,39 @@ def get_technical_indicators(symbol, interval="15m"):
             "ema_200": round(ema_200_cur.iloc[-1], 2) if not ema_200_cur.empty else 0,
             "ema_200_htf": round(ema_200_htf_val, 2),
             "open_interest": get_open_interest(symbol),
-            "funding_rate": get_funding_rate(symbol)
+            "funding_rate": get_funding_rate(symbol),
+            "htf": "1h"
         }
     except Exception as e:
         print(f"Error indicators for {symbol}: {e}")
         return {}
+
+def fetch_all_tickers():
+    """Fetches all USDT-FUTURES tickers from Bitget"""
+    try:
+        url = "https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES"
+        r = requests.get(url, timeout=10, verify=False)
+        if r.status_code == 200:
+            return r.json().get('data', [])
+    except: pass
+    return []
+
+def get_order_book_details(symbol):
+    """Alias for OBI calculation needed by main.py"""
+    ratio = get_orderbook_imbalance(symbol)
+    return {"ratio": ratio}
+
+def get_retail_sentiment(symbol):
+    """Placeholder for retail sentiment analysis"""
+    return {"sentiment": "Neutral", "score": 0.5}
+
+def get_idx_data():
+    """Placeholder for IDX market data"""
+    return []
+
+def get_idx_market_status():
+    """Placeholder for IDX market status"""
+    return {"status": "CLOSED", "message": "IDX Market is currently closed"}
 
 def get_defillama_metrics(protocol="aave"):
     """Fetch On-Chain metrics from DefiLlama (FREE API)"""
@@ -266,28 +296,19 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
         return {}
 
 def get_dune_macro_metrics():
-    """
-    Fetch Macro On-Chain metrics from Dune Analytics.
-    Tracks Stablecoin Supply and Smart Money Flows.
-    """
+    """Fetch Macro On-Chain metrics from Dune Analytics"""
     try:
         api_key = os.getenv("DUNE_API_KEY")
         if not api_key: return {"macro_sentiment": "NEUTRAL"}
-        
-        # Example Query: Stablecoin Market Cap Overview (Query ID: 3403)
-        # Note: Using 'latest' to avoid execution costs/latency
         query_id = 3403
         url = f"https://api.dune.com/api/v1/query/{query_id}/results/latest"
         headers = {"X-Dune-API-Key": api_key}
-        
         r = requests.get(url, headers=headers, timeout=10)
         if r.status_code == 200:
             data = r.json()
             rows = data.get('result', {}).get('rows', [])
             if rows:
                 latest = rows[0]
-                # Logic: If stablecoin supply is increasing, it's macro bullish (Dry powder ready)
-                # This is a placeholder for actual column names which vary per query
                 return {
                     "stablecoin_supply": latest.get('total_supply', 0),
                     "macro_trend": "BULLISH" if latest.get('change_7d', 0) > 0 else "BEARISH"
