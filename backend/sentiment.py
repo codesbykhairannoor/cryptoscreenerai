@@ -51,8 +51,8 @@ def get_forex_news():
             # Look for Gold or USD related news
             important = [h for h in headlines if any(x in h.upper() for x in ["GOLD", "XAU", "USD", "FED", "INFLATION", "NFP"])]
             if important:
-                return f"🔥 [FOREX NEWS] {important[0]}"
-            return f"📊 [FOREX NEWS] {headlines[0]}"
+                return f"[FOREX NEWS] {important[0]}"
+            return f"[FOREX NEWS] {headlines[0]}"
         return "Forex: Market is stable with no major news spikes."
     except:
         return "Forex: News analysis in progress..."
@@ -79,9 +79,9 @@ def get_market_news_digest():
         all_news = " ".join(c_headlines + f_headlines).upper()
         sentiment = "NEUTRAL"
         if any(x in all_news for x in ["BULLISH", "SURGE", "GAINS", "RECOVERY", "ADOPTION", "EASE"]):
-            sentiment = "BULLISH 🚀"
+            sentiment = "BULLISH"
         elif any(x in all_news for x in ["BEARISH", "CRASH", "DROP", "INFLATION", "HIKE", "CRACKDOWN"]):
-            sentiment = "BEARISH 📉"
+            sentiment = "BEARISH"
             
         return {
             "sentiment": sentiment,
@@ -105,11 +105,11 @@ def get_crypto_news(symbol):
         mentions = [h for h in headlines if clean_symbol in h.upper()]
         
         if mentions:
-            msg = f"📰 [NEWS] {clean_symbol}: {mentions[0]}"
+            msg = f"[NEWS] {clean_symbol}: {mentions[0]}"
             print(msg)
             return msg
             
-        msg = f"💡 [SENTIMENT] {clean_symbol} following BTC/ETH macro trends."
+        msg = f"[SENTIMENT] {clean_symbol} following BTC/ETH macro trends."
         return msg
     except:
         return "Analyzing market pulse..."

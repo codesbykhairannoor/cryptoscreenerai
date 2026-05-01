@@ -106,7 +106,7 @@ class BitgetPrivateWS:
                                     current_orders.append(order)
                                 state.update_orders(current_orders)
                                 if status == "filled":
-                                    print(f"✅ [PRIVATE WS] EKSEKUSI: {symbol} filled!")
+                                    print(f"[PRIVATE WS] EXECUTION: {symbol} filled!")
                                     self.executor.sync_state_with_exchange()
                                     
                         elif channel == "orders-algo" and "data" in data:
@@ -115,7 +115,7 @@ class BitgetPrivateWS:
                                 status = plan.get("state") or plan.get("status")
                                 sym = plan.get("symbol") or plan.get("instId")
                                 # RAW ALGO LOG: Now includes instId for identification
-                                print(f"📡 [ALGO STREAM] {sym} | State: {status} | Type: {plan.get('planType')} | ID: {plan.get('orderId')}")
+                                print(f"[ALGO STREAM] {sym} | State: {status} | Type: {plan.get('planType')} | ID: {plan.get('orderId')}")
                                 
                                 current_orders = state.orders
                                 current_orders = [o for o in current_orders if o.get('orderId') != plan.get('orderId')]
@@ -129,7 +129,7 @@ class BitgetPrivateWS:
                                 state.update_balance(acc.get('marginCoin'), acc)
 
             except Exception as e:
-                print(f"🔄 [PRIVATE WS RECONNECT] Error: {e}")
+                print(f"[PRIVATE WS RECONNECT] Error: {e}")
                 await asyncio.sleep(5)
 
 class BitgetWebSocketSniper:
@@ -165,12 +165,12 @@ class BitgetWebSocketSniper:
             ]
         }
         await ws.send(json.dumps(subs))
-        print("🛰️ [WS V2] Subscribed to Public Stream (BTC, ETH, SOL, XRP, BCH, LTC, DOGE, PEPE)!")
+        print("[WS V2] Subscribed to Public Stream (BTC, ETH, SOL, XRP, BCH, LTC, DOGE, PEPE)!")
 
     async def listen(self):
         while self.is_running:
             try:
-                print(f"📡 [WS] Connecting to {self.url}...")
+                print(f"[WS] Connecting to {self.url}...")
                 async with websockets.connect(self.url) as ws:
                     asyncio.create_task(self.heartbeat(ws))
                     await self.subscribe(ws)
@@ -184,7 +184,7 @@ class BitgetWebSocketSniper:
                             # Volatility spike detection logic remains here
                             pass
             except Exception as e:
-                print(f"🔄 [WS RECONNECT] Error: {e}. Retrying in 5s...")
+                print(f"[WS RECONNECT] Error: {e}. Retrying in 5s...")
                 await asyncio.sleep(5)
 
 async def main():

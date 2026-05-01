@@ -62,7 +62,7 @@ class NewsSniper:
         is_critical = CRITICAL_KEYWORDS.search(title_upper)
         
         if is_critical:
-            print(f"🔥 [CRITICAL NEWS] {title}")
+            print(f"[CRITICAL NEWS] {title}")
             
             # Sub-millisecond Sentiment Logic
             side = None
@@ -77,7 +77,7 @@ class NewsSniper:
                 print(f"⚠️ [NEWS ALERT] Critical event detected but sentiment neutral: {title}")
 
     def start(self):
-        print("🛰️ [NEWS SNIPER V2] Multi-Source Parallel Engine ACTIVE")
+        print("[NEWS SNIPER V2] Multi-Source Parallel Engine ACTIVE")
         for source in SOURCES:
             Thread(target=self.fetch_source, args=(source,), daemon=True).start()
 
@@ -88,7 +88,7 @@ def news_execution_handler(side, title, ingestion_time):
     execution_start = time.time()
     latency = (execution_start - ingestion_time) * 1000
     
-    print(f"⚡ [NEWS EXECUTION] Side: {side.upper()} | Latency: {round(latency, 4)}ms")
+    print(f"[NEWS EXECUTION] Side: {side.upper()} | Latency: {round(latency, 4)}ms")
     
     # IMPORT AND TRIGGER BARRAGE
     from forex_executor import ForexExecutor

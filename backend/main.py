@@ -34,7 +34,7 @@ def startup_event():
         executor = BitgetExecutor()
         executor.sync_state_with_exchange()
     except Exception as e:
-        print(f"⚠️ [SYSTEM] Gagal sinkronisasi state: {e}")
+        print(f"[SYSTEM] Gagal sinkronisasi state: {e}")
 
     # 1. Start Crypto Engine (Isolated)
     crypto_thread = threading.Thread(target=run_crypto_engine, daemon=True)
@@ -50,26 +50,26 @@ def startup_event():
             loop.run_until_complete(ws_main())
         ws_thread = threading.Thread(target=run_ws, daemon=True)
         ws_thread.start()
-        print("🛰️ [SYSTEM] WebSocket Sniper AKTIF!")
+        print("[SYSTEM] WebSocket Sniper AKTIF!")
     except Exception as e:
-        print(f"⚠️ [SYSTEM] Gagal memulai WebSocket: {e}")
+        print(f"[SYSTEM] Gagal memulai WebSocket: {e}")
 
     # 3. Start Forex Engine (Isolated)
     try:
         fx = ForexExecutor()
         fx_thread = threading.Thread(target=fx.monitor_forex_market, daemon=True)
         fx_thread.start()
-        print("🌍 [SYSTEM] Forex Engine AKTIF!")
+        print("[SYSTEM] Forex Engine AKTIF!")
     except Exception as e:
-        print(f"⚠️ [SYSTEM] Gagal memulai Forex Engine: {e}")
+        print(f"[SYSTEM] Gagal memulai Forex Engine: {e}")
 
     # 4. Start News Sniper (Sub-millisecond Execution)
     try:
         news_sniper = NewsSniper(news_execution_handler)
         news_sniper.start()
-        print("🛰️ [SYSTEM] News Sniper Engine AKTIF (Sub-millisecond Ready)!")
+        print("[SYSTEM] News Sniper Engine AKTIF (Sub-millisecond Ready)!")
     except Exception as e:
-        print(f"⚠️ [SYSTEM] Gagal memulai News Sniper: {e}")
+        print(f"[SYSTEM] Gagal memulai News Sniper: {e}")
 
 @app.get("/")
 def read_root():
@@ -130,9 +130,9 @@ def get_top_coins(timeframe: str = "15m"):
             coin['tp_price'] = round(entry_price + (4.0 * atr), 4) if atr else round(entry_price * 1.08, 4)
             
             if lp <= entry_price * 1.001:
-                coin['trade_signal'] = f"🚀 ENTRY NOW"
+                coin['trade_signal'] = f"ENTRY NOW"
             else:
-                coin['trade_signal'] = f"⏳ LIMIT ORDER"
+                coin['trade_signal'] = f"LIMIT ORDER"
 
         return {"status": "success", "data": top_coins}
     except Exception as e:
@@ -154,8 +154,8 @@ def get_forex(timeframe: str = "15m"):
         asset_data['sl_price'] = round(entry_price - (1.5 * atr), 2) if atr else round(entry_price - 2, 2)
         asset_data['tp_price'] = round(entry_price + (3.0 * atr), 2) if atr else round(entry_price + 5, 2)
         
-        if lp <= entry_price * 1.001: asset_data['trade_signal'] = "🚀 ENTRY NOW"
-        else: asset_data['trade_signal'] = "⏳ LIMIT ORDER"
+        if lp <= entry_price * 1.001: asset_data['trade_signal'] = "ENTRY NOW"
+        else: asset_data['trade_signal'] = "LIMIT ORDER"
         
         return {"status": "success", "data": [asset_data]}
     except Exception as e:
@@ -178,8 +178,8 @@ def get_idx(timeframe: str = "15m"):
             s['sl_price'] = round(entry_price - (2.0 * atr), 0) if atr else round(entry_price * 0.96, 0)
             s['tp_price'] = round(entry_price + (4.0 * atr), 0) if atr else round(entry_price * 1.08, 0)
             
-            if lp <= entry_price * 1.001: s['trade_signal'] = "🚀 ENTRY NOW"
-            else: s['trade_signal'] = "⏳ LIMIT ORDER"
+            if lp <= entry_price * 1.001: s['trade_signal'] = "ENTRY NOW"
+            else: s['trade_signal'] = "LIMIT ORDER"
             
         return {"status": "success", "market_status": status, "data": stocks}
     except Exception as e:
@@ -218,8 +218,8 @@ def execute_now(trade: dict):
             res = "Forex Order Sent to MT5 with SL/TP"
             
         if success:
-            return {"status": "success", "message": f"🚀 Manual {side.upper()} executed for {symbol}!"}
-        return {"status": "error", "message": f"❌ Failed: {res}"}
+            return {"status": "success", "message": f"Manual {side.upper()} executed for {symbol}!"}
+        return {"status": "error", "message": f"Failed: {res}"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

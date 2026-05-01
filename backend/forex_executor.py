@@ -75,7 +75,7 @@ class ForexExecutor:
     def place_forex_order(self, symbol, side, amount, tp=None, sl=None):
         try:
             actual_symbol = symbol
-            url = f"{self.base_url}/users/current/accounts/{self.account_id}/orders"
+            url = f"{self.base_url}/users/current/accounts/{self.account_id}/trade"
             headers = {
                 "auth-token": self.api_token,
                 "Content-Type": "application/json"
@@ -85,17 +85,16 @@ class ForexExecutor:
                 "symbol": actual_symbol,
                 "actionType": "ORDER_TYPE_BUY" if side.lower() == 'buy' else "ORDER_TYPE_SELL",
                 "volume": amount,
-                "type": "ORDER_TYPE_BUY" if side.lower() == 'buy' else "ORDER_TYPE_SELL"
+                "stopLoss": sl,
+                "takeProfit": tp,
+                "comment": "Dewa Sniper SMC V2"
             }
             
-            if tp: payload["takeProfit"] = tp
-            if sl: payload["stopLoss"] = sl
-
             res = requests.post(url, headers=headers, json=payload, timeout=10)
             result = res.json()
             
             if res.status_code == 200:
-                print(f"[FOREX SUCCESS] {side.upper()} {actual_symbol} placed! ID: {result.get('orderId')}")
+                print(f"[FOREX SUCCESS] {side.upper()} {actual_symbol} placed!")
                 return True, result
             else:
                 # Suffix hunting if failed

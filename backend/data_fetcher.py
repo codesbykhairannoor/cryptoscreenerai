@@ -40,7 +40,7 @@ def get_orderbook_analysis(symbol):
                 "wall_sentiment": "BULLISH (Whale Support)" if is_buying_wall else "BEARISH (Big Resistance)" if is_selling_wall else "NEUTRAL"
             }
     except Exception as e:
-        print(f"⚠️ [ORDERBOOK ERROR] {symbol}: {e}")
+        print(f"[ORDERBOOK ERROR] {symbol}: {e}")
     return {"bid_vol": 0, "ask_vol": 0, "ratio": 1, "is_buying_wall": False, "is_selling_wall": False, "wall_sentiment": "UNKNOWN"}
 
 def get_funding_rate(symbol):
@@ -61,7 +61,7 @@ def get_funding_rate(symbol):
         pass
     
     if rate != 0:
-        print(f"🌡️ [SENSORS] Funding Rate {symbol}: {round(rate * 100, 4)}%")
+        print(f"[SENSORS] Funding Rate {symbol}: {round(rate * 100, 4)}%")
     return rate
 
 def get_open_interest(symbol):
@@ -112,10 +112,10 @@ def fetch_all_tickers():
                     "quoteVolume": float(d.get('quoteVolume', 0))
                 })
             df = pd.DataFrame(mapped_data)
-            print(f"📊 [MARKET] Berhasil memetakan {len(df)} ticker dari Bitget.")
+            print(f"[MARKET] Berhasil memetakan {len(df)} ticker dari Bitget.")
             return df
     except Exception as e:
-        print(f"❌ [BITGET FETCH ERROR] {e}")
+        print(f"[BITGET FETCH ERROR] {e}")
         return pd.DataFrame()
 
 def get_crypto_data(symbol, interval='5m'):
@@ -145,7 +145,7 @@ def get_crypto_data(symbol, interval='5m'):
         return df_cur
 
     except Exception as e:
-        print(f"❌ [DATA FETCH ERROR] {symbol}: {e}")
+        print(f"[DATA FETCH ERROR] {symbol}: {e}")
         return pd.DataFrame()
 
 def get_order_book_details(symbol):
@@ -194,17 +194,17 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             res = requests.get(url_v3, headers=headers, timeout=5)
             
             if res.status_code != 200:
-                print(f"⚠️ [V3 ERROR] {clean_symbol} HTTP {res.status_code}")
+                print(f"[V3 ERROR] {clean_symbol} HTTP {res.status_code}")
                 raise ValueError("HTTP Error")
                 
             try:
                 data_cur = res.json()
             except:
-                print(f"⚠️ [V3 JSON ERROR] {clean_symbol} response was not JSON: {res.text[:100]}")
+                print(f"[V3 JSON ERROR] {clean_symbol} response was not JSON: {res.text[:100]}")
                 raise ValueError("Not JSON")
 
             if not data_cur or 'data' not in data_cur or not data_cur['data']:
-                print(f"⚠️ [V3 DEBUG] {clean_symbol} Data Missing.")
+                print(f"[V3 DEBUG] {clean_symbol} Data Missing.")
                 raise ValueError("V3 Empty")
         except Exception as e:
             # Fallback to V2 Mix API (Very Stable)
@@ -224,10 +224,10 @@ def get_technical_indicators(symbol, interval="15m", period=14):
                 if not data_cur or 'data' not in data_cur or not data_cur['data']:
                     raise ValueError("V2 Empty")
             except Exception as e2:
-                print(f"❌ [API ERROR] V2/V3 failed for {clean_symbol}: {e2}")
+                print(f"[API ERROR] V2/V3 failed for {clean_symbol}: {e2}")
 
         if not data_cur or 'data' not in data_cur or not data_cur['data']:
-            print(f"⏳ [DATA] Sinkronisasi {clean_symbol} gagal di semua jalur...")
+            print(f"[DATA] Sinkronisasi {clean_symbol} gagal di semua jalur...")
             return {}
         
         # Bitget Format: [ts, open, high, low, close, vol, qvol]
