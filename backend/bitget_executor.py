@@ -313,7 +313,7 @@ class BitgetExecutor:
                     # Bitget V2 Plan types: profit_loss, pos_profit_loss, pl, psl
                     if any(x in p_type for x in ['sl', 'loss', 'stop', 'psl']):
                         has_sl = True
-                    if any(x in p_type for x in ['tp', 'profit', 'psl']):
+                    if any(x in p_type for x in ['tp', 'profit', 'ptp', 'psl']):
                         has_tp = True
 
                 # Military Status Log

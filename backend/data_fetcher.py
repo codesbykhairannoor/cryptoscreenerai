@@ -143,7 +143,7 @@ def get_technical_indicators(symbol, interval="15m"):
             df_htf = pd.DataFrame(data_htf, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd'])
             df_htf['close'] = df_htf['close'].astype(float)
             ema_htf = df_htf['close'].ewm(span=200, adjust=False).mean()
-            ema_200_htf_val = ema_htf.iloc[-1] if not ema_htf.empty else 0
+            ema_200_htf_val = ema_htf.iloc[-1] if len(ema_htf) > 0 else 0
 
         # 3. LIQUIDITY SWEEPS
         last_candle = df_cur.iloc[-1]
@@ -196,7 +196,7 @@ def get_technical_indicators(symbol, interval="15m"):
             "order_block": smc["ob"],
             "fvg": smc["fvg"],
             "inst_flow": inst_flow,
-            "ema_200": round(ema_200_cur.iloc[-1], 2) if not ema_200_cur.empty else 0,
+            "ema_200": round(ema_200_cur.iloc[-1], 2) if len(ema_200_cur) > 0 else 0,
             "ema_200_htf": round(ema_200_htf_val, 2),
             "open_interest": get_open_interest(symbol),
             "funding_rate": get_funding_rate(symbol),

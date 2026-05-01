@@ -8,13 +8,22 @@ load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
 client = genai.Client(api_key=api_key) if api_key else None
 
-def analyze_and_sort(df):
-    if df.empty: return []
+def analyze_and_sort(raw_data):
+    import pandas as pd
+    if not raw_data: return []
+    
+    # Convert list of dicts to DataFrame
+    df = pd.DataFrame(raw_data)
+    if len(df) == 0: return []
+    
+    # Ensure numeric types for sorting
+    df['quoteVolume'] = pd.to_numeric(df['quoteVolume'], errors='coerce').fillna(0)
+    df['priceChangePercent'] = pd.to_numeric(df['priceChangePercent'], errors='coerce').fillna(0)
     
     # Filter for active coins including high-potential mid-caps
-    df_filtered = df[df['quoteVolume'] > 150000] # Lowered to 150k to catch 'wild' small coins
+    df_filtered = df[df['quoteVolume'] > 150000] 
     
-    # Sort by highest momentum (Volatility is key for small capital)
+    # Sort by highest momentum 
     df_sorted = df_filtered.sort_values(by='priceChangePercent', ascending=False).head(30)
     
     # If not enough coins with positive change, show highest volume ones
