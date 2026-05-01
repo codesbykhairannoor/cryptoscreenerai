@@ -16,6 +16,22 @@ def analyze_and_sort(raw_data):
     df = pd.DataFrame(raw_data)
     if len(df) == 0: return []
     
+    # Map common exchange field variations
+    # Bitget V2 often uses 'priceChangePercent' but some endpoints might vary
+    col_map = {
+        'priceChangePercent': ['priceChangePercent', 'chgPct', 'change', 'change24h'],
+        'quoteVolume': ['quoteVolume', 'quoteVol', 'volume', 'vol', 'usdtVolume']
+    }
+    
+    for target, alternatives in col_map.items():
+        if target not in df.columns:
+            for alt in alternatives:
+                if alt in df.columns:
+                    df[target] = df[alt]
+                    break
+            if target not in df.columns:
+                df[target] = 0 # Fallback
+    
     # Ensure numeric types for sorting
     df['quoteVolume'] = pd.to_numeric(df['quoteVolume'], errors='coerce').fillna(0)
     df['priceChangePercent'] = pd.to_numeric(df['priceChangePercent'], errors='coerce').fillna(0)
