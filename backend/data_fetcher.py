@@ -356,7 +356,6 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         pattern = detect_candle_patterns(df_cur)
         smc = detect_smart_money_concepts(df_cur)
         inst_flow = detect_institutional_flow(df_cur)
-        ob_analysis = get_orderbook_analysis(symbol)
         oi = get_open_interest(symbol)
         funding = get_funding_rate(symbol)
         
@@ -445,7 +444,14 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
             "order_block": indicators.get("order_block", "NONE"),
             "fvg": indicators.get("fvg", "NONE"),
             "inst_flow": indicators.get("inst_flow", "NORMAL"),
+            "obi": indicators.get("obi", 0),
+            "whale_signal": indicators.get("whale_signal", "NORMAL"),
             "is_liquidity_sweep": indicators.get("is_liquidity_sweep", False),
+            "mss_bullish": indicators.get("mss_bullish", False),
+            "mss_bearish": indicators.get("mss_bearish", False),
+            "choch_bullish": indicators.get("choch_bullish", False),
+            "choch_bearish": indicators.get("choch_bearish", False),
+            "fib_ext": indicators.get("fib_ext", 0),
             "trend": "BULLISH" if exact_price > indicators.get("ema_200", 0) else "BEARISH",
             "ema_200": indicators.get("ema_200", 0),
             "working_symbol": working_symbol

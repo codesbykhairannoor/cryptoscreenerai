@@ -15,6 +15,12 @@ class SharedState:
             cls._instance.last_acc_update = 0
             cls._instance.sl_placement_cache = {}
             cls._instance.pos_start_time = {} # Symbol -> timestamp
+            
+            # REAL-TIME INTELLIGENCE (L2 & Whale)
+            cls._instance.rt_obi = {} # Symbol -> imbalance
+            cls._instance.rt_whale = {} # Symbol -> signal (WHALE_BUY/SELL)
+            cls._instance.rt_oi = {} # Symbol -> open interest
+            cls._instance.rt_price = {} # Symbol -> last price
         return cls._instance
 
     def update_positions(self, positions):

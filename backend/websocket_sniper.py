@@ -55,7 +55,6 @@ class BitgetPrivateWS:
         print("[PRIVATE WS] Login request sent...")
 
     async def subscribe(self, ws):
-        # Subscribe to Order & Account updates (USDT-FUTURES mode)
         subs = {
             "op": "subscribe",
             "args": [
@@ -71,26 +70,16 @@ class BitgetPrivateWS:
         while self.is_running:
             try:
                 async with websockets.connect(self.url) as ws:
-                    # 1. Start heartbeat
                     asyncio.create_task(self.heartbeat(ws))
-                    
-                    # 2. Login
                     await self.login(ws)
-                    
-                    # 3. Wait for login success
                     resp = await ws.recv()
                     print(f"[PRIVATE WS] Login Response: {resp}")
-                    
-                    # 3. Subscribe
                     await self.subscribe(ws)
                     
-                    # 4. Listen Loop
                     while True:
                         msg = await ws.recv()
                         if msg == "pong": continue
-                        
                         data = json.loads(msg)
-                        action = data.get("action")
                         arg = data.get("arg", {})
                         channel = arg.get("channel")
                         from shared_state import state
@@ -114,7 +103,6 @@ class BitgetPrivateWS:
                             for plan in data["data"]:
                                 status = plan.get("state") or plan.get("status")
                                 sym = plan.get("symbol") or plan.get("instId")
-                                # RAW ALGO LOG: Now includes instId for identification
                                 print(f"[ALGO STREAM] {sym} | State: {status} | Type: {plan.get('planType')} | ID: {plan.get('orderId')}")
                                 
                                 current_orders = state.orders
@@ -132,70 +120,80 @@ class BitgetPrivateWS:
                 print(f"[PRIVATE WS RECONNECT] Error: {e}")
                 await asyncio.sleep(5)
 
-class BitgetWebSocketSniper:
+class BitgetPublicWS:
+    """
+    [THE HUNTER] - Public WebSocket for Real-time Intelligence
+    Tracks Whales, OBI, and Open Interest.
+    """
     def __init__(self):
-        # Upgrade to V2 for better stability
         self.url = "wss://ws.bitget.com/v2/ws/public"
-        self.executor = BitgetExecutor()
         self.is_running = True
-        self.last_trade_time = {}
+        self.symbols = ["BTCUSDT", "ETHUSDT", "PAXGUSDT", "SOLUSDT", "XRPUSDT", "AAVEUSDT"]
 
     async def heartbeat(self, ws):
-        """Send 'ping' every 20s to keep connection alive (V2 Requirement)"""
-        while True:
+        while self.is_running:
             try:
                 await ws.send("ping")
                 await asyncio.sleep(20)
-            except:
-                break
+            except: break
 
     async def subscribe(self, ws):
-        # Bitget V2 USDT-FUTURES Subscription
-        subs = {
-            "op": "subscribe",
-            "args": [
-                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "BTCUSDT"},
-                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "ETHUSDT"},
-                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "SOLUSDT"},
-                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "XRPUSDT"},
-                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "BCHUSDT"},
-                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "LTCUSDT"},
-                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "DOGEUSDT"},
-                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "PEPEUSDT"}
-            ]
-        }
+        args = []
+        for sym in self.symbols:
+            args.append({"instType": "USDT-FUTURES", "channel": "ticker", "instId": sym})
+            args.append({"instType": "USDT-FUTURES", "channel": "trade", "instId": sym})
+            args.append({"instType": "USDT-FUTURES", "channel": "books5", "instId": sym})
+        
+        subs = {"op": "subscribe", "args": args}
         await ws.send(json.dumps(subs))
-        print("[WS V2] Subscribed to Public Stream (BTC, ETH, SOL, XRP, BCH, LTC, DOGE, PEPE)!")
+        print(f"[PUBLIC WS] Subscribed to {len(self.symbols)} symbols (Ticker, Trade, L2 Depth)!")
 
     async def listen(self):
+        from shared_state import state
         while self.is_running:
             try:
-                print(f"[WS] Connecting to {self.url}...")
                 async with websockets.connect(self.url) as ws:
                     asyncio.create_task(self.heartbeat(ws))
                     await self.subscribe(ws)
                     
                     while True:
-                        message = await ws.recv()
-                        if message == "pong": continue
+                        msg = await ws.recv()
+                        if msg == "pong": continue
+                        data = json.loads(msg)
+                        arg = data.get("arg", {})
+                        channel = arg.get("channel")
+                        symbol = arg.get("instId")
                         
-                        data = json.loads(message)
-                        if "data" in data:
-                            # Volatility spike detection logic remains here
-                            pass
+                        if not symbol: continue
+                        
+                        if channel == "trade" and "data" in data:
+                            for t in data["data"]:
+                                size_usd = float(t.get("sz", 0)) * float(t.get("px", 0))
+                                if size_usd > 50000:
+                                    side = "BUY" if t.get("side") == "buy" else "SELL"
+                                    state.rt_whale[symbol] = f"WHALE_{side}"
+                                    print(f"🐋 [WHALE ALERT] {symbol} | {side} | ${round(size_usd/1000, 1)}K")
+                        
+                        elif channel == "books5" and "data" in data:
+                            for d in data["data"]:
+                                bids = sum(float(b[1]) for b in d.get("bids", []))
+                                asks = sum(float(a[1]) for a in d.get("asks", []))
+                                if (bids + asks) > 0:
+                                    state.rt_obi[symbol] = round((bids - asks) / (bids + asks), 4)
+
+                        elif channel == "ticker" and "data" in data:
+                            for t in data["data"]:
+                                state.rt_price[symbol] = float(t.get("lastPr", 0))
+                                if t.get("openInterest"):
+                                    state.rt_oi[symbol] = float(t.get("openInterest"))
             except Exception as e:
-                print(f"[WS RECONNECT] Error: {e}. Retrying in 5s...")
+                print(f"[PUBLIC WS ERROR] {e}")
                 await asyncio.sleep(5)
 
 async def main():
-    # Run Public and Private WS in parallel
-    public_ws = BitgetWebSocketSniper()
     private_ws = BitgetPrivateWS()
-    
-    await asyncio.gather(
-        public_ws.listen(),
-        private_ws.listen()
-    )
+    public_ws = BitgetPublicWS()
+    await asyncio.gather(private_ws.listen(), public_ws.listen())
 
 if __name__ == "__main__":
     asyncio.run(main())
