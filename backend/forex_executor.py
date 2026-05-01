@@ -137,7 +137,8 @@ class ForexExecutor:
                 headers = {"auth-token": self.api_token}
                 pos_res = requests.get(pos_url, headers=headers, timeout=10)
                 positions = pos_res.json() if pos_res.status_code == 200 else []
-                active_count = len([p for p in positions if 'XAU' in p.get('symbol', '').upper()])
+                # Count ALL open positions (not just XAU)
+                active_count = len(positions) if isinstance(positions, list) else 0
 
                 if fx_data:
                     rsi = fx_data.get('rsi', 50)
@@ -171,8 +172,13 @@ class ForexExecutor:
                         confidence = 1 if inst_flow == 'INSTITUTIONAL_ABSORPTION' else 0
 
                     if should_trade and (time.time() - last_auto_trade > AUTO_COOLDOWN):
-                        if len(positions) >= 15: continue
-                        if spread > 150: continue # Spread safety
+                        if active_count >= 15:
+                            print(f"[FOREX LIMIT] {active_count}/15 positions. Holding.")
+                            continue
+                        if spread > 150: continue  # Spread safety
+                        
+                        # Use working_symbol from fx_data (e.g. XAUUSDc)
+                        trade_symbol = fx_data.get('working_symbol', 'XAUUSDc')
                         
                         # Institutional Barrage (Military Style)
                         trades_count = 10 if confidence == 1 else 5
@@ -181,12 +187,12 @@ class ForexExecutor:
                         tp = broker_price + (atr * 4) if side == 'buy' else broker_price - (atr * 4)
                         sl = broker_price - (atr * 3) if side == 'buy' else broker_price + (atr * 3)
                         
-                        print(f"[MILITARY FOREX] {side.upper()} Barrage Initiated! Price: {broker_price}")
+                        print(f"[MILITARY FOREX] {side.upper()} Barrage Initiated! Price: {broker_price} Symbol: {trade_symbol}")
                         
                         for i in range(trades_count):
-                            success, _ = self.place_forex_order("XAUUSD", side, 0.01, tp=tp, sl=sl)
+                            success, _ = self.place_forex_order(trade_symbol, side, 0.01, tp=tp, sl=sl)
                             if success and i == 0:
-                                log_trade("XAUUSD", broker_price, tp, sl, market='forex')
+                                log_trade(trade_symbol, broker_price, tp, sl, market='forex')
                             time.sleep(0.1)
                         
                         last_auto_trade = time.time()

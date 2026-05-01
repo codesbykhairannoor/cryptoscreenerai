@@ -189,9 +189,10 @@ def get_technical_indicators(symbol, interval="15m", period=14):
 
         # 1. Fetch Current Interval from BITGET (Hybrid V3 with V2 Fallback)
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        data_cur = None  # Initialize before try blocks to prevent UnboundLocalError
         try:
             url_v3 = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&interval={bg_interval}&limit=100&category=USDT-FUTURES"
-            res = requests.get(url_v3, headers=headers, timeout=5)
+            res = requests.get(url_v3, headers=headers, timeout=5, verify=False)
             
             if res.status_code != 200:
                 print(f"[V3 ERROR] {clean_symbol} HTTP {res.status_code}")
@@ -211,7 +212,7 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             try:
                 v2_gran = interval if interval != '1h' else '1H'
                 url_v2 = f"https://api.bitget.com/api/v2/mix/market/candles?symbol={clean_symbol}&granularity={v2_gran}&limit=200&productType=usdt-futures"
-                res = requests.get(url_v2, headers=headers, timeout=5)
+                res = requests.get(url_v2, headers=headers, timeout=5, verify=False)
                 
                 if res.status_code != 200:
                     raise ValueError(f"HTTP {res.status_code}")
@@ -237,14 +238,14 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         # 2. Fetch HTF from BITGET (Hybrid)
         try:
             url_htf_v3 = f"https://api.bitget.com/api/v3/market/candles?symbol={clean_symbol}&interval={htf}&limit=100&category=USDT-FUTURES"
-            res_h = requests.get(url_htf_v3, headers=headers, timeout=5)
+            res_h = requests.get(url_htf_v3, headers=headers, timeout=5, verify=False)
             data_htf = res_h.json()
             if not data_htf or 'data' not in data_htf or not data_htf['data']:
                 raise ValueError("V3 Empty HTF")
         except:
             try:
                 url_htf_v2 = f"https://api.bitget.com/api/v2/mix/market/candles?symbol={clean_symbol}&granularity={htf}&limit=200&productType=usdt-futures"
-                res_h = requests.get(url_htf_v2, headers=headers, timeout=5)
+                res_h = requests.get(url_htf_v2, headers=headers, timeout=5, verify=False)
                 data_htf = res_h.json()
             except:
                 data_htf = {}
@@ -356,57 +357,60 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         return {}
 
 def get_forex_data(symbol="XAUUSD", interval="15m"):
+    """
+    Fetch RSI, ATR, OB/FVG indicators for Forex.
+    Uses Bitget PAXGUSDT as Gold proxy for SMC indicators.
+    Gets exact price from MetaAPI (broker-synced).
+    """
     try:
-        # Determine TV Ticker
-        tv_ticker = f"OANDA:{symbol}"
-        if symbol == "DXY": tv_ticker = "TVC:DXY"
-        
-        # Use PAXGUSDT as momentum proxy for Gold, or some other stable proxy if needed
-        proxy_symbol = "PAXGUSDT" if symbol == "XAUUSD" else "BTCUSDT"
-        indicators = get_technical_indicators(proxy_symbol, interval=interval)
-        
-        # Fetch EXACT Spot Price from TradingView
+        import os
+        token = os.getenv("FOREX_META_API_TOKEN")
+        account_id = os.getenv("FOREX_ACCOUNT_ID")
+        headers_meta = {"auth-token": token}
+        base_url = "https://mt-client-api-v1.london.agiliumtrade.ai"
+
+        # 1. Get real broker price via MetaAPI
         exact_price = 0
         spread = 0
-        try:
-            tv_url = 'https://scanner.tradingview.com/cfd/scan'
-            # Fetch Bid/Ask for spread calculation
-            tv_payload = {
-                'symbols': {'tickers': [tv_ticker]}, 
-                'columns': ['close', 'bid', 'ask', 'change', 'EMA200']
-            }
-            tv_res = requests.post(tv_url, json=tv_payload, timeout=5)
-            tv_data = tv_res.json()
-            if tv_data.get('data') and len(tv_data['data']) > 0:
-                cols = tv_data['data'][0]['d']
-                exact_price = float(cols[0])
-                bid = float(cols[1] or 0)
-                ask = float(cols[2] or 0)
-                ema200 = float(cols[4] or 0)
-                
-                if bid > 0 and ask > 0:
-                    # Calculate spread in pips (e.g. 1950.10 - 1950.05 = 0.05 = 5 pips)
-                    spread = round((ask - bid) * 100, 1) if "XAU" in symbol else round((ask-bid)*10000, 1)
+        working_symbol = symbol
+        for suffix in ["", "c", ".m"]:
+            try:
+                sym_try = f"{symbol}{suffix}"
+                r = requests.get(
+                    f"{base_url}/users/current/accounts/{account_id}/symbols/{sym_try}/current-price",
+                    headers=headers_meta, timeout=5
+                )
+                if r.status_code == 200:
+                    d = r.json()
+                    bid = float(d.get('bid', 0))
+                    ask = float(d.get('ask', 0))
+                    if bid > 0:
+                        exact_price = bid
+                        working_symbol = sym_try
+                        if ask > 0:
+                            spread = round((ask - bid) * 100, 1)
+                        break
+            except: continue
 
-                # Determine Trend based on EMA200
-                trend = "NEUTRAL"
-                if exact_price > ema200 * 1.001: trend = "BULLISH"
-                elif exact_price < ema200 * 0.999: trend = "BEARISH"
-                
-                indicators['trend'] = trend
-                indicators['price_change_5m'] = float(cols[3] or 0)
-                indicators['spread'] = spread
-                indicators['ema_200'] = ema200
-        except Exception as e:
-            print(f"Failed to fetch TV data for {symbol}: {e}")
-        
+        # 2. Get SMC indicators from PAXGUSDT (Gold proxy on Bitget)
+        proxy_symbol = "PAXGUSDT"
+        indicators = get_technical_indicators(proxy_symbol, interval=interval)
         if not indicators:
-            indicators = {"rsi": 50, "atr": 1.5, "trend": "NEUTRAL", "spread": 0}
+            indicators = {"rsi": 50, "atr": 1.5, "order_block": "NONE", "fvg": "NONE", "inst_flow": "NORMAL", "is_liquidity_sweep": False}
 
         return {
             "symbol": symbol,
-            "lastPrice": exact_price if exact_price > 0 else indicators.get("ema_200", 0),
-            **indicators
+            "lastPrice": exact_price if exact_price > 0 else indicators.get("mark_price", 0),
+            "spread": spread,
+            "rsi": indicators.get("rsi", 50),
+            "atr": indicators.get("atr", 1.5),
+            "order_block": indicators.get("order_block", "NONE"),
+            "fvg": indicators.get("fvg", "NONE"),
+            "inst_flow": indicators.get("inst_flow", "NORMAL"),
+            "is_liquidity_sweep": indicators.get("is_liquidity_sweep", False),
+            "trend": "BULLISH" if exact_price > indicators.get("ema_200", 0) else "BEARISH",
+            "ema_200": indicators.get("ema_200", 0),
+            "working_symbol": working_symbol
         }
     except Exception as e:
         print(f"Forex fetch error for {symbol}: {e}")
@@ -481,73 +485,8 @@ def detect_institutional_flow(df):
         return "NORMAL"
 
 def get_idx_data(interval="15m"):
-    try:
-        tv_url = 'https://scanner.tradingview.com/indonesia/scan'
-        payload = {
-            "columns": [
-                "name", "close", "change", "volume", "relative_volume_10d_calc", 
-                "market_cap_basic", "description"
-            ],
-            "filter": [
-                {"left": "is_primary", "operation": "equal", "right": True}
-            ],
-            "ignore_unknown_fields": False,
-            "options": {"lang": "id_ID"},
-            "range": [0, 100],
-            "sort": {"sortBy": "market_cap_basic", "sortOrder": "desc"},
-            "markets": ["indonesia"]
-        }
-        
-        res = requests.post(tv_url, json=payload, timeout=5)
-        data = res.json()
-        
-        raw_stocks = data.get('data') or []
-        print(f"IDX Fetch: Found {len(raw_stocks)} stocks")
-        
-        results = []
-        for item in raw_stocks:
-            symbol = item['s'].split(':')[-1]
-            cols = item['d']
-            
-            last_price = cols[1] or 0
-            if last_price == 0: continue
-            
-            rel_vol = cols[4] or 0
-            change = cols[2] or 0
-            mkt_cap = cols[5] or 0
-            
-            demand_score = 0
-            if rel_vol > 2.0: demand_score += 40
-            elif rel_vol > 1.2: demand_score += 20
-            
-            if change > 3.0: demand_score += 40
-            elif change > 0: demand_score += 20
-            
-            if mkt_cap > 1e12: demand_score += 20
-            
-            rsi = 50 + (change * 2) 
-            rsi = max(min(rsi, 85), 15)
-            
-            results.append({
-                "symbol": symbol,
-                "name": cols[0],
-                "lastPrice": last_price,
-                "change": change,
-                "rsi": rsi,
-                "atr": last_price * 0.02,
-                "ema_200": last_price,
-                "ema_200_htf": last_price,
-                "volume": cols[3] or 0,
-                "relative_volume": rel_vol,
-                "demand_score": demand_score,
-                "htf": "1h",
-                "candle_pattern": "NONE",
-                "order_block": "NONE",
-                "fvg": "NONE"
-            })
-        
-        results.sort(key=lambda x: x['demand_score'], reverse=True)
-        return results[:15] 
-    except Exception as e:
-        print(f"Error fetching IDX data: {e}")
-        return []
+    """
+    IDX Scanner disabled to ensure zero-reliance on TradingView proxies.
+    Direct API integration required for future stock expansion.
+    """
+    return []

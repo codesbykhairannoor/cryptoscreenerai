@@ -58,36 +58,38 @@ def log_trade(symbol, entry, tp, sl, market='crypto'):
 
 import requests
 
-def get_current_price(symbol):
+def get_current_price(symbol, market='crypto'):
+    """
+    GENIUS SYNC: Uses DIRECT API credentials from .env to fetch prices.
+    No more TradingView proxies.
+    """
     try:
-        if symbol == "XAUUSD" or symbol == "GC=F":
-            tv_url = 'https://scanner.tradingview.com/cfd/scan'
-            tv_payload = {'symbols': {'tickers': ['OANDA:XAUUSD']}, 'columns': ['close']}
-            tv_res = requests.post(tv_url, json=tv_payload, timeout=5)
-            tv_data = tv_res.json()
-            if tv_data.get('data') and len(tv_data['data']) > 0:
-                return float(tv_data['data'][0]['d'][0])
-        elif "." in symbol: # Likely IDX stock (e.g. BBCA.JK) or TradingView format
-            # Fetch IDX from TV
-            tv_url = 'https://scanner.tradingview.com/indonesia/scan'
-            tv_payload = {'symbols': {'tickers': [f'IDX:{symbol.replace(".JK","")}']}, 'columns': ['close']}
-            tv_res = requests.post(tv_url, json=tv_payload, timeout=5)
-            tv_data = tv_res.json()
-            if tv_data.get('data') and len(tv_data['data']) > 0:
-                return float(tv_data['data'][0]['d'][0])
-        else:
-            url = f"https://data-api.binance.vision/api/v3/ticker/price?symbol={symbol}"
-            res = requests.get(url).json()
-            if 'price' in res:
-                return float(res['price'])
+        if market == 'forex' or "XAU" in symbol:
+            from forex_executor import ForexExecutor
+            fx = ForexExecutor()
+            price = fx.get_live_price("XAUUSD")
+            if price > 0: return price
+            
+        # Crypto Fallback (Bitget Direct)
+        clean_symbol = symbol.replace("/", "").replace(":USDT", "").replace("USDT", "") + "USDT"
+        url = f"https://api.bitget.com/api/v3/market/tickers?symbol={clean_symbol}"
+        res = requests.get(url, timeout=5, verify=False).json()
+        if res.get('code') == '00000' and res.get('data'):
+            return float(res['data'][0].get('last', 0))
+            
+        # Last Resort: Binance Public (Stable)
+        url = f"https://api.binance.com/api/v3/ticker/price?symbol={clean_symbol}"
+        res = requests.get(url, timeout=5).json()
+        if 'price' in res:
+            return float(res['price'])
     except Exception as e:
-        print(f"Price check error for {symbol}: {e}")
+        pass
     return None
 
 def check_pending_trades():
     conn = get_connection()
     cursor = conn.cursor(cursor_factory=RealDictCursor)
-    cursor.execute("SELECT id, symbol, entry_price, tp_price, sl_price, status FROM trades WHERE status IN ('PENDING', 'RUNNING')")
+    cursor.execute("SELECT id, symbol, entry_price, tp_price, sl_price, status, market FROM trades WHERE status IN ('PENDING', 'RUNNING')")
     pending_trades = cursor.fetchall()
     
     for trade in pending_trades:
@@ -97,9 +99,10 @@ def check_pending_trades():
         tp = trade['tp_price']
         sl = trade['sl_price']
         current_status = trade['status']
+        market = trade.get('market', 'crypto')
         
         try:
-            current_price = get_current_price(symbol)
+            current_price = get_current_price(symbol, market=market)
             if not current_price:
                 continue
                 
