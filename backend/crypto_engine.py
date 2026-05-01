@@ -47,6 +47,16 @@ def run_crypto_engine():
             executor.manage_open_positions()
             check_pending_trades()
             
+            # 2. MARGIN UTILIZATION GUARD (v3)
+            balance = executor.get_balance()
+            if balance['total'] > 0:
+                usage = (balance['total'] - balance['free']) / balance['total']
+                if usage > 0.75: # 75% Limit
+                    if int(time.time()) % 300 < 35:
+                        print(f"⚠️ [RISK GUARD] Margin Usage at {round(usage*100, 1)}%. Holding fire to protect capital.")
+                    time.sleep(30)
+                    continue
+            
             # 2. PERIODIC NEWS VELOCITY (Every 10 Mins)
             if time.time() - last_news_report > 600:
                 digest = get_market_news_digest()
