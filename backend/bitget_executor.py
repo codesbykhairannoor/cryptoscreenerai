@@ -4,7 +4,12 @@ import time
 import json
 from dotenv import load_dotenv
 
-load_dotenv()
+# Robust .env loading
+dotenv_path = os.path.join(os.path.dirname(__file__), '.env')
+if not os.path.exists(dotenv_path):
+    dotenv_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), '.env')
+load_dotenv(dotenv_path, override=True)
+print(f"📡 [SYSTEM] Loading environment from: {dotenv_path}")
 
 class BitgetExecutor:
     def __init__(self):
@@ -201,7 +206,7 @@ class BitgetExecutor:
                 sl_params = {**params, 'stopLossPrice': sl}
                 self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=sl_params)
                 print(f"[BITGET CLASSIC] SL set at {sl}")
-            
+                
             if tp:
                 tp_params = {**params, 'takeProfitPrice': tp}
                 self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=tp_params)
