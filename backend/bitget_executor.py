@@ -305,19 +305,22 @@ class BitgetExecutor:
                 if now - self._last_sl_check.get(symbol, 0) < 10: continue
                 self._last_sl_check[symbol] = now
                 
+                # DUAL-LAYER DETECTION (REST + WebSocket Cache)
+                clean_sym = self._clean_symbol(symbol)
                 plans = self.get_pending_plan_orders(symbol)
+                ws_plans = [o for o in state.orders if self._clean_symbol(o.get('symbol', o.get('instId', ''))) == clean_sym]
+                
                 has_sl = False
                 has_tp = False
-                for p in plans:
-                    p_type = p['type'].lower()
-                    # Bitget V2 Plan types: profit_loss, pos_profit_loss, pl, psl
+                for p in (plans + ws_plans):
+                    p_type = str(p.get('type', p.get('planType', ''))).lower()
                     if any(x in p_type for x in ['sl', 'loss', 'stop', 'psl']):
                         has_sl = True
                     if any(x in p_type for x in ['tp', 'profit', 'ptp', 'psl']):
                         has_tp = True
 
                 # Military Status Log
-                if int(now) % 30 < 2:
+                if int(now) % 60 < 2: # Reduced log frequency
                     print(f"[MONITOR] {symbol} | PNL: {pnl}% | SL: {'OK' if has_sl else 'MISSING'} | TP: {'OK' if has_tp else 'MISSING'}")
 
                 # 1. EMERGENCY HARD EXIT (-35%)
