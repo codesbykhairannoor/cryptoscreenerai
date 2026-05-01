@@ -105,9 +105,7 @@ class BitgetExecutor:
         return s.strip()
 
     def get_balance(self):
-        """Unified Balance Fetcher"""
-        try:
-    def get_balance(self):
+        """Unified Balance Fetcher (WS Priority)"""
         try:
             from shared_state import state
             # 1. WS CACHE PRIORITY (Full WebSocket Mode)
