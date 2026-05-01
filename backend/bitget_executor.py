@@ -233,13 +233,13 @@ class BitgetExecutor:
                 ticker = self.exchange.fetch_ticker(symbol)
                 price = ticker['last']
 
-            # 1. MANDATORY SL (30% - High Breathing Room)
-            final_sl = sl if sl else (price * 0.70 if side.lower() in ['long', 'buy'] else price * 1.30)
+            # 1. MANDATORY SL (30% PnL at 10x)
+            final_sl = sl if sl else (price * 0.97 if side.lower() in ['long', 'buy'] else price * 1.03)
             sl_params = {**params, 'stopLossPrice': final_sl}
             self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=sl_params)
 
-            # 2. MANDATORY TP (100% - Big Reward Capture)
-            final_tp = tp if tp else (price * 2.0 if side.lower() in ['long', 'buy'] else price * 0.10)
+            # 2. MANDATORY TP (100% PnL at 10x)
+            final_tp = tp if tp else (price * 1.10 if side.lower() in ['long', 'buy'] else price * 0.90)
             tp_params = {**params, 'takeProfitPrice': final_tp}
             self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=tp_params)
             

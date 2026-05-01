@@ -184,9 +184,14 @@ def run_crypto_engine():
                          print(f"[DXY OVERRIDE] Dollar too strong! Aborting {symbol} Long.")
                          continue
 
-                    # Calculate precise SL/TP
-                    tp = mark_price * 1.03 # 3% Target
-                    sl = mark_price * 0.98 # 2% Stop Loss
+                    # Calculate precise SL/TP (Institutional Grade: 30% SL / 100% TP at 10x)
+                    # 10x Leverage: 10% price move = 100% PnL, 3% price move = 30% PnL
+                    if side == "buy":
+                        tp = mark_price * 1.10 # 10% Price Target (100% PnL)
+                        sl = mark_price * 0.97 # 3% Stop Loss (30% PnL)
+                    else:
+                        tp = mark_price * 0.90 # 10% Price Target (100% PnL)
+                        sl = mark_price * 1.03 # 3% Stop Loss (30% PnL)
                     
                     amount = executor.get_max_available(symbol, leverage=10)
                     if amount > 0:
