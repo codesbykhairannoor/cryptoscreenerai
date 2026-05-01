@@ -22,7 +22,7 @@ class ForexExecutor:
             try:
                 info = self.get_account_information()
                 if info:
-                    print(f"🌍 [FOREX STARTUP AUDIT] MT5 Balance: ${info.get('balance', 0)} (Equity: ${info.get('equity', 0)})")
+                    print(f"[FOREX STARTUP AUDIT] MT5 Balance: ${info.get('balance', 0)} (Equity: ${info.get('equity', 0)})")
                 
                 # Check for active positions on startup
                 pos_url = f"{self.base_url}/users/current/accounts/{self.account_id}/positions"
@@ -31,11 +31,14 @@ class ForexExecutor:
                 if pos_res.status_code == 200:
                     positions = pos_res.json()
                     if positions:
-                        print(f"📊 [FOREX STARTUP AUDIT] Active Positions: {len(positions)}")
-                        for p in positions:
-                            print(f"   > {p.get('symbol')} | Vol: {p.get('volume')} | ID: {p.get('id')}")
+                        print(f"[FOREX STARTUP AUDIT] Active Trades: {len(positions)}")
+                        if len(positions) <= 5:
+                            for p in positions:
+                                print(f"   > {p.get('symbol')} | Vol: {p.get('volume')} | ID: {p.get('id')}")
+                        else:
+                            print("   > (Position list collapsed: >5 trades active)")
                     else:
-                        print("📊 [FOREX STARTUP AUDIT] No active trades found.")
+                        print("[FOREX STARTUP AUDIT] No active trades found.")
             except:
                 pass
 
@@ -125,7 +128,7 @@ class ForexExecutor:
         print("[SYSTEM] Dewa Scalper Engine V2 (SMC & OrderFlow) AKTIF!")
         
         last_auto_trade = 0
-        AUTO_COOLDOWN = 5 # 5s for Military Scalping
+        AUTO_COOLDOWN = 60 # Increased to 60s to prevent spamming
         
         while True:
             try:
@@ -137,8 +140,18 @@ class ForexExecutor:
                 headers = {"auth-token": self.api_token}
                 pos_res = requests.get(pos_url, headers=headers, timeout=10)
                 positions = pos_res.json() if pos_res.status_code == 200 else []
-                # Count ALL open positions (not just XAU)
+                # Count ALL open positions
                 active_count = len(positions) if isinstance(positions, list) else 0
+
+                # GLOBAL EQUITY GUARD: Halt if drawdown > 5%
+                info = self.get_account_information()
+                if info:
+                    balance = float(info.get('balance', 0))
+                    equity = float(info.get('equity', 0))
+                    if equity < (balance * 0.95):
+                        print(f"[EQUITY GUARD] Extreme Drawdown! Equity: ${equity}. Halting new trades.")
+                        time.sleep(60)
+                        continue
 
                 if fx_data:
                     rsi = fx_data.get('rsi', 50)
@@ -160,20 +173,35 @@ class ForexExecutor:
                     side = 'buy'
                     confidence = 0
                     
-                    # MILITARY SCALPING LOGIC (Aggressive)
-                    if (ob_status == 'BULLISH' or fvg_status == 'BULLISH' or liq_sweep) and rsi < 65:
+                    # PREDICTIVE FUTURE LOGIC (MSS & CHoCH)
+                    mss_bull = fx_data.get('mss_bullish', False)
+                    mss_bear = fx_data.get('mss_bearish', False)
+                    choch_bull = fx_data.get('choch_bullish', False)
+                    choch_bear = fx_data.get('choch_bearish', False)
+                    fib_ext = fx_data.get('fib_ext', broker_price)
+                    trend = fx_data.get('trend', 'NEUTRAL')
+                    
+                    # BUY: Predictive Shift + Trend Alignment
+                    if (mss_bull or (choch_bull and liq_sweep)) and trend == 'BULLISH':
                         should_trade = True
                         side = 'buy'
                         confidence = 1 if inst_flow == 'INSTITUTIONAL_ACCUMULATION' else 0
-                        
-                    elif (ob_status == 'BEARISH' or fvg_status == 'BEARISH' or rsi > 35):
+                    
+                    # SELL: Predictive Shift + Trend Alignment
+                    elif (mss_bear or (choch_bear and liq_sweep)) and trend == 'BEARISH':
                         should_trade = True
                         side = 'sell'
                         confidence = 1 if inst_flow == 'INSTITUTIONAL_ABSORPTION' else 0
 
+                    # GENIUS DXY SHIELD: Don't fight the Dollar
+                    dxy_trend = fx_data.get('dxy_trend', 'NEUTRAL')
+                    if should_trade:
+                        if side == 'buy' and dxy_trend == 'BULLISH': should_trade = False
+                        if side == 'sell' and dxy_trend == 'BEARISH': should_trade = False
+
                     if should_trade and (time.time() - last_auto_trade > AUTO_COOLDOWN):
-                        if active_count >= 15:
-                            print(f"[FOREX LIMIT] {active_count}/15 positions. Holding.")
+                        if active_count >= 10:
+                            print(f"[FOREX LIMIT] {active_count}/10 positions. Holding.")
                             continue
                         if spread > 150: continue  # Spread safety
                         
@@ -184,7 +212,8 @@ class ForexExecutor:
                         trades_count = 10 if confidence == 1 else 5
                         atr = fx_data.get('atr', 1.0)
                         
-                        tp = broker_price + (atr * 4) if side == 'buy' else broker_price - (atr * 4)
+                        # PREDICTIVE FIB TP
+                        tp = fib_ext
                         sl = broker_price - (atr * 3) if side == 'buy' else broker_price + (atr * 3)
                         
                         print(f"[MILITARY FOREX] {side.upper()} Barrage Initiated! Price: {broker_price} Symbol: {trade_symbol}")
@@ -197,18 +226,19 @@ class ForexExecutor:
                         
                         last_auto_trade = time.time()
 
-                    # PINTER TRAILING: Secure profits
+                    # GENIUS ATR TRAILING: Secure profits based on volatility
+                    atr = fx_data.get('atr', 1.0)
                     for p in positions:
                         if 'XAU' not in p.get('symbol', '').upper(): continue
                         open_price = float(p.get('openPrice', 0))
                         current_price = float(p.get('currentPrice', 0))
                         pos_id = p.get('id')
                         
-                        # Move to BE once profit is > 1.5 ATR points
-                        if p.get('type') == 'POSITION_TYPE_BUY' and (current_price - open_price) > 1.2:
-                            self.update_forex_sl(pos_id, open_price + 0.1)
-                        elif p.get('type') == 'POSITION_TYPE_SELL' and (open_price - current_price) > 1.2:
-                            self.update_forex_sl(pos_id, open_price - 0.1)
+                        # Move to BE once profit is > 1.2 ATR points
+                        profit_dist = abs(current_price - open_price)
+                        if profit_dist > (atr * 1.5):
+                            new_sl = open_price + (atr * 0.2) if p.get('type') == 'POSITION_TYPE_BUY' else open_price - (atr * 0.2)
+                            self.update_forex_sl(pos_id, new_sl)
 
                 time.sleep(1)
             except Exception as e:

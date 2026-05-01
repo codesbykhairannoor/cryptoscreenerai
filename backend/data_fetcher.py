@@ -299,7 +299,33 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         is_bear_sweep = last_candle['high'] > prev_candle['high'] and last_candle['close'] < prev_candle['high']
         is_sweep = is_bull_sweep or is_bear_sweep
         
-        # 4. VOLUME-TO-PRICE DIVERGENCE (Whale Accumulation Detector)
+        # 4. MARKET STRUCTURE SHIFT (MSS) & CHoCH (PREDICTING THE FUTURE)
+        mss_bullish = False
+        mss_bearish = False
+        choch_bullish = False
+        choch_bearish = False
+        
+        if len(df_cur) >= 10:
+            recent_highs = df_cur['high'].iloc[-10:-1].max()
+            recent_lows = df_cur['low'].iloc[-10:-1].min()
+            last_close = df_cur['close'].iloc[-1]
+            
+            # CHoCH: Change of Character (Internal structure break)
+            if last_close > recent_highs: choch_bullish = True
+            elif last_close < recent_lows: choch_bearish = True
+            
+            # MSS: Market Structure Shift (Swing break + Volume)
+            if choch_bullish and last_candle['vol'] > avg_vol * 1.5: mss_bullish = True
+            if choch_bearish and last_candle['vol'] > avg_vol * 1.5: mss_bearish = True
+
+        # 5. FIBONACCI PREDICTIVE LEVELS
+        high_p = df_cur['high'].max()
+        low_p = df_cur['low'].min()
+        diff = high_p - low_p
+        fib_618 = high_p - (diff * 0.618)
+        fib_ext = high_p + (diff * 0.618) if mss_bullish else low_p - (diff * 0.618)
+
+        # 6. VOLUME-TO-PRICE DIVERGENCE (Whale Accumulation Detector)
         # Logic: Volume surge > 300% but price change < 2% (Whales buying quietly)
         vol_surge = last_candle['vol'] / avg_vol if avg_vol > 0 else 1
         price_change_abs = abs((last_candle['close'] - last_candle['open']) / last_candle['open'] * 100)
@@ -335,9 +361,13 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             "mark_price": mark_price,
             "rsi": round(rsi_cur.iloc[-1], 2) if not rsi_cur.empty else 50,
             "atr": round(atr_cur.iloc[-1], 4) if not atr_cur.empty else 0,
-            "vwap": last_vwap,
-            "vwap_dist": round((closes_cur.iloc[-1] - last_vwap) / last_vwap * 100, 2) if last_vwap > 0 else 0,
             "is_liquidity_sweep": is_sweep,
+            "mss_bullish": mss_bullish,
+            "mss_bearish": mss_bearish,
+            "choch_bullish": choch_bullish,
+            "choch_bearish": choch_bearish,
+            "fib_618": fib_618,
+            "fib_ext": fib_ext,
             "is_whale_accumulation": is_whale_accumulation,
             "fvg_up": fvg_up,
             "is_session_danger": is_session_danger,
@@ -489,4 +519,4 @@ def get_idx_data(interval="15m"):
     IDX Scanner disabled to ensure zero-reliance on TradingView proxies.
     Direct API integration required for future stock expansion.
     """
-    return []
+    return []
