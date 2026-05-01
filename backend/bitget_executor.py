@@ -100,7 +100,9 @@ class BitgetExecutor:
 
     def _clean_symbol(self, s):
         if not s: return ""
-        return s.upper().replace('USDT', '').replace('/', '').split(':')[0].split('_')[0]
+        # Remove common Bitget suffixes and separators
+        s = s.upper().replace('/USDT:USDT', '').replace('USDT', '').replace('/', '').replace(':', '').replace('_', '')
+        return s.strip()
 
     def get_balance(self):
         """Unified Balance Fetcher"""
@@ -275,7 +277,8 @@ class BitgetExecutor:
                 has_sl = False
                 sl_p = 0
                 for p in plans:
-                    if p['type'] in ['pl', 'psl']:
+                    p_type = p['type']
+                    if 'sl' in p_type or 'loss' in p_type or 'stop' in p_type or p_type == 'pl':
                         has_sl = True
                         sl_p = p['price']
 
