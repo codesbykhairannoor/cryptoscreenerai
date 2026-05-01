@@ -60,11 +60,12 @@ class BitgetPrivateWS:
             "args": [
                 {"instType": "USDT-FUTURES", "channel": "order", "instId": "default"},
                 {"instType": "USDT-FUTURES", "channel": "orders-algo", "instId": "default"},
-                {"instType": "USDT-FUTURES", "channel": "account", "instId": "default"}
+                {"instType": "USDT-FUTURES", "channel": "account", "instId": "default"},
+                {"instType": "USDT-FUTURES", "channel": "positions", "instId": "default"}
             ]
         }
         await ws.send(json.dumps(subs))
-        print("[PRIVATE WS] Subscribed to Order, Algo (SL/TP), and Account Updates!")
+        print("[PRIVATE WS] Subscribed to Order, Algo (SL/TP), Account, and Positions!")
 
     async def listen(self):
         while self.is_running:
@@ -96,21 +97,36 @@ class BitgetPrivateWS:
                                 state.update_orders(current_orders)
                                 if status == "filled":
                                     print(f"[PRIVATE WS] EXECUTION: {symbol} filled!")
-                                    self.executor.sync_state_with_exchange()
+                                    # self.executor.sync_state_with_exchange() # Removed REST sync
                                     
                         elif channel == "orders-algo" and "data" in data:
                             state.last_algo_update = time.time()
+                            # Cache all active algo orders for zero-rest monitoring
+                            state.orders = [o for o in state.orders if o.get('planType') is None] # Keep regular, replace algo
+                            state.orders.extend(data["data"])
                             for plan in data["data"]:
                                 status = plan.get("state") or plan.get("status")
                                 sym = plan.get("symbol") or plan.get("instId")
                                 print(f"[ALGO STREAM] {sym} | State: {status} | Type: {plan.get('planType')} | ID: {plan.get('orderId')}")
-                                
-                                current_orders = state.orders
-                                current_orders = [o for o in current_orders if o.get('orderId') != plan.get('orderId')]
-                                if status in ['live', 'not_trigger', 'executed', 'partially_executed']: 
-                                    current_orders.append(plan)
-                                state.update_orders(current_orders)
-                                
+
+                        elif channel == "positions" and "data" in data:
+                            # Direct Real-time Position Tracking
+                            formatted_pos = []
+                            for p in data["data"]:
+                                sz = float(p.get("total", p.get("holdQty", 0)))
+                                if sz > 0:
+                                    formatted_pos.append({
+                                        'symbol': p.get('symbol', p.get('instId')),
+                                        'side': p.get('holdSide', 'long').lower(),
+                                        'size': sz,
+                                        'entry': float(p.get('openPrice', p.get('average', 0))),
+                                        'mark_price': float(p.get('markPrice', 0)),
+                                        'pnl': float(p.get('unrealizedPL', 0))
+                                    })
+                            state.update_positions(formatted_pos)
+                            if formatted_pos:
+                                print(f"[POSITION STREAM] {len(formatted_pos)} active trades updated via WS.")
+
                         elif channel == "account":
                             state.last_acc_update = time.time()
                             for acc in data.get("data", []):

@@ -107,6 +107,16 @@ class BitgetExecutor:
     def get_balance(self):
         """Unified Balance Fetcher"""
         try:
+    def get_balance(self):
+        try:
+            from shared_state import state
+            # 1. WS CACHE PRIORITY (Full WebSocket Mode)
+            if state.balances and time.time() - state.last_acc_update < 60:
+                bal = state.balances.get('USDT', {})
+                if bal:
+                    return {'total': float(bal.get('equity', 0)), 'free': float(bal.get('available', 0))}
+
+            # 2. REST SEED/FALLBACK
             if self.is_uta:
                 data = self._v3_request("GET", "/api/v3/account/assets", "category=USDT-FUTURES")
                 if data.get('code') == '00000' and data.get('data'):
@@ -147,9 +157,14 @@ class BitgetExecutor:
         except: return 0
 
     def get_all_positions(self):
-        all_pos = []
         try:
             from shared_state import state
+            # 1. WS CACHE PRIORITY
+            if state.positions and time.time() - state.last_update < 30:
+                return state.positions
+
+            # 2. REST SEED/FALLBACK
+            all_pos = []
             ccxt_pos = self.exchange.fetch_positions(params={'productType': 'usdt-futures'})
             for p in ccxt_pos:
                 sz = float(p.get('contracts', 0) or 0)
@@ -177,6 +192,18 @@ class BitgetExecutor:
 
     def get_pending_plan_orders(self, symbol):
         try:
+            from shared_state import state
+            # 1. WS CACHE PRIORITY (Standardized Symbol check)
+            clean_sym = self._clean_symbol(symbol)
+            ws_plans = [o for o in state.orders if self._clean_symbol(o.get('symbol', o.get('instId', ''))) == clean_sym and o.get('planType')]
+            if ws_plans:
+                return [{
+                    'id': o.get('orderId', o.get('planId')),
+                    'type': o.get('planType', 'unknown').lower(),
+                    'price': float(o.get('triggerPrice', o.get('executePrice', 0)))
+                } for o in ws_plans]
+
+            # 2. REST FALLBACK
             clean_symbol = symbol.replace("/", "").split(":")[0]
             if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
             res = self.exchange.private_get_v2_mix_order_plan_current_orders({
