@@ -103,7 +103,8 @@ def run_crypto_engine():
                 tech = get_technical_indicators(symbol)
                 is_danger = tech.get('is_session_danger', False)
                 is_whale = tech.get('is_whale_accumulation', False)
-                fvg_zones = tech.get('fvg_up', [])
+                fvg_up = tech.get('fvg_up', [])
+                fvg_down = tech.get('fvg_down', [])
                 vwap_dist = tech.get('vwap_dist', 0)
                 mark_price = tech.get('mark_price', 0) 
                 
@@ -143,7 +144,7 @@ def run_crypto_engine():
                     reason = "WHALE DISTRIBUTION (INSTITUTIONAL SELL)"
                 
                 # Logic D: Bearish FVG Rejection (Short the Rally)
-                elif tech.get('fvg_down') and vwap_dist > 1.5:
+                elif fvg_down and vwap_dist > 1.5:
                     should_trade = True
                     side = "sell"
                     reason = "BEARISH SMC FVG REJECTION (PREMIUM)"
