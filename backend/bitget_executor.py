@@ -2,7 +2,10 @@ import ccxt
 import os
 import time
 import json
-import traceback
+import hmac
+import hashlib
+import base64
+import requests
 from dotenv import load_dotenv
 
 # Standard loading
@@ -27,7 +30,7 @@ class BitgetExecutor:
         if not self.api_key or not self.secret_key:
              print("❌ [CRITICAL] Bitget Credentials MISSING! Check your .env file.")
         
-        self.is_mix = True
+        self.is_uta = False
         self.startup_time = time.time()
         self.warmup_period = 15
         
@@ -47,29 +50,57 @@ class BitgetExecutor:
                 for p in pos:
                     print(f"   > {p['symbol']} | Side: {p['side']} | PNL: {p['pnl']}%")
                     self.get_pending_plan_orders(p['symbol'])
+        except Exception as e:
+            print(f"[STARTUP AUDIT ERROR] {e}")
+
+    def _v3_request(self, method, path, query="", body=None):
+        """Signed V3 Request for UTA accounts (Stable Baseline)"""
+        ts = str(int(time.time() * 1000))
+        request_path = path + (f"?{query}" if query else "")
+        body_str = json.dumps(body) if body else ""
+        
+        message = ts + method.upper() + request_path + body_str
+        mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
+        sign = base64.b64encode(mac.digest()).decode('utf8')
+        
+        headers = {
+            "ACCESS-KEY": self.api_key, "ACCESS-SIGN": sign, "ACCESS-TIMESTAMP": ts,
+            "ACCESS-PASSPHRASE": self.passphrase, "Content-Type": "application/json"
+        }
+        
+        url = f"https://api.bitget.com{request_path}"
+        try:
+            # verify=False to match stable commit behavior
+            res = requests.request(method, url, headers=headers, data=body_str if body else None, timeout=15, verify=False)
+            return res.json()
         except:
-            pass
+            return {"code": "timeout"}
 
     def detect_account_mode(self):
+        """Internal check to confirm if account is UTA or Classic"""
         try:
-            self.exchange.private_get_mix_v1_account_accounts({'productType': 'usdt-futures'})
-            self.is_mix = True
-            print("[MODE] Account verified as Bitget Classic (Mix).")
-        except Exception as e:
-            self.is_mix = False
-            print(f"[MODE] Account verified as Bitget Standard (Reason: {e})")
+            res = self._v3_request("GET", "/api/v3/account/assets", "category=USDT-FUTURES")
+            if res.get('code') == '00000':
+                self.is_uta = True
+                print("[MODE] Account verified as Bitget V3 UTA.")
+            else:
+                self.is_uta = False
+                print("[MODE] Account verified as Bitget Classic (Mix).")
+        except:
+            self.is_uta = False
+            print("[MODE] Account fallback to Bitget Classic (Mix).")
 
     def get_balance(self):
+        """Unified Balance Fetcher"""
         try:
-            if self.is_mix:
-                res = self.exchange.private_get_mix_v1_account_accounts({'productType': 'usdt-futures'})
-                if res.get('code') == '00000' and res.get('data'):
-                    for item in res['data']:
-                        if item.get('marginCoin') == 'USDT':
-                            return {
-                                'total': float(item.get('equity', 0)),
-                                'free': float(item.get('available', 0))
-                            }
+            if self.is_uta:
+                data = self._v3_request("GET", "/api/v3/account/assets", "category=USDT-FUTURES")
+                if data.get('code') == '00000' and data.get('data'):
+                    for a in data['data'].get('list', []):
+                        if a.get('marginCoin') == 'USDT':
+                            return {'total': float(a.get('equity', 0)), 'free': float(a.get('available', 0))}
+            
+            # Fallback for Classic/Mix
             bal = self.exchange.fetch_balance({'type': 'swap'})
             return {
                 'total': float(bal.get('total', {}).get('USDT', 0)),
