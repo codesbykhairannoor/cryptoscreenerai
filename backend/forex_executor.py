@@ -181,17 +181,23 @@ class ForexExecutor:
                     fib_ext = fx_data.get('fib_ext', broker_price)
                     trend = fx_data.get('trend', 'NEUTRAL')
                     
-                    # BUY: Predictive Shift + Trend Alignment
-                    if (mss_bull or (choch_bull and liq_sweep)) and trend == 'BULLISH':
-                        should_trade = True
-                        side = 'buy'
-                        confidence = 1 if inst_flow == 'INSTITUTIONAL_ACCUMULATION' else 0
+                    # WHALE & OBI CONFIRMATION (The Institutional Seal)
+                    obi = fx_data.get('obi', 0)
+                    whale_sig = fx_data.get('whale_signal', 'NORMAL')
                     
-                    # SELL: Predictive Shift + Trend Alignment
+                    # BUY: Predictive Shift + Whale Support
+                    if (mss_bull or (choch_bull and liq_sweep)) and trend == 'BULLISH':
+                        if obi > 0.1 or whale_sig == 'WHALE_BUY':
+                            should_trade = True
+                            side = 'buy'
+                            confidence = 1 if inst_flow == 'INSTITUTIONAL_ACCUMULATION' else 0
+                    
+                    # SELL: Predictive Shift + Whale Resistance
                     elif (mss_bear or (choch_bear and liq_sweep)) and trend == 'BEARISH':
-                        should_trade = True
-                        side = 'sell'
-                        confidence = 1 if inst_flow == 'INSTITUTIONAL_ABSORPTION' else 0
+                        if obi < -0.1 or whale_sig == 'WHALE_SELL':
+                            should_trade = True
+                            side = 'sell'
+                            confidence = 1 if inst_flow == 'INSTITUTIONAL_ABSORPTION' else 0
 
                     # GENIUS DXY SHIELD: Don't fight the Dollar
                     dxy_trend = fx_data.get('dxy_trend', 'NEUTRAL')

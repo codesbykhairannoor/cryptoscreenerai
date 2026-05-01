@@ -203,19 +203,21 @@ class BitgetExecutor:
             print(f"[BITGET CLASSIC] {side.upper()} {symbol} executed.")
             params = {'productType': 'USDT-FUTURES'}
             tp_side = 'sell' if side.lower() in ['long', 'buy'] else 'buy'
-            if sl:
-                sl_params = {**params, 'stopLossPrice': sl}
-                self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=sl_params)
-            if tp:
-                tp_params = {**params, 'takeProfitPrice': tp}
-                self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=tp_params)
-            else:
-                # Institutional TP (100% PNL)
-                price = float(order.get('price', 0))
-                if price > 0:
-                    smart_tp = price * 2.0 if side.lower() in ['long', 'buy'] else price * 0.1
-                    tp_params = {**params, 'takeProfitPrice': smart_tp}
-                    self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=tp_params)
+            price = float(order.get('price', order.get('average', 0)))
+            if price == 0:
+                ticker = self.exchange.fetch_ticker(symbol)
+                price = ticker['last']
+
+            # 1. MANDATORY SL (5%)
+            final_sl = sl if sl else (price * 0.95 if side.lower() in ['long', 'buy'] else price * 1.05)
+            sl_params = {**params, 'stopLossPrice': final_sl}
+            self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=sl_params)
+
+            # 2. MANDATORY TP (50%)
+            final_tp = tp if tp else (price * 1.50 if side.lower() in ['long', 'buy'] else price * 0.50)
+            tp_params = {**params, 'takeProfitPrice': final_tp}
+            self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=tp_params)
+            
             return True, order
         except Exception as e:
             print(f"[CLASSIC ORDER FAILED] {e}")
@@ -305,37 +307,52 @@ class BitgetExecutor:
                 
                 plans = self.get_pending_plan_orders(symbol)
                 has_sl = False
+                has_tp = False
                 for p in plans:
-                    p_type = p['type']
-                    if 'sl' in p_type or 'loss' in p_type or 'stop' in p_type or p_type == 'pl':
+                    p_type = p['type'].lower()
+                    # Bitget V2 Plan types: profit_loss, pos_profit_loss, pl, psl
+                    if any(x in p_type for x in ['sl', 'loss', 'stop', 'psl']):
                         has_sl = True
+                    if any(x in p_type for x in ['tp', 'profit', 'psl']):
+                        has_tp = True
 
                 # Military Status Log
-                if int(now) % 15 < 2:
-                    o_h = "OK" if now - state.last_order_update < 300 else "BAD"
-                    a_h = "OK" if now - state.last_algo_update < 300 else "BAD"
-                    b_h = "OK" if now - state.last_acc_update < 300 else "BAD"
-                    print(f"[MONITOR {o_h}{a_h}{b_h}] {symbol} | PNL: {pnl}% | SL: {'OK' if has_sl else 'MISSING'}")
+                if int(now) % 30 < 2:
+                    print(f"[MONITOR] {symbol} | PNL: {pnl}% | SL: {'OK' if has_sl else 'MISSING'} | TP: {'OK' if has_tp else 'MISSING'}")
 
-                # 1. INITIAL GUARD
-                if not has_sl and now - self.startup_time > self.warmup_period:
+                # 1. EMERGENCY HARD EXIT (-20%)
+                if pnl <= -20:
+                    print(f"[HARD EXIT] Symbol {symbol} hit -20% PNL. Closing immediately.")
+                    self.exchange.create_order(symbol, 'market', 'sell' if side in ['long', 'buy'] else 'buy', size)
+                    continue
+
+                # 2. INITIAL GUARD (SL & TP)
+                if (not has_sl or not has_tp) and now - self.startup_time > self.warmup_period:
                     if now - self._last_sl_set.get(symbol, 0) > 60:
+                        print(f"[GUARD] Protecting {symbol} with SL/TP")
+                        # Tight SL (5%) and Institutional TP (50%)
                         sl_price = entry * 0.95 if side in ['long', 'buy'] else entry * 1.05
-                        if side in ['long', 'buy'] and sl_price >= mark_price: sl_price = mark_price * 0.98
-                        if side in ['short', 'sell'] and sl_price <= mark_price: sl_price = mark_price * 1.02
+                        tp_price = entry * 1.50 if side in ['long', 'buy'] else entry * 0.50
                         
-                        print(f"[GUARD] Setting Initial SL for {symbol}")
+                        # Set SL/TP via unified update
                         self.update_sl_price(symbol, side, size, sl_price)
+                        self.update_sl_price(symbol, side, size, tp_price, is_tp=True)
                         self._last_sl_set[symbol] = now
 
-                # 2. PROGRESSIVE 15% TRAILING
+                # 3. PROGRESSIVE 15% TRAILING
                 new_sl = 0
+                sl_p = 0 # Default if no plans found
+                for p in plans:
+                    if 'sl' in p['type'] or 'loss' in p['type'] or 'psl' in p['type']:
+                        sl_p = p['price']
+                        break
+
                 if pnl >= 90: new_sl = entry * 1.75 if side in ['long', 'buy'] else entry * 0.25 
                 elif pnl >= 75: new_sl = entry * 1.60 if side in ['long', 'buy'] else entry * 0.40 
                 elif pnl >= 60: new_sl = entry * 1.45 if side in ['long', 'buy'] else entry * 0.55 
                 elif pnl >= 45: new_sl = entry * 1.30 if side in ['long', 'buy'] else entry * 0.70 
                 elif pnl >= 30: new_sl = entry * 1.15 if side in ['long', 'buy'] else entry * 0.85 
-                elif pnl >= 15: new_sl = entry + (0.001 if side in ['long', 'buy'] else -0.001) 
+                elif pnl >= 15: new_sl = entry + (entry * 0.005 if side in ['long', 'buy'] else -entry * 0.005) 
                 
                 if new_sl > 0:
                     is_better = (side in ['long', 'buy'] and new_sl > sl_p) or \
@@ -345,4 +362,5 @@ class BitgetExecutor:
                         print(f"🔥 [MILITARY TRAILING] Moving SL for {symbol} to {new_sl} (PNL: {pnl}%)")
                         self.update_sl_price(symbol, side, size, new_sl)
                         self._last_sl_set[symbol] = now
-        except: pass
+        except Exception as e:
+            print(f"[POSITION MANAGER CRASH] {e}")

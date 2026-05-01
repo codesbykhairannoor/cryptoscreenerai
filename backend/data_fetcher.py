@@ -5,43 +5,46 @@ import time
 import os
 from patterns import detect_candle_patterns, detect_smart_money_concepts
 
-def get_orderbook_analysis(symbol):
+def get_orderbook_imbalance(symbol):
     """
-    [L2 DATA ENGINE] - Analyzes Bitget Order Book for 'Big Walls'
-    Logic: Detects where market makers are stacking orders (Order Flow)
+    GENIUS OBI: Analyzes bid/ask pressure in the depth.
+    Formula: (Bids - Asks) / (Bids + Asks)
     """
     try:
-        # Convert symbol for Bitget API (e.g., BTCUSDT)
-        clean_symbol = symbol.replace("/", "").split(":")[0]
-        url = f"https://api.bitget.com/api/v3/market/orderbook?category=USDT-FUTURES&symbol={clean_symbol}&limit=20"
-        res = requests.get(url, timeout=5)
-        data = res.json()
-        
-        if data.get('code') == '00000' and 'data' in data:
-            bids = data['data'].get('b', []) # Buying side
-            asks = data['data'].get('a', []) # Selling side
-            
-            # Calculate Total Volume on both sides (Top 20 levels)
-            bid_vol = sum([float(b[1]) for b in bids])
-            ask_vol = sum([float(a[1]) for a in asks])
-            
-            # Wall Detection: If one side is 2x stronger than other
-            ratio = bid_vol / ask_vol if ask_vol > 0 else 1.0
-            
-            is_buying_wall = ratio > 2.5
-            is_selling_wall = ratio < 0.4
-            
-            return {
-                "bid_vol": round(bid_vol, 2),
-                "ask_vol": round(ask_vol, 2),
-                "ratio": round(ratio, 2),
-                "is_buying_wall": is_buying_wall,
-                "is_selling_wall": is_selling_wall,
-                "wall_sentiment": "BULLISH (Whale Support)" if is_buying_wall else "BEARISH (Big Resistance)" if is_selling_wall else "NEUTRAL"
-            }
-    except Exception as e:
-        print(f"[ORDERBOOK ERROR] {symbol}: {e}")
-    return {"bid_vol": 0, "ask_vol": 0, "ratio": 1, "is_buying_wall": False, "is_selling_wall": False, "wall_sentiment": "UNKNOWN"}
+        clean_sym = symbol.replace("/", "").replace(":USDT", "").replace("USDT", "") + "USDT"
+        url = f"https://api.bitget.com/api/v3/market/order-book?symbol={clean_sym}&limit=50&type=step0"
+        res = requests.get(url, timeout=3, verify=False).json()
+        if res.get('code') == '00000' and res.get('data'):
+            data = res['data']
+            bids = sum(float(b[1]) for b in data.get('bids', []))
+            asks = sum(float(a[1]) for a in data.get('asks', []))
+            if (bids + asks) == 0: return 0
+            imbalance = (bids - asks) / (bids + asks)
+            return round(imbalance, 4)
+    except: pass
+    return 0
+
+def detect_whale_activity(symbol):
+    """
+    WHALE TRACKER: Scans recent fills for massive orders ($50k+).
+    """
+    try:
+        clean_sym = symbol.replace("/", "").replace(":USDT", "").replace("USDT", "") + "USDT"
+        url = f"https://api.bitget.com/api/v3/market/fills?symbol={clean_sym}&limit=100"
+        res = requests.get(url, timeout=3, verify=False).json()
+        if res.get('code') == '00000' and res.get('data'):
+            recent_trades = res['data']
+            whale_buys = 0
+            whale_sells = 0
+            for t in recent_trades:
+                size_usd = float(t.get('size', 0)) * float(t.get('price', 0))
+                if size_usd > 50000: # Whale Threshold $50k
+                    if t.get('side') == 'buy': whale_buys += 1
+                    else: whale_sells += 1
+            if whale_buys > whale_sells: return "WHALE_BUY"
+            if whale_sells > whale_buys: return "WHALE_SELL"
+    except: pass
+    return "NORMAL"
 
 def get_funding_rate(symbol):
     """
@@ -357,6 +360,10 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         oi = get_open_interest(symbol)
         funding = get_funding_rate(symbol)
         
+        # 7. ORDER BOOK & WHALE INTELLIGENCE (The Genius Layer)
+        obi = get_orderbook_imbalance(symbol)
+        whale_sig = detect_whale_activity(symbol)
+        
         return {
             "mark_price": mark_price,
             "rsi": round(rsi_cur.iloc[-1], 2) if not rsi_cur.empty else 50,
@@ -368,6 +375,8 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             "choch_bearish": choch_bearish,
             "fib_618": fib_618,
             "fib_ext": fib_ext,
+            "obi": obi,
+            "whale_signal": whale_sig,
             "is_whale_accumulation": is_whale_accumulation,
             "fvg_up": fvg_up,
             "is_session_danger": is_session_danger,
@@ -377,7 +386,6 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             "order_block": smc["ob"],
             "fvg": smc["fvg"],
             "inst_flow": inst_flow,
-            "ob_analysis": ob_analysis,
             "open_interest": oi,
             "funding_rate": funding,
             "htf": htf

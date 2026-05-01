@@ -113,10 +113,11 @@ def test_all():
     try:
         from data_fetcher import get_forex_data
         data = get_forex_data("XAUUSD")
-        if data and data.get('rsi'):
-            log("FX-DATA", f"  RSI={data['rsi']} | Price={data.get('lastPrice')} | Symbol={data.get('working_symbol')}", "SUCCESS")
+        if data:
+            log("FX-DATA", f"  Price={data.get('lastPrice')} | OBI={data.get('obi')} | Whale={data.get('whale_signal')}", "SUCCESS")
+            log("FX-DATA", f"  Structure: MSS={data.get('mss_bullish')} CHoCH={data.get('choch_bullish')}", "SUCCESS")
         else:
-            log("FX-DATA", f"  EMPTY or MISSING RSI. Got keys: {list(data.keys()) if data else 'None'}", "ERROR")
+            log("FX-DATA", "  FAILED TO FETCH DATA", "ERROR")
     except Exception as e:
         log("FX-DATA", f"  CRASH: {e}", "ERROR")
 
