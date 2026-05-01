@@ -153,8 +153,8 @@ class ForexExecutor:
                         side = 'buy'
                         confidence = 1 if inst_flow == 'INSTITUTIONAL_ACCUMULATION' else 0
                         
-                    # SELL LOGIC: Bearish OB/FVG + RSI > 65 OR DXY Strong Bullish
-                    elif (ob_status == 'BEARISH' or fvg_status == 'BEARISH' or rsi > 65 or (dxy_data and dxy_data.get('trend') == 'BULLISH')):
+                    # SELL LOGIC: Bearish OB/FVG + RSI > 65 (Relaxed)
+                    elif (ob_status == 'BEARISH' or fvg_status == 'BEARISH' or rsi > 65):
                         should_trade = True
                         side = 'sell'
                         confidence = 1 if inst_flow == 'INSTITUTIONAL_ABSORPTION' else 0

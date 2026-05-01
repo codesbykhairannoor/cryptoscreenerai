@@ -47,16 +47,6 @@ def run_crypto_engine():
             executor.manage_open_positions()
             check_pending_trades()
             
-            # 2. MARGIN UTILIZATION GUARD (v3)
-            balance = executor.get_balance()
-            if balance['total'] > 0:
-                usage = (balance['total'] - balance['free']) / balance['total']
-                if usage > 0.75: # 75% Limit
-                    if int(time.time()) % 300 < 35:
-                        print(f"⚠️ [RISK GUARD] Margin Usage at {round(usage*100, 1)}%. Holding fire to protect capital.")
-                    time.sleep(30)
-                    continue
-            
             # 2. PERIODIC NEWS VELOCITY (Every 10 Mins)
             if time.time() - last_news_report > 600:
                 digest = get_market_news_digest()
@@ -113,8 +103,7 @@ def run_crypto_engine():
                 tech = get_technical_indicators(symbol)
                 is_danger = tech.get('is_session_danger', False)
                 is_whale = tech.get('is_whale_accumulation', False)
-                fvg_up = tech.get('fvg_up', [])
-                fvg_down = tech.get('fvg_down', [])
+                fvg_zones = tech.get('fvg_up', [])
                 vwap_dist = tech.get('vwap_dist', 0)
                 mark_price = tech.get('mark_price', 0) 
                 
@@ -127,60 +116,32 @@ def run_crypto_engine():
                         print(f"[SESSION GUARD] Market Opening/Closing Detected. Holding all fire to avoid Stop Hunts.")
                     continue
 
-                # REFINED HUNTER LOGIC: BI-DIRECTIONAL
+                # REFINED HUNTER LOGIC
                 should_trade = False
-                side = "buy"
                 reason = ""
                 
-                digest = get_market_news_digest()
-                market_is_bullish = digest['sentiment'] == 'BULLISH'
-                
                 # Logic A: Whale Accumulation (Buy the Bottom)
-                if is_whale and vwap_dist < 1.0 and market_is_bullish:
+                if is_whale and vwap_dist < 1.0:
                     should_trade = True
-                    side = "buy"
                     reason = "EARLY PUMP (WHALE ACCUMULATION)"
                 
                 # Logic B: SMC/FVG Return (Buy the Dip)
-                elif fvg_up and vwap_dist < 0.5:
+                elif fvg_zones and vwap_dist < 0.5:
                     should_trade = True
-                    side = "buy"
                     reason = "SMC FVG RE-ENTRY (INSTITUTIONAL DISCOUNT)"
-                
-                # Logic C: Whale Distribution (Short the Top)
-                elif is_whale and vwap_dist > 5.0 and not market_is_bullish:
-                    should_trade = True
-                    side = "sell"
-                    reason = "WHALE DISTRIBUTION (INSTITUTIONAL SELL)"
-                
-                # Logic D: Bearish FVG Rejection (Short the Rally)
-                elif fvg_down and vwap_dist > 1.5:
-                    should_trade = True
-                    side = "sell"
-                    reason = "BEARISH SMC FVG REJECTION (PREMIUM)"
-                
-                # Logic E: Sentiment Momentum Short (Military Style)
-                elif not market_is_bullish and vwap_dist > 0.7:
-                    should_trade = True
-                    side = "sell"
-                    reason = "BEARISH MOMENTUM (RELIEF PUMP RELIANCE)"
 
                 if should_trade and mark_price > 0:
                     # ORDER DEPTH PROXY
                     from data_fetcher import get_order_book_details
                     ob = get_order_book_details(symbol)
-                    
-                    if side == "buy" and ob['ratio'] < 0.7: continue
-                    if side == "sell" and ob['ratio'] > 1.4: continue # Too much support to short
+                    if ob['ratio'] < 0.7: continue
 
                     news_context = get_crypto_news(symbol)
                     
-                    # FINAL DIRECTIONAL CHECK
-                    if side == "buy" and not market_is_bullish and vwap_dist > -1:
-                        print(f"[SENTIMENT OVERRIDE] Market is BEARISH. Skipping {symbol} Long.")
-                        continue
-                    if side == "sell" and market_is_bullish and vwap_dist < 3:
-                        print(f"[SENTIMENT OVERRIDE] Market is BULLISH. Skipping {symbol} Short.")
+                    # SENTIMENT BREAKER: Anti-Bearish Long (The user's XRP Request)
+                    digest = get_market_news_digest()
+                    if digest['sentiment'] == 'BEARISH':
+                        print(f"[SENTIMENT OVERRIDE] Market is BEARISH. Aborting {symbol} Long to avoid catching falling knives.")
                         continue
 
                     print(f"[THE HUNTER] {symbol}: Targeting {reason}. Price vs VWAP: {vwap_dist}%")
@@ -188,24 +149,20 @@ def run_crypto_engine():
                     # DXY OVERRIDE: Anti-Dollar Strength
                     from data_fetcher import get_forex_data
                     dxy = get_forex_data(symbol="DXY")
-                    if side == "buy" and dxy and dxy.get('trend') == 'BULLISH' and dxy.get('change', 0) > 0.2:
+                    if dxy and dxy.get('trend') == 'BULLISH' and dxy.get('change', 0) > 0.2:
                          print(f"[DXY OVERRIDE] Dollar too strong! Aborting {symbol} Long.")
                          continue
 
                     # Calculate precise SL/TP
-                    if side == "buy":
-                        tp = mark_price * 1.03 # 3% Target
-                        sl = mark_price * 0.98 # 2% Stop Loss
-                    else:
-                        tp = mark_price * 0.97 # 3% Target (Down)
-                        sl = mark_price * 1.02 # 2% Stop Loss (Up)
+                    tp = mark_price * 1.03 # 3% Target
+                    sl = mark_price * 0.98 # 2% Stop Loss
                     
                     amount = executor.get_max_available(symbol, leverage=10)
                     if amount > 0:
-                        print(f"[CRYPTO AUTO-TRADE] Snipping {symbol} {side.upper()} | Entry: {mark_price}")
-                        success, order = executor.place_order(symbol, side, amount, tp=tp, sl=sl)
+                        print(f"[CRYPTO AUTO-TRADE] Snipping {symbol} | Entry: {mark_price} | TP: {tp}")
+                        success, order = executor.place_order(symbol, 'buy', amount, tp=tp, sl=sl)
                         if success:
-                            log_trade(symbol, mark_price, tp, sl, market='crypto')
+                            log_trade(symbol, mark_price, tp, sl)
                             last_exec_time = time.time()
                 
             time.sleep(20)

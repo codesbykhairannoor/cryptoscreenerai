@@ -305,15 +305,13 @@ def get_technical_indicators(symbol, interval="15m", period=14):
         is_whale_accumulation = vol_surge > 3.0 and price_change_abs < 2.0
 
         # 4. FAIR VALUE GAP (FVG) DETECTION (SMC)
+        # Logic: Gap between high of candle 1 and low of candle 3
         fvg_up = []
-        fvg_down = []
         if len(df_cur) >= 3:
             for i in range(len(df_cur)-3, len(df_cur)):
                 c1, c2, c3 = df_cur.iloc[i-2], df_cur.iloc[i-1], df_cur.iloc[i]
                 if c1['high'] < c3['low']: # Bullish FVG
                     fvg_up.append((c1['high'], c3['low']))
-                elif c1['low'] > c3['high']: # Bearish FVG
-                    fvg_down.append((c1['low'], c3['high']))
 
         # 5. SESSION AWARENESS (Anti-Prank Guard)
         # Identify London (07:00 UTC) and NY (12:00/13:00 UTC)
@@ -340,9 +338,8 @@ def get_technical_indicators(symbol, interval="15m", period=14):
             "vwap_dist": round((closes_cur.iloc[-1] - last_vwap) / last_vwap * 100, 2) if last_vwap > 0 else 0,
             "is_liquidity_sweep": is_sweep,
             "is_whale_accumulation": is_whale_accumulation,
-            "is_session_danger": is_session_danger,
             "fvg_up": fvg_up,
-            "fvg_down": fvg_down,
+            "is_session_danger": is_session_danger,
             "ema_200": round(ema_200_cur.iloc[-1], 2) if not ema_200_cur.empty else 0,
             "ema_200_htf": round(ema_200_htf.iloc[-1], 2) if not ema_200_htf.empty else 0,
             "candle_pattern": pattern,

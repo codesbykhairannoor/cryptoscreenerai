@@ -61,12 +61,11 @@ class BitgetPrivateWS:
             "args": [
                 {"instType": "USDT-FUTURES", "channel": "order", "instId": "default"},
                 {"instType": "USDT-FUTURES", "channel": "orders-algo", "instId": "default"},
-                {"instType": "USDT-FUTURES", "channel": "account", "instId": "default"},
-                {"instType": "USDT-FUTURES", "channel": "positions", "instId": "default"}
+                {"instType": "USDT-FUTURES", "channel": "account", "instId": "default"}
             ]
         }
         await ws.send(json.dumps(subs))
-        print("🛰️ [PRIVATE WS] Subscribed to Order, Algo (SL/TP), Account, and Positions Updates!")
+        print("🛰️ [PRIVATE WS] Subscribed to Order, Algo (SL/TP), and Account Updates!")
 
     async def listen(self):
         while self.is_running:
@@ -124,24 +123,6 @@ class BitgetPrivateWS:
                                     current_orders.append(plan)
                                 state.update_orders(current_orders)
                                 
-                        elif channel == "positions":
-                            state.last_update = time.time()
-                            # WebSocket position updates can be used to instantly clear closed trades
-                            all_pos = []
-                            for p in data.get('data', []):
-                                sz = float(p.get('total', 0) or p.get('size', 0))
-                                if sz > 0:
-                                    # Normalize for internal monitor
-                                    all_pos.append({
-                                        'symbol': p.get('instId'),
-                                        'side': p.get('holdSide', '').lower(),
-                                        'size': sz,
-                                        'entry': float(p.get('openPrice', 0)),
-                                        'mark_price': float(p.get('markPrice', 0)),
-                                        'pnl': round(float(p.get('unrealizedPL', 0)), 2)
-                                    })
-                            state.update_positions(all_pos)
-                            
                         elif channel == "account":
                             state.last_acc_update = time.time()
                             for acc in data.get("data", []):
