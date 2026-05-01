@@ -56,39 +56,51 @@ class ForexExecutor:
             return True, f"Connected to MT5 (Balance: ${info['balance']})"
         return False, "MT5 Connection Failed."
 
-    def place_forex_order(self, symbol, side, volume=0.01, tp=None, sl=None):
-        if not self.is_active: return False, "Inactive"
+    def get_live_price(self, symbol):
+        """Fetches EXACT price seen by the broker (Anti-Sync-Error)"""
+        try:
+            url = f"{self.base_url}/users/current/accounts/{self.account_id}/symbols/{symbol}/current-price"
+            headers = {"auth-token": self.api_token}
+            res = requests.get(url, headers=headers, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                return float(data.get('bid', data.get('ask', 0)))
+        except: pass
+        return 0
+
+    def place_forex_order(self, symbol, side, amount, tp=None, sl=None):
         try:
             actual_symbol = symbol
-            url = f"{self.base_url}/users/current/accounts/{self.account_id}/trade"
-            headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
-            
-            payload = {
-                "actionType": "ORDER_TYPE_BUY" if side.lower() == 'buy' else "ORDER_TYPE_SELL",
-                "symbol": actual_symbol,
-                "volume": volume,
-                "stopLoss": sl,
-                "takeProfit": tp,
-                "comment": "Dewa Sniper SMC V2"
+            url = f"{self.base_url}/users/current/accounts/{self.account_id}/orders"
+            headers = {
+                "auth-token": self.api_token,
+                "Content-Type": "application/json"
             }
             
+            payload = {
+                "symbol": actual_symbol,
+                "actionType": "ORDER_TYPE_BUY" if side.lower() == 'buy' else "ORDER_TYPE_SELL",
+                "volume": amount,
+                "type": "ORDER_TYPE_BUY" if side.lower() == 'buy' else "ORDER_TYPE_SELL"
+            }
+            
+            if tp: payload["takeProfit"] = tp
+            if sl: payload["stopLoss"] = sl
+
             res = requests.post(url, headers=headers, json=payload, timeout=10)
             result = res.json()
             
-            # Suffix auto-retry (Exness specific)
-            if res.status_code != 200 and "symbol not found" in str(result).lower() and not actual_symbol.endswith('c'):
-                actual_symbol += 'c'
-                payload['symbol'] = actual_symbol
-                res = requests.post(url, headers=headers, json=payload, timeout=10)
-                result = res.json()
-
             if res.status_code == 200:
-                print(f"[FOREX SUCCESS] {side.upper()} {actual_symbol} placed!")
+                print(f"[FOREX SUCCESS] {side.upper()} {actual_symbol} placed! ID: {result.get('orderId')}")
                 return True, result
             else:
-                print(f"[FOREX REJECTED] {actual_symbol}: {result.get('message')}")
-                return False, result
+                # Suffix hunting if failed
+                if "symbol not found" in str(result).lower() and not actual_symbol.endswith('c'):
+                    return self.place_forex_order(symbol + 'c', side, amount, tp, sl)
+                print(f"❌ [FOREX FAILED] {actual_symbol}: {result.get('message', 'Unknown Error')}")
+                return False, str(result)
         except Exception as e:
+            print(f"❌ [FOREX API CRASH] {e}")
             return False, str(e)
 
     def update_forex_sl(self, position_id, new_sl):
@@ -126,41 +138,34 @@ class ForexExecutor:
 
                 if fx_data:
                     rsi = fx_data.get('rsi', 50)
-                    vwap_dist = fx_data.get('vwap_dist', 0)
-                    spread = fx_data.get('spread', 0)
-                    
-                    # SMC INDICATORS (The 'Pinter' Part)
                     ob_status = fx_data.get('order_block', 'NONE')
                     fvg_status = fx_data.get('fvg', 'NONE')
                     liq_sweep = fx_data.get('is_liquidity_sweep', False)
                     inst_flow = fx_data.get('inst_flow', 'NORMAL')
+                    spread = fx_data.get('spread', 0)
                     
-                    if int(time.time()) % 20 < 10:
+                    # Fetch EXACT Price from Broker (MT5 Sync)
+                    broker_price = self.get_live_price("XAUUSD")
+                    if broker_price == 0: broker_price = fx_data['lastPrice']
+                    
+                    if int(time.time()) % 15 < 5:
                         total_lots = sum(float(p.get('volume', 0)) for p in positions)
-                        print(f"🌍 [FOREX DASHBOARD] Price: {fx_data['lastPrice']} | Trades: {len(positions)} | Lots: {round(total_lots, 2)}")
-                        print(f"📊 [FOREX METRICS] RSI: {rsi} | OB: {ob_status} | Flow: {inst_flow}")
-                        if liq_sweep: print(f"🔥 [SMC ALERT] Liquidity Sweep Detected on Gold!")
+                        print(f"🌍 [FOREX DASHBOARD] Price: {broker_price} | Trades: {len(positions)} | Lots: {round(total_lots, 2)}")
 
-                    # AGGRESSIVE STRATEGY: SMC + Sentiment
                     should_trade = False
-                    side = None
+                    side = 'buy'
                     confidence = 0
                     
-                    # BUY LOGIC: Bullish OB/FVG + Oversold OR Liquidity Sweep + Institutional Accumulation
-                    # BUY LOGIC: Bullish OB/FVG + RSI < 55 (Relaxed)
-                    if (ob_status == 'BULLISH' or fvg_status == 'BULLISH' or liq_sweep) and rsi < 55:
+                    # MILITARY SCALPING LOGIC (Aggressive)
+                    if (ob_status == 'BULLISH' or fvg_status == 'BULLISH' or liq_sweep) and rsi < 65:
                         should_trade = True
                         side = 'buy'
                         confidence = 1 if inst_flow == 'INSTITUTIONAL_ACCUMULATION' else 0
                         
-                    # SELL LOGIC: Bearish OB/FVG + RSI > 65 (Relaxed)
-                    elif (ob_status == 'BEARISH' or fvg_status == 'BEARISH' or rsi > 65):
+                    elif (ob_status == 'BEARISH' or fvg_status == 'BEARISH' or rsi > 35):
                         should_trade = True
                         side = 'sell'
                         confidence = 1 if inst_flow == 'INSTITUTIONAL_ABSORPTION' else 0
-                    else:
-                        if int(time.time()) % 60 < 10:
-                            print(f"📊 [FOREX ENGINE] Waiting for Setup... RSI: {rsi} | OB: {ob_status}")
 
                     if should_trade and (time.time() - last_auto_trade > AUTO_COOLDOWN):
                         if len(positions) >= 15: continue
@@ -169,18 +174,16 @@ class ForexExecutor:
                         # Institutional Barrage (Military Style)
                         trades_count = 10 if confidence == 1 else 5
                         atr = fx_data.get('atr', 1.0)
-                        price = fx_data['lastPrice']
                         
-                        tp = price + (atr * 4) if side == 'buy' else price - (atr * 4)
-                        sl = price - (atr * 3) if side == 'buy' else price + (atr * 3)
+                        tp = broker_price + (atr * 4) if side == 'buy' else broker_price - (atr * 4)
+                        sl = broker_price - (atr * 3) if side == 'buy' else broker_price + (atr * 3)
                         
-                        print(f"[MILITARY FOREX] {side.upper()} Barrage Initiated! Count: {trades_count}")
+                        print(f"[MILITARY FOREX] {side.upper()} Barrage Initiated! Price: {broker_price}")
                         
-                        # Execute Batch
                         for i in range(trades_count):
                             success, _ = self.place_forex_order("XAUUSD", side, 0.01, tp=tp, sl=sl)
                             if success and i == 0:
-                                log_trade("XAUUSD", price, tp, sl, market='forex')
+                                log_trade("XAUUSD", broker_price, tp, sl, market='forex')
                             time.sleep(0.1)
                         
                         last_auto_trade = time.time()

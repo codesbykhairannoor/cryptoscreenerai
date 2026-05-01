@@ -271,14 +271,21 @@ class BitgetExecutor:
                 
                 # 0.5 SMALL TRADE SCRUBBER (Hapus modal dikit)
                 notional = size * mark_price
-                if 0 < notional < 5.0: # Close anything under $5
+                if 0 < notional < 5.0:
                     print(f"🧹 [SCRUBBER] Closing micro-position {symbol} (Notional ${round(notional, 2)})")
-                    try: 
-                        side_to_close = 'sell' if side in ['long', 'buy'] else 'buy'
-                        self.exchange.create_order(symbol, 'market', side_to_close, size, params={'reduceOnly': True})
+                    try:
+                        # Use direct V2 close API for maximum priority
+                        clean_sym = symbol.replace("/", "").split(":")[0]
+                        params = {
+                            'symbol': clean_sym,
+                            'productType': 'USDT-FUTURES',
+                            'holdSide': 'long' if side in ['long', 'buy'] else 'short',
+                            'size': str(size)
+                        }
+                        self._v3_request("POST", "/api/v2/mix/order/close-positions", params)
                         continue
                     except Exception as e:
-                        print(f"⚠️ [SCRUBBER ERROR] {e}")
+                        print(f"⚠️ [SCRUBBER ERROR] {symbol}: {e}")
 
                 # 0. SIDEWAYS DETECTION
                 if symbol not in state.pos_start_time:
