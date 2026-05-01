@@ -57,15 +57,19 @@ class ForexExecutor:
         return False, "MT5 Connection Failed."
 
     def get_live_price(self, symbol):
-        """Fetches EXACT price seen by the broker (Anti-Sync-Error)"""
-        try:
-            url = f"{self.base_url}/users/current/accounts/{self.account_id}/symbols/{symbol}/current-price"
-            headers = {"auth-token": self.api_token}
-            res = requests.get(url, headers=headers, timeout=5)
-            if res.status_code == 200:
-                data = res.json()
-                return float(data.get('bid', data.get('ask', 0)))
-        except: pass
+        """Fetches EXACT price seen by the broker with suffix detection"""
+        suffixes = ["", "c", ".m", ".i", "+", "#"]
+        for s in suffixes:
+            try:
+                actual_sym = symbol + s
+                url = f"{self.base_url}/users/current/accounts/{self.account_id}/symbols/{actual_sym}/current-price"
+                headers = {"auth-token": self.api_token}
+                res = requests.get(url, headers=headers, timeout=5)
+                if res.status_code == 200:
+                    data = res.json()
+                    p = float(data.get('bid', data.get('ask', 0)))
+                    if p > 0: return p
+            except: continue
         return 0
 
     def place_forex_order(self, symbol, side, amount, tp=None, sl=None):
@@ -97,10 +101,10 @@ class ForexExecutor:
                 # Suffix hunting if failed
                 if "symbol not found" in str(result).lower() and not actual_symbol.endswith('c'):
                     return self.place_forex_order(symbol + 'c', side, amount, tp, sl)
-                print(f"❌ [FOREX FAILED] {actual_symbol}: {result.get('message', 'Unknown Error')}")
+                print(f"[FOREX FAILED] {actual_symbol}: {result.get('message', 'Unknown Error')}")
                 return False, str(result)
         except Exception as e:
-            print(f"❌ [FOREX API CRASH] {e}")
+            print(f"[FOREX API CRASH] {e}")
             return False, str(e)
 
     def update_forex_sl(self, position_id, new_sl):
@@ -150,7 +154,7 @@ class ForexExecutor:
                     
                     if int(time.time()) % 15 < 5:
                         total_lots = sum(float(p.get('volume', 0)) for p in positions)
-                        print(f"🌍 [FOREX DASHBOARD] Price: {broker_price} | Trades: {len(positions)} | Lots: {round(total_lots, 2)}")
+                        print(f"[FOREX DASHBOARD] Price: {broker_price} | Trades: {len(positions)} | Lots: {round(total_lots, 2)}")
 
                     should_trade = False
                     side = 'buy'

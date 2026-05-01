@@ -37,7 +37,7 @@ class BitgetExecutor:
         
         # Security Check
         if not self.api_key or not self.secret_key:
-             print("❌ [CRITICAL] Bitget Credentials MISSING! Check your .env file.")
+             print("[CRITICAL] Bitget Credentials MISSING! Check your .env file.")
         
         self.is_uta = False
         self.startup_time = time.time()
@@ -51,11 +51,11 @@ class BitgetExecutor:
             
             self.detect_account_mode()
             bal = self.get_balance()
-            print(f"💰 [STARTUP AUDIT] USDT Balance: {bal['total']} (Available: {bal['free']})")
+            print(f"[STARTUP AUDIT] USDT Balance: {bal['total']} (Available: {bal['free']})")
             
             pos = self.get_all_positions()
             if pos:
-                print(f"📊 [STARTUP AUDIT] Running Trades: {len(pos)}")
+                print(f"[STARTUP AUDIT] Running Trades: {len(pos)}")
                 for p in pos:
                     print(f"   > {p['symbol']} | Side: {p['side']} | PNL: {p['pnl']}%")
                     self.get_pending_plan_orders(p['symbol'])
@@ -272,7 +272,7 @@ class BitgetExecutor:
                 # 0.5 SMALL TRADE SCRUBBER (Hapus modal dikit)
                 notional = size * mark_price
                 if 0 < notional < 5.0:
-                    print(f"🧹 [SCRUBBER] Closing micro-position {symbol} (Notional ${round(notional, 2)})")
+                    print(f"[SCRUBBER] Closing micro-position {symbol} (Notional ${round(notional, 2)})")
                     try:
                         # Use direct V2 close API for maximum priority
                         clean_sym = symbol.replace("/", "").split(":")[0]
@@ -285,7 +285,7 @@ class BitgetExecutor:
                         self._v3_request("POST", "/api/v2/mix/order/close-positions", params)
                         continue
                     except Exception as e:
-                        print(f"⚠️ [SCRUBBER ERROR] {symbol}: {e}")
+                        print(f"[SCRUBBER ERROR] {symbol}: {e}")
 
                 # 0. SIDEWAYS DETECTION
                 if symbol not in state.pos_start_time:
@@ -295,7 +295,7 @@ class BitgetExecutor:
                 price_move_pct = abs((mark_price - entry) / entry * 100) if entry > 0 else 0
                 
                 if duration_hours > 4 and -1.5 < pnl < 1.5 and price_move_pct < 0.4:
-                    print(f"⚖️ [SIDEWAYS EXIT] Closing {symbol} - Flat for {round(duration_hours, 1)}h")
+                    print(f"[SIDEWAYS EXIT] Closing {symbol} - Flat for {round(duration_hours, 1)}h")
                     self.exchange.create_order(symbol, 'market', 'sell' if side in ['long', 'buy'] else 'buy', size)
                     if symbol in state.pos_start_time: del state.pos_start_time[symbol]
                     continue
@@ -312,10 +312,10 @@ class BitgetExecutor:
 
                 # Military Status Log
                 if int(now) % 15 < 2:
-                    o_h = "🟢" if now - state.last_order_update < 300 else "🔴"
-                    a_h = "🟢" if now - state.last_algo_update < 300 else "🔴"
-                    b_h = "🟢" if now - state.last_acc_update < 300 else "🔴"
-                    print(f"💎 [MONITOR {o_h}{a_h}{b_h}] {symbol} | PNL: {pnl}% | SL: {'OK' if has_sl else 'MISSING'}")
+                    o_h = "OK" if now - state.last_order_update < 300 else "BAD"
+                    a_h = "OK" if now - state.last_algo_update < 300 else "BAD"
+                    b_h = "OK" if now - state.last_acc_update < 300 else "BAD"
+                    print(f"[MONITOR {o_h}{a_h}{b_h}] {symbol} | PNL: {pnl}% | SL: {'OK' if has_sl else 'MISSING'}")
 
                 # 1. INITIAL GUARD
                 if not has_sl and now - self.startup_time > self.warmup_period:
@@ -324,7 +324,7 @@ class BitgetExecutor:
                         if side in ['long', 'buy'] and sl_price >= mark_price: sl_price = mark_price * 0.98
                         if side in ['short', 'sell'] and sl_price <= mark_price: sl_price = mark_price * 1.02
                         
-                        print(f"🛡️ [GUARD] Setting Initial SL for {symbol}")
+                        print(f"[GUARD] Setting Initial SL for {symbol}")
                         self.update_sl_price(symbol, side, size, sl_price)
                         self._last_sl_set[symbol] = now
 

@@ -52,7 +52,7 @@ class BitgetPrivateWS:
             }]
         }
         await ws.send(json.dumps(login_msg))
-        print("🔐 [PRIVATE WS] Login request sent...")
+        print("[PRIVATE WS] Login request sent...")
 
     async def subscribe(self, ws):
         # Subscribe to Order & Account updates (USDT-FUTURES mode)
@@ -65,7 +65,7 @@ class BitgetPrivateWS:
             ]
         }
         await ws.send(json.dumps(subs))
-        print("🛰️ [PRIVATE WS] Subscribed to Order, Algo (SL/TP), and Account Updates!")
+        print("[PRIVATE WS] Subscribed to Order, Algo (SL/TP), and Account Updates!")
 
     async def listen(self):
         while self.is_running:
@@ -79,7 +79,7 @@ class BitgetPrivateWS:
                     
                     # 3. Wait for login success
                     resp = await ws.recv()
-                    print(f"🔓 [PRIVATE WS] Login Response: {resp}")
+                    print(f"[PRIVATE WS] Login Response: {resp}")
                     
                     # 3. Subscribe
                     await self.subscribe(ws)
