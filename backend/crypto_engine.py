@@ -79,7 +79,7 @@ def run_crypto_engine():
                 print(f"[CRYPTO LIMIT ERROR] {e}")
                 open_symbols = []
             
-            for coin in candidates[:5]:
+            for coin in candidates[:20]:
                 now = time.time()
                 if now - last_exec_time < COOLDOWN_PERIOD:
                     break

@@ -11,15 +11,15 @@ client = genai.Client(api_key=api_key) if api_key else None
 def analyze_and_sort(df):
     if df.empty: return []
     
-    # Filter for active coins with decent volume
-    df_filtered = df[df['quoteVolume'] > 500000] # Lowered from 1M
+    # Filter for active coins including high-potential mid-caps
+    df_filtered = df[df['quoteVolume'] > 150000] # Lowered to 150k to catch 'wild' small coins
     
-    # Sort by highest momentum first
-    df_sorted = df_filtered.sort_values(by='priceChangePercent', ascending=False).head(15)
+    # Sort by highest momentum (Volatility is key for small capital)
+    df_sorted = df_filtered.sort_values(by='priceChangePercent', ascending=False).head(30)
     
-    # If not enough coins with positive change, just show highest volume ones
+    # If not enough coins with positive change, show highest volume ones
     if len(df_sorted) < 5:
-        df_sorted = df.sort_values(by='quoteVolume', ascending=False).head(15)
+        df_sorted = df.sort_values(by='quoteVolume', ascending=False).head(30)
         
     return df_sorted.to_dict('records')
 

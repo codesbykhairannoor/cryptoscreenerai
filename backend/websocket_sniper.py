@@ -156,11 +156,16 @@ class BitgetWebSocketSniper:
             "args": [
                 {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "BTCUSDT"},
                 {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "ETHUSDT"},
-                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "SOLUSDT"}
+                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "SOLUSDT"},
+                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "XRPUSDT"},
+                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "BCHUSDT"},
+                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "LTCUSDT"},
+                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "DOGEUSDT"},
+                {"instType": "USDT-FUTURES", "channel": "ticker", "instId": "PEPEUSDT"}
             ]
         }
         await ws.send(json.dumps(subs))
-        print("🛰️ [WS V2] Subscribed to Public Stream (BTC, ETH, SOL)!")
+        print("🛰️ [WS V2] Subscribed to Public Stream (BTC, ETH, SOL, XRP, BCH, LTC, DOGE, PEPE)!")
 
     async def listen(self):
         while self.is_running:

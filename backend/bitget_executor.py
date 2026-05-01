@@ -217,6 +217,26 @@ class BitgetExecutor:
             self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=params)
         except: pass
 
+    def sync_memory(self):
+        """Database Sync: Ensures local DB matches exchange reality"""
+        from database import get_connection
+        try:
+            positions = self.get_all_positions()
+            open_symbols = [self._clean_symbol(p['symbol']) for p in positions]
+            
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, symbol FROM trades WHERE status IN ('PENDING', 'RUNNING') AND market = 'crypto'")
+            for tid, sym in cursor.fetchall():
+                if self._clean_symbol(sym) not in open_symbols:
+                    cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE id = %s", (tid,))
+            conn.commit()
+            conn.close()
+        except: pass
+
+    def sync_state_with_exchange(self):
+        return self.sync_memory()
+
     def manage_open_positions(self):
         """Military Position Manager: Progressive Trailing & Sideways Exit"""
         try:
