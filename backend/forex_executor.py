@@ -214,18 +214,24 @@ class ForexExecutor:
                         # Use working_symbol from fx_data (e.g. XAUUSDc)
                         trade_symbol = fx_data.get('working_symbol', 'XAUUSDc')
                         
-                        # Institutional Barrage (Military Style)
-                        trades_count = 10 if confidence == 1 else 5
-                        atr = fx_data.get('atr', 1.0)
+                        # DYNAMIC LOT SIZING (Cent Account Awareness)
+                        # Rule: 0.01 lot per $100 (10,000 cents) of balance
+                        balance = float(info.get('balance', 0))
+                        calculated_lot = round((balance / 10000) * 0.01, 2)
+                        final_lot = max(0.01, min(calculated_lot, 1.0))
                         
-                        # PREDICTIVE FIB TP
-                        tp = fib_ext
-                        sl = broker_price - (atr * 3) if side == 'buy' else broker_price + (atr * 3)
+                        # 1:2 RISK REWARD (Military Precision)
+                        # 10 Pips = 1.0 Price Point on XAUUSD
+                        sl_dist = 1.0
+                        tp_dist = 2.0
                         
-                        print(f"[MILITARY FOREX] {side.upper()} Barrage Initiated! Price: {broker_price} Symbol: {trade_symbol}")
+                        sl = broker_price - sl_dist if side == 'buy' else broker_price + sl_dist
+                        tp = broker_price + tp_dist if side == 'buy' else broker_price - tp_dist
+                        
+                        print(f"[MILITARY FOREX] {side.upper()} Barrage! Price: {broker_price} | Lot: {final_lot} | SL: 10p | TP: 20p")
                         
                         for i in range(trades_count):
-                            success, _ = self.place_forex_order(trade_symbol, side, 0.01, tp=tp, sl=sl)
+                            success, _ = self.place_forex_order(trade_symbol, side, final_lot, tp=tp, sl=sl)
                             if success and i == 0:
                                 log_trade(trade_symbol, broker_price, tp, sl, market='forex')
                             time.sleep(0.1)

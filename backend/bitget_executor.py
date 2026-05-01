@@ -339,20 +339,21 @@ class BitgetExecutor:
                         self.update_sl_price(symbol, side, size, tp_price, is_tp=True)
                         self._last_sl_set[symbol] = now
 
-                # 3. PROGRESSIVE 15% TRAILING
+                # 3. PROGRESSIVE 15% STEP-TRAILING
                 new_sl = 0
-                sl_p = 0 # Default if no plans found
+                sl_p = 0
                 for p in plans:
                     if 'sl' in p['type'] or 'loss' in p['type'] or 'psl' in p['type']:
                         sl_p = p['price']
                         break
 
+                # Trail every 15% increase
                 if pnl >= 90: new_sl = entry * 1.75 if side in ['long', 'buy'] else entry * 0.25 
                 elif pnl >= 75: new_sl = entry * 1.60 if side in ['long', 'buy'] else entry * 0.40 
                 elif pnl >= 60: new_sl = entry * 1.45 if side in ['long', 'buy'] else entry * 0.55 
                 elif pnl >= 45: new_sl = entry * 1.30 if side in ['long', 'buy'] else entry * 0.70 
                 elif pnl >= 30: new_sl = entry * 1.15 if side in ['long', 'buy'] else entry * 0.85 
-                elif pnl >= 15: new_sl = entry + (entry * 0.005 if side in ['long', 'buy'] else -entry * 0.005) 
+                elif pnl >= 15: new_sl = entry * 1.005 if side in ['long', 'buy'] else entry * 0.995 # Breakeven +0.5%
                 
                 if new_sl > 0:
                     is_better = (side in ['long', 'buy'] and new_sl > sl_p) or \
