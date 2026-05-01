@@ -269,6 +269,14 @@ class BitgetExecutor:
                 pnl = pos['pnl']
                 mark_price = pos.get('mark_price', 0)
                 
+                # 0.5 SMALL TRADE SCRUBBER (Hapus modal dikit)
+                notional = float(size) * float(mark_price)
+                if notional < 4.0:
+                    print(f"🧹 [SCRUBBER] Closing micro-position {symbol} (Notional ${round(notional, 2)})")
+                    try: self.exchange.create_order(symbol, 'market', 'sell' if side in ['long', 'buy'] else 'buy', size)
+                    except: pass
+                    continue
+                
                 # 0. SIDEWAYS DETECTION
                 if symbol not in state.pos_start_time:
                     state.pos_start_time[symbol] = now
@@ -304,7 +312,11 @@ class BitgetExecutor:
                 # 1. INITIAL GUARD
                 if not has_sl and now - self.startup_time > self.warmup_period:
                     if now - self._last_sl_set.get(symbol, 0) > 300:
-                        sl_price = entry * 0.98 if side in ['long', 'buy'] else entry * 1.02
+                        sl_price = entry * 0.95 if side in ['long', 'buy'] else entry * 1.05
+                        # Safety check against mark price
+                        if side in ['long', 'buy'] and sl_price >= mark_price: sl_price = mark_price * 0.98
+                        if side in ['short', 'sell'] and sl_price <= mark_price: sl_price = mark_price * 1.02
+                        
                         print(f"🛡️ [GUARD] Setting Initial SL for {symbol}")
                         self.update_sl_price(symbol, side, size, sl_price)
                         self._last_sl_set[symbol] = now

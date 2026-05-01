@@ -79,10 +79,16 @@ def run_crypto_engine():
                 print(f"[CRYPTO LIMIT ERROR] {e}")
                 open_symbols = []
             
-            for coin in candidates[:20]:
-                now = time.time()
-                if now - last_exec_time < COOLDOWN_PERIOD:
-                    break
+                # MILITARY LIMIT: FOCUS ON ONE BEST ENTRY (SINGLE SNIPER MODE)
+                if len(open_symbols) >= 1:
+                    if int(time.time()) % 60 < 10:
+                        print(f"[LIMIT GUARD] Active trade found. Standing by for completion...")
+                    break # Exit candidate loop, focus on managing existing
+                
+                for coin in candidates[:20]:
+                    now = time.time()
+                    if now - last_exec_time < 60: # Increased cooldown for settlement
+                        break
 
                 symbol = coin['symbol']
                 # Standardize symbol for comparison using the new robust helper
