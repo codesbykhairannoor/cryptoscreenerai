@@ -15,6 +15,11 @@ class BitgetExecutor:
             'enableRateLimit': True,
             'options': {'defaultType': 'swap'}
         })
+        
+        # Security Check: Ensure keys are loaded
+        if not self.exchange.apiKey or not self.exchange.secret:
+             print("❌ [CRITICAL] Bitget Credentials MISSING! Check your .env file.")
+        
         self.is_mix = True
         
         # Startup Intelligence
@@ -49,9 +54,9 @@ class BitgetExecutor:
             self.exchange.private_get_mix_v1_account_accounts({'productType': 'usdt-futures'})
             self.is_mix = True
             print("[MODE] Account verified as Bitget Classic (Mix).")
-        except:
+        except Exception as e:
             self.is_mix = False
-            print("[MODE] Account verified as Bitget Standard.")
+            print(f"[MODE] Account verified as Bitget Standard (Reason: {e})")
 
     def get_balance(self):
         """Institutional Balance Audit"""
