@@ -116,19 +116,43 @@ def run_crypto_engine():
                         print(f"[SESSION GUARD] Market Opening/Closing Detected. Holding all fire to avoid Stop Hunts.")
                     continue
 
-                # REFINED HUNTER LOGIC
+                # REFINED HUNTER LOGIC: MILITARY BI-DIRECTIONAL
                 should_trade = False
+                side = "buy"
                 reason = ""
                 
+                digest = get_market_news_digest()
+                market_is_bullish = digest['sentiment'] == 'BULLISH'
+                
                 # Logic A: Whale Accumulation (Buy the Bottom)
-                if is_whale and vwap_dist < 1.0:
+                if is_whale and vwap_dist < 1.0 and market_is_bullish:
                     should_trade = True
+                    side = "buy"
                     reason = "EARLY PUMP (WHALE ACCUMULATION)"
                 
                 # Logic B: SMC/FVG Return (Buy the Dip)
-                elif fvg_zones and vwap_dist < 0.5:
+                elif fvg_up and vwap_dist < 0.5:
                     should_trade = True
+                    side = "buy"
                     reason = "SMC FVG RE-ENTRY (INSTITUTIONAL DISCOUNT)"
+                
+                # Logic C: Whale Distribution (Short the Top)
+                elif is_whale and vwap_dist > 5.0 and not market_is_bullish:
+                    should_trade = True
+                    side = "sell"
+                    reason = "WHALE DISTRIBUTION (INSTITUTIONAL SELL)"
+                
+                # Logic D: Bearish FVG Rejection (Short the Rally)
+                elif fvg_down and vwap_dist > 1.5:
+                    should_trade = True
+                    side = "sell"
+                    reason = "BEARISH SMC FVG REJECTION (PREMIUM)"
+                
+                # Logic E: Sentiment Momentum Short (Military Style)
+                elif not market_is_bullish and vwap_dist > 0.7:
+                    should_trade = True
+                    side = "sell"
+                    reason = "BEARISH MOMENTUM (RELIEF PUMP RELIANCE)"
 
                 if should_trade and mark_price > 0:
                     # ORDER DEPTH PROXY
@@ -137,12 +161,6 @@ def run_crypto_engine():
                     if ob['ratio'] < 0.7: continue
 
                     news_context = get_crypto_news(symbol)
-                    
-                    # SENTIMENT BREAKER: Anti-Bearish Long (The user's XRP Request)
-                    digest = get_market_news_digest()
-                    if digest['sentiment'] == 'BEARISH':
-                        print(f"[SENTIMENT OVERRIDE] Market is BEARISH. Aborting {symbol} Long to avoid catching falling knives.")
-                        continue
 
                     print(f"[THE HUNTER] {symbol}: Targeting {reason}. Price vs VWAP: {vwap_dist}%")
                     

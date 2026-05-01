@@ -1,9 +1,15 @@
 import ccxt
 import os
 import time
+import json
+import hmac
+import hashlib
+import base64
+import requests
 import traceback
 from dotenv import load_dotenv
 
+# Standard loading
 load_dotenv()
 
 # Suppress InsecureRequestWarning
@@ -12,13 +18,11 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class BitgetExecutor:
     def __init__(self):
+        # [STABLE] Exact environment variables from Commit ae01681
         self.api_key = os.getenv("BITGET_API_KEY")
         self.secret_key = os.getenv("BITGET_SECRET_KEY")
         self.passphrase = os.getenv("BITGET_PASSPHRASE", "")
-        
-        # DEFAULT TO CLASSIC (MIX) as confirmed by USER
-        self.is_uta = False 
-        
+
         self.exchange = ccxt.bitget({
             'apiKey': self.api_key,
             'secret': self.secret_key,
@@ -31,13 +35,16 @@ class BitgetExecutor:
             }
         })
         
-        # Startup Intelligence
+        # Security Check
+        if not self.api_key or not self.secret_key:
+             print("❌ [CRITICAL] Bitget Credentials MISSING! Check your .env file.")
+        
+        self.is_uta = False
         self.startup_time = time.time()
-        self.warmup_period = 15 # 15s observation phase
+        self.warmup_period = 15
         
         try:
             from shared_state import state
-            # Initialize health timestamps to prevent false red dots
             state.last_order_update = self.startup_time
             state.last_algo_update = self.startup_time
             state.last_acc_update = self.startup_time
@@ -46,38 +53,17 @@ class BitgetExecutor:
             bal = self.get_balance()
             print(f"💰 [STARTUP AUDIT] USDT Balance: {bal['total']} (Available: {bal['free']})")
             
-            # FORCE INITIAL REST SYNC to populate state
             pos = self.get_all_positions()
             if pos:
                 print(f"📊 [STARTUP AUDIT] Running Trades: {len(pos)}")
                 for p in pos:
                     print(f"   > {p['symbol']} | Side: {p['side']} | PNL: {p['pnl']}%")
-                    # Populating plans via REST so Guard is aware immediately
                     self.get_pending_plan_orders(p['symbol'])
-        except:
-            pass
-
-    def detect_account_mode(self):
-        """Internal check to confirm if account is UTA or Classic"""
-        try:
-            # Try a lightweight UTA request
-            res = self._v3_request("GET", "/api/v3/account/assets", "category=USDT-FUTURES")
-            if res.get('code') == '00000':
-                self.is_uta = True
-                print("[MODE] Account verified as Bitget V3 UTA.")
-            else:
-                self.is_uta = False
-                print("[MODE] Account verified as Bitget Classic (Mix).")
-        except:
-            self.is_uta = False
-
-    def _clean_symbol(self, s):
-        if not s: return ""
-        return s.upper().replace('USDT', '').replace('/', '').split(':')[0].split('_')[0]
+        except Exception as e:
+            print(f"[STARTUP AUDIT ERROR] {e}")
 
     def _v3_request(self, method, path, query="", body=None):
-        """Signed V3 Request for UTA accounts"""
-        import requests, hmac, hashlib, base64, json
+        """Signed V3 Request for UTA accounts (Stable Baseline)"""
         ts = str(int(time.time() * 1000))
         request_path = path + (f"?{query}" if query else "")
         body_str = json.dumps(body) if body else ""
@@ -98,17 +84,34 @@ class BitgetExecutor:
         except:
             return {"code": "timeout"}
 
+    def detect_account_mode(self):
+        """Internal check to confirm if account is UTA or Classic"""
+        try:
+            res = self._v3_request("GET", "/api/v3/account/assets", "category=USDT-FUTURES")
+            if res.get('code') == '00000':
+                self.is_uta = True
+                print("[MODE] Account verified as Bitget V3 UTA.")
+            else:
+                self.is_uta = False
+                print("[MODE] Account verified as Bitget Classic (Mix).")
+        except:
+            self.is_uta = False
+            print("[MODE] Account fallback to Bitget Classic (Mix).")
+
+    def _clean_symbol(self, s):
+        if not s: return ""
+        return s.upper().replace('USDT', '').replace('/', '').split(':')[0].split('_')[0]
+
     def get_balance(self):
         """Unified Balance Fetcher"""
         try:
             if self.is_uta:
                 data = self._v3_request("GET", "/api/v3/account/assets", "category=USDT-FUTURES")
-                if data.get('code') == '00000':
-                    for a in data['data']['list']:
+                if data.get('code') == '00000' and data.get('data'):
+                    for a in data['data'].get('list', []):
                         if a.get('marginCoin') == 'USDT':
                             return {'total': float(a.get('equity', 0)), 'free': float(a.get('available', 0))}
             
-            # Classic / Fallback
             bal = self.exchange.fetch_balance({'type': 'swap'})
             return {
                 'total': float(bal.get('total', {}).get('USDT', 0)),
@@ -117,42 +120,22 @@ class BitgetExecutor:
         except: return {'total': 0, 'free': 0}
 
     def get_max_available(self, symbol, leverage=10):
-        """Calculates max trade size with exchange precision awareness"""
         try:
             balance = self.get_balance()
             free_usdt = balance['free']
-            
             ticker = self.exchange.fetch_ticker(symbol)
             price = ticker['last']
-            
-            # 1. Raw calculation
             raw_amount = (free_usdt * leverage * 0.9) / price
-            
-            # 2. Apply exchange precision
             formatted_amount = float(self.exchange.amount_to_precision(symbol, raw_amount))
-            
-            # 3. Check against minimum limit
             market = self.exchange.market(symbol)
             min_amount = market.get('limits', {}).get('amount', {}).get('min', 0.01)
-            
-            if formatted_amount < min_amount:
-                # Silently return 0 if balance too low for minimum trade
-                return 0
-                
-            return formatted_amount
-        except:
-            return 0
+            return formatted_amount if formatted_amount >= min_amount else 0
+        except: return 0
 
     def get_all_positions(self):
-        """Position Fetcher with Real-time PNL Calculation (Hybrid WS/REST)"""
         all_pos = []
         try:
-            # 1. Try to get from Shared State (WebSocket) first
             from shared_state import state
-            if state.positions and (time.time() - state.last_update < 30):
-                return state.positions
-
-            # 2. Fallback to REST
             ccxt_pos = self.exchange.fetch_positions(params={'productType': 'usdt-futures'})
             for p in ccxt_pos:
                 sz = float(p.get('contracts', 0) or 0)
@@ -160,7 +143,6 @@ class BitgetExecutor:
                     entry = float(p.get('entryPrice', 0))
                     mark = float(p.get('markPrice', 0))
                     side = p['side'].lower()
-                    
                     pnl_pct = 0
                     if entry > 0:
                         diff = (mark - entry) if side in ['long', 'buy'] else (entry - mark)
@@ -174,117 +156,76 @@ class BitgetExecutor:
                         'mark_price': mark,
                         'pnl': round(pnl_pct, 2)
                     })
-            
-            # Update Shared State for next call
             state.update_positions(all_pos)
             return all_pos
         except Exception as e:
             return []
 
-    def get_pending_plan_orders(self, symbol=None):
-        """Plan/Trigger Order Fetcher (Hybrid WS/REST)"""
-        all_orders = []
+    def get_pending_plan_orders(self, symbol):
         try:
-            # 1. Check Shared State (WebSocket) first
-            from shared_state import state
-            ws_orders = state.orders
-            if ws_orders:
-                target_clean = self._clean_symbol(symbol) if symbol else None
-                for o in ws_orders:
-                    # WebSocket algo orders might have 'symbol' or 'instId'
-                    o_sym = o.get('symbol') or o.get('instId') or ''
-                    o_clean = self._clean_symbol(o_sym)
-                    if not target_clean or o_clean == target_clean:
-                        # Normalize WebSocket order for the monitor
-                        all_orders.append({
-                            'info': o, 
-                            'type': 'stop', 
-                            'symbol': symbol or o_sym,
-                            'stopPrice': float(o.get('triggerPrice') or o.get('executePrice') or 0)
+            clean_symbol = symbol.replace("/", "").split(":")[0]
+            if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
+            res = self.exchange.private_get_v2_mix_order_plan_current_orders({
+                'symbol': clean_symbol,
+                'productType': 'USDT-FUTURES'
+            })
+            plans = []
+            if res.get('code') == '00000' and res.get('data'):
+                for order in res['data']:
+                    st = order.get('state', order.get('status', 'unknown')).lower()
+                    if st in ['live', 'active', 'not_trigger']:
+                        p = float(order.get('triggerPrice', order.get('executePrice', order.get('stopPrice', 0))))
+                        plans.append({
+                            'id': order.get('orderId', order.get('planId')),
+                            'type': order.get('planType', 'unknown').lower(),
+                            'price': p
                         })
-                if all_orders: return all_orders
+            return plans
+        except: return []
 
-            # 2. Fallback to REST API
-            try: all_orders += self.exchange.fetch_open_orders(symbol, params={'productType': 'usdt-futures'})
-            except: pass
-            
-            for pt in ['usdt-futures', 'umcbl', 'dmcbl', 'cmcbl']:
-                try:
-                    plan_data = self.exchange.private_get_mix_order_orders_plan_pending({'productType': pt})
-                    if plan_data.get('code') == '00000':
-                        raw_plans = plan_data.get('data', [])
-                        target_clean = self._clean_symbol(symbol) if symbol else None
-                        for p in raw_plans:
-                            p_sym = p.get('symbol', '')
-                            if not target_clean or self._clean_symbol(p_sym) == target_clean:
-                                all_orders.append({'info': p, 'type': 'stop', 'symbol': p_sym})
-                except: pass
-            
-            return all_orders
-        except Exception as e:
-            return []
-
-    def place_order(self, symbol, side, amount, leverage=10, tp=None, sl=None):
-        """Order Placement for Classic accounts (V2 Mix)"""
+    def place_order(self, symbol, side, amount, tp=None, sl=None):
         try:
-            self.exchange.set_leverage(leverage, symbol)
-            
-            # For Classic, we MUST split SL/TP to avoid parameter conflicts
-            print(f"[CLASSIC ORDER] {side.upper()} {amount} {symbol}")
             order = self.exchange.create_order(symbol, 'market', side, amount)
-            
-            if sl or tp:
-                time.sleep(0.5)
-                if sl: self.update_sl_price(symbol, side, amount, sl, is_tp=False)
-                if tp: self.update_sl_price(symbol, side, amount, tp, is_tp=True)
-            
+            print(f"[BITGET CLASSIC] {side.upper()} {symbol} executed.")
+            params = {'productType': 'USDT-FUTURES'}
+            tp_side = 'sell' if side.lower() in ['long', 'buy'] else 'buy'
+            if sl:
+                sl_params = {**params, 'stopLossPrice': sl}
+                self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=sl_params)
+            if tp:
+                tp_params = {**params, 'takeProfitPrice': tp}
+                self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=tp_params)
+            else:
+                # Institutional TP (100% PNL)
+                price = float(order.get('price', 0))
+                if price > 0:
+                    smart_tp = price * 2.0 if side.lower() in ['long', 'buy'] else price * 0.1
+                    tp_params = {**params, 'takeProfitPrice': smart_tp}
+                    self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=tp_params)
             return True, order
         except Exception as e:
             print(f"[CLASSIC ORDER FAILED] {e}")
             return False, str(e)
 
     def update_sl_price(self, symbol, side, amount, new_price, is_tp=False):
-        """Updates SL/TP for Classic Position"""
         try:
             tp_side = 'sell' if side.lower() in ['long', 'buy'] else 'buy'
             params = {
                 'stopLossPrice' if not is_tp else 'takeProfitPrice': new_price,
                 'productType': 'USDT-FUTURES'
             }
-            # Bitget Mix requires create_order for plan orders with stopLossPrice param
             self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=params)
-            print(f"[BITGET CLASSIC] {'TP' if is_tp else 'SL'} set at {new_price}")
-        except Exception as e:
-            print(f"[CLASSIC SL/TP ERROR] {e}")
-
-    def sync_memory(self):
-        from database import get_connection
-        try:
-            positions = self.get_all_positions()
-            open_symbols = [self._clean_symbol(p['symbol']) for p in positions]
-            
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT id, symbol FROM trades WHERE status IN ('PENDING', 'RUNNING') AND market = 'crypto'")
-            for tid, sym in cursor.fetchall():
-                if self._clean_symbol(sym) not in open_symbols:
-                    cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE id = %s", (tid,))
-            conn.commit()
-            conn.close()
         except: pass
 
-    def sync_state_with_exchange(self):
-        return self.sync_memory()
-
     def manage_open_positions(self):
-        """Institutional Monitoring: Progressive Trailing & SL Guard"""
+        """Military Position Manager: Progressive Trailing & Sideways Exit"""
         try:
-            # Persistent caches to prevent log spamming
             if not hasattr(self, '_last_sl_check'): self._last_sl_check = {}
             if not hasattr(self, '_last_sl_set'): self._last_sl_set = {}
             
             positions = self.get_all_positions()
             now = time.time()
+            from shared_state import state
             
             for pos in positions:
                 symbol = pos['symbol']
@@ -294,91 +235,60 @@ class BitgetExecutor:
                 pnl = pos['pnl']
                 mark_price = pos.get('mark_price', 0)
                 
-                # 0. Sideways/Stale Trade Detection
-                from shared_state import state
+                # 0. SIDEWAYS DETECTION
                 if symbol not in state.pos_start_time:
                     state.pos_start_time[symbol] = now
                 
                 duration_hours = (now - state.pos_start_time[symbol]) / 3600
                 price_move_pct = abs((mark_price - entry) / entry * 100) if entry > 0 else 0
                 
-                # Logic: If trade is > 4 hours old, PNL is near zero, and price hasn't moved much -> EXIT
                 if duration_hours > 4 and -1.5 < pnl < 1.5 and price_move_pct < 0.4:
-                    print(f"⚖️ [SIDEWAYS EXIT] Closing {symbol} - Flat for {round(duration_hours, 1)}h (Move: {round(price_move_pct, 2)}%)")
+                    print(f"⚖️ [SIDEWAYS EXIT] Closing {symbol} - Flat for {round(duration_hours, 1)}h")
                     self.exchange.create_order(symbol, 'market', 'sell' if side == 'long' else 'buy', size)
                     if symbol in state.pos_start_time: del state.pos_start_time[symbol]
                     continue
 
-                # Rate limit checks to prevent spam
+                if now - self._last_sl_check.get(symbol, 0) < 15: continue
                 self._last_sl_check[symbol] = now
                 
-                # 1. Fetch Plans
                 plans = self.get_pending_plan_orders(symbol)
                 has_sl = False
-                has_tp = False
                 sl_p = 0
-                tp_p = 0
-                
-                for o in plans:
-                    info = o.get('info', {})
-                    p_type = str(info.get('planType', '')).lower()
-                    price = float(o.get('stopPrice') or info.get('triggerPrice') or info.get('executePrice') or 0)
-                    
-                    # Bitget V2 Plan detection (psl=pos stop loss, ptp=pos take profit, pl=plan)
-                    if p_type in ['stop', 'loss', 'psl', 'sl']:
+                for p in plans:
+                    if p['type'] in ['pl', 'psl']:
                         has_sl = True
-                        sl_p = price
-                    elif p_type in ['profit', 'ptp', 'tp']:
-                        has_tp = True
-                        tp_p = price
-                
-                # Diagnostic Log (SL & TP) - Every 10 seconds
-                if int(now) % 10 < 3:
-                    sl_status = f"SL: {sl_p}" if has_sl else "SL: MISSING"
-                    tp_status = f"TP: {tp_p}" if has_tp else "TP: MISSING"
-                    
-                    # Granular WS Health Tracking (O=Order, A=Algo, B=Balance)
-                    from shared_state import state
-                    t_now = time.time()
-                    # 5-min threshold for quiet markets
-                    o_h = "🟢O" if (t_now - state.last_order_update < 300) else "🔴O"
-                    a_h = "🟢A" if (t_now - state.last_algo_update < 300) else "🔴A"
-                    b_h = "🟢B" if (t_now - state.last_acc_update < 300) else "🔴B"
-                    
-                    print(f"💎 [MONITOR {o_h}{a_h}{b_h}] {symbol} | PNL: {pnl}% | {sl_status} | {tp_status}")
+                        sl_p = p['price']
 
-                # 2. PROGRESSIVE TRAILING LOGIC (PINTER)
+                # Military Status Log (Every 15s)
+                if int(now) % 15 < 3:
+                    o_h = "🟢" if now - state.last_order_update < 300 else "🔴"
+                    a_h = "🟢" if now - state.last_algo_update < 300 else "🔴"
+                    b_h = "🟢" if now - state.last_acc_update < 300 else "🔴"
+                    print(f"💎 [MONITOR {o_h}{a_h}{b_h}] {symbol} | PNL: {pnl}% | SL: {'OK' if has_sl else 'MISSING'}")
+
+                # 1. INITIAL GUARD
+                if not has_sl and now - self.startup_time > self.warmup_period:
+                    if now - self._last_sl_set.get(symbol, 0) > 300:
+                        sl_price = entry * 0.98 if side in ['long', 'buy'] else entry * 1.02
+                        print(f"🛡️ [GUARD] Setting Initial SL for {symbol}")
+                        self.update_sl_price(symbol, side, size, sl_price)
+                        self._last_sl_set[symbol] = now
+
+                # 2. PROGRESSIVE 15% TRAILING
                 new_sl = 0
-                if pnl >= 60.0: new_sl = entry * 1.25 if side in ['long', 'buy'] else entry * 0.75
-                elif pnl >= 40.0: new_sl = entry * 1.10 if side in ['long', 'buy'] else entry * 0.90
-                elif pnl >= 20.0: new_sl = entry 
+                if pnl >= 90: new_sl = entry * 1.75 if side in ['long', 'buy'] else entry * 0.25 
+                elif pnl >= 75: new_sl = entry * 1.60 if side in ['long', 'buy'] else entry * 0.40 
+                elif pnl >= 60: new_sl = entry * 1.45 if side in ['long', 'buy'] else entry * 0.55 
+                elif pnl >= 45: new_sl = entry * 1.30 if side in ['long', 'buy'] else entry * 0.70 
+                elif pnl >= 30: new_sl = entry * 1.15 if side in ['long', 'buy'] else entry * 0.85 
+                elif pnl >= 15: new_sl = entry + (0.001 if side in ['long', 'buy'] else -0.001) 
                 
                 if new_sl > 0:
                     is_better = (side in ['long', 'buy'] and new_sl > sl_p) or \
                                 (side in ['short', 'sell'] and (new_sl < sl_p or sl_p == 0))
                     
-                    if is_better:
-                        # Avoid updating too frequently (every 2 mins for trailing)
-                        if now - self._last_sl_set.get(symbol + "_trail", 0) > 120:
-                            print(f"🔥 [PINTER TRAIL] {symbol} {pnl}% PNL! Moving SL to {new_sl}")
-                            self.update_sl_price(symbol, side, size, new_sl)
-                            self._last_sl_set[symbol + "_trail"] = now
-                        continue
-
-                # 3. NO SL GUARD: Initial SL placement
-                if not has_sl and entry > 0:
-                    # SAFETY: Don't set initial SL during warm-up or if WebSocket is still syncing
-                    if now - self.startup_time < self.warmup_period:
-                        if int(now) % 5 == 0:
-                            print(f"⏳ [WARM-UP] Observing {symbol}... Waiting for stream sync.")
-                        continue
-                        
-                    # Safety: Don't set SL again if we just set it in the last 5 minutes (waiting for exchange sync)
-                    if now - self._last_sl_set.get(symbol + "_init", 0) > 300:
-                        sl_price = entry * 0.95 if side in ['long', 'buy'] else entry * 1.05
-                        print(f"🛡️ [GUARD] Setting Initial SL for {symbol} at {sl_price}")
-                        self.update_sl_price(symbol, side, size, sl_price)
-                        self._last_sl_set[symbol + "_init"] = now
-                    
-        except Exception as e:
-            pass
+                    if is_better and now - self._last_sl_set.get(symbol, 0) > 300:
+                        print(f"🔥 [MILITARY TRAILING] Moving SL for {symbol} to {new_sl} (PNL: {pnl}%)")
+                        self.update_sl_price(symbol, side, size, new_sl)
+                        self._last_sl_set[symbol] = now
+        except: pass
