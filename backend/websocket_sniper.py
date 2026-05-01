@@ -101,13 +101,20 @@ class BitgetPrivateWS:
                                     
                         elif channel == "orders-algo" and "data" in data:
                             state.last_algo_update = time.time()
-                            # Cache all active algo orders for zero-rest monitoring
-                            state.orders = [o for o in state.orders if o.get('planType') is None] # Keep regular, replace algo
-                            state.orders.extend(data["data"])
+                            current_orders = state.orders
                             for plan in data["data"]:
+                                plan_id = plan.get('orderId') or plan.get('planId')
                                 status = plan.get("state") or plan.get("status")
                                 sym = plan.get("symbol") or plan.get("instId")
-                                print(f"[ALGO STREAM] {sym} | State: {status} | Type: {plan.get('planType')} | ID: {plan.get('orderId')}")
+                                
+                                # Incremental Update: Remove old version of this plan, then add new if active
+                                current_orders = [o for o in current_orders if (o.get('orderId') or o.get('planId')) != plan_id]
+                                if status in ['live', 'not_trigger', 'active']:
+                                    current_orders.append(plan)
+                                    
+                                print(f"[ALGO STREAM] {sym} | State: {status} | Type: {plan.get('planType')} | ID: {plan_id}")
+                            
+                            state.update_orders(current_orders)
 
                         elif channel == "positions" and "data" in data:
                             # Direct Real-time Position Tracking

@@ -339,9 +339,10 @@ class BitgetExecutor:
                 has_tp = False
                 for p in (plans + ws_plans):
                     p_type = str(p.get('type', p.get('planType', ''))).lower()
+                    # Bitget V2: psl = profit_stop_loss (usually SL), ptp = partial_take_profit
                     if any(x in p_type for x in ['sl', 'loss', 'stop', 'psl']):
                         has_sl = True
-                    if any(x in p_type for x in ['tp', 'profit', 'ptp', 'psl']):
+                    if any(x in p_type for x in ['tp', 'profit', 'ptp']):
                         has_tp = True
 
                 # Military Status Log
