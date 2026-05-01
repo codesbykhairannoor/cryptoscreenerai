@@ -125,12 +125,24 @@ class BitgetExecutor:
         try:
             balance = self.get_balance()
             free_usdt = balance['free']
+            
+            # BITGET REQUIREMENT: Minimum notional must be at least 5 USDT
+            if free_usdt * leverage < 5.5: # 5.5 for buffer
+                return 0
+                
             ticker = self.exchange.fetch_ticker(symbol)
             price = ticker['last']
             raw_amount = (free_usdt * leverage * 0.9) / price
             formatted_amount = float(self.exchange.amount_to_precision(symbol, raw_amount))
+            
+            # Check against exchange limits
             market = self.exchange.market(symbol)
             min_amount = market.get('limits', {}).get('amount', {}).get('min', 0.01)
+            
+            # Final Notional Check
+            if formatted_amount * price < 5.0:
+                return 0
+                
             return formatted_amount if formatted_amount >= min_amount else 0
         except: return 0
 

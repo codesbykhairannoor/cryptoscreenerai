@@ -178,11 +178,14 @@ def run_crypto_engine():
                     
                     amount = executor.get_max_available(symbol, leverage=10)
                     if amount > 0:
-                        print(f"[CRYPTO AUTO-TRADE] Snipping {symbol} | Entry: {mark_price} | TP: {tp}")
-                        success, order = executor.place_order(symbol, 'buy', amount, tp=tp, sl=sl)
+                        print(f"[CRYPTO AUTO-TRADE] Snipping {symbol} {side.upper()} | Entry: {mark_price}")
+                        success, order = executor.place_order(symbol, side, amount, tp=tp, sl=sl)
                         if success:
                             log_trade(symbol, mark_price, tp, sl)
                             last_exec_time = time.time()
+                    else:
+                        if int(time.time()) % 60 < 15:
+                            print(f"[MARGIN GUARD] Insufficient Free USDT for {symbol} (Min 5 USDT Notional).")
                 
             time.sleep(20)
         except Exception as e:
