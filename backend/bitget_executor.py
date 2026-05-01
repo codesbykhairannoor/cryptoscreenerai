@@ -292,9 +292,24 @@ class BitgetExecutor:
                 size = pos['size']
                 entry = pos['entry']
                 pnl = pos['pnl']
+                mark_price = pos.get('mark_price', 0)
                 
+                # 0. Sideways/Stale Trade Detection
+                from shared_state import state
+                if symbol not in state.pos_start_time:
+                    state.pos_start_time[symbol] = now
+                
+                duration_hours = (now - state.pos_start_time[symbol]) / 3600
+                price_move_pct = abs((mark_price - entry) / entry * 100) if entry > 0 else 0
+                
+                # Logic: If trade is > 4 hours old, PNL is near zero, and price hasn't moved much -> EXIT
+                if duration_hours > 4 and -1.5 < pnl < 1.5 and price_move_pct < 0.4:
+                    print(f"⚖️ [SIDEWAYS EXIT] Closing {symbol} - Flat for {round(duration_hours, 1)}h (Move: {round(price_move_pct, 2)}%)")
+                    self.exchange.create_order(symbol, 'market', 'sell' if side == 'long' else 'buy', size)
+                    if symbol in state.pos_start_time: del state.pos_start_time[symbol]
+                    continue
+
                 # Rate limit checks to prevent spam
-                if now - self._last_sl_check.get(symbol, 0) < 15: continue
                 self._last_sl_check[symbol] = now
                 
                 # 1. Fetch Plans

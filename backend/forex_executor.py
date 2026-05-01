@@ -147,16 +147,20 @@ class ForexExecutor:
                     confidence = 0
                     
                     # BUY LOGIC: Bullish OB/FVG + Oversold OR Liquidity Sweep + Institutional Accumulation
-                    if (ob_status == 'BULLISH' or fvg_status == 'BULLISH' or liq_sweep) and rsi < 50:
+                    # BUY LOGIC: Bullish OB/FVG + RSI < 55 (Relaxed)
+                    if (ob_status == 'BULLISH' or fvg_status == 'BULLISH' or liq_sweep) and rsi < 55:
                         should_trade = True
                         side = 'buy'
                         confidence = 1 if inst_flow == 'INSTITUTIONAL_ACCUMULATION' else 0
                         
-                    # SELL LOGIC: Bearish OB/FVG + Overbought OR DXY Bullish Strong
-                    elif (ob_status == 'BEARISH' or fvg_status == 'BEARISH' or rsi > 70):
+                    # SELL LOGIC: Bearish OB/FVG + RSI > 65 (Relaxed)
+                    elif (ob_status == 'BEARISH' or fvg_status == 'BEARISH' or rsi > 65):
                         should_trade = True
                         side = 'sell'
                         confidence = 1 if inst_flow == 'INSTITUTIONAL_ABSORPTION' else 0
+                    else:
+                        if int(time.time()) % 60 < 10:
+                            print(f"📊 [FOREX ENGINE] Waiting for Setup... RSI: {rsi} | OB: {ob_status}")
 
                     if should_trade and (time.time() - last_auto_trade > AUTO_COOLDOWN):
                         if active_count >= 10: continue

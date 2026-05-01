@@ -14,6 +14,7 @@ class SharedState:
             cls._instance.last_algo_update = 0
             cls._instance.last_acc_update = 0
             cls._instance.sl_placement_cache = {}
+            cls._instance.pos_start_time = {} # Symbol -> timestamp
         return cls._instance
 
     def update_positions(self, positions):
