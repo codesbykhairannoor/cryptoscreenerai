@@ -252,7 +252,7 @@ class BitgetExecutor:
         return self.sync_memory()
 
     def manage_open_positions(self):
-        """Military Position Manager: Progressive Trailing & Sideways Exit"""
+        """Military Position Manager: Progressive Trailing & Small-Trade Cleanup"""
         try:
             if not hasattr(self, '_last_sl_check'): self._last_sl_check = {}
             if not hasattr(self, '_last_sl_set'): self._last_sl_set = {}
@@ -264,19 +264,22 @@ class BitgetExecutor:
             for pos in positions:
                 symbol = pos['symbol']
                 side = pos['side']
-                size = pos['size']
-                entry = pos['entry']
-                pnl = pos['pnl']
-                mark_price = pos.get('mark_price', 0)
+                size = float(pos.get('size', 0))
+                entry = float(pos.get('entry', 0))
+                pnl = float(pos.get('pnl', 0))
+                mark_price = float(pos.get('mark_price', 0))
                 
                 # 0.5 SMALL TRADE SCRUBBER (Hapus modal dikit)
-                notional = float(size) * float(mark_price)
-                if notional < 4.0:
+                notional = size * mark_price
+                if 0 < notional < 5.0: # Close anything under $5
                     print(f"🧹 [SCRUBBER] Closing micro-position {symbol} (Notional ${round(notional, 2)})")
-                    try: self.exchange.create_order(symbol, 'market', 'sell' if side in ['long', 'buy'] else 'buy', size)
-                    except: pass
-                    continue
-                
+                    try: 
+                        side_to_close = 'sell' if side in ['long', 'buy'] else 'buy'
+                        self.exchange.create_order(symbol, 'market', side_to_close, size, params={'reduceOnly': True})
+                        continue
+                    except Exception as e:
+                        print(f"⚠️ [SCRUBBER ERROR] {e}")
+
                 # 0. SIDEWAYS DETECTION
                 if symbol not in state.pos_start_time:
                     state.pos_start_time[symbol] = now
@@ -286,24 +289,22 @@ class BitgetExecutor:
                 
                 if duration_hours > 4 and -1.5 < pnl < 1.5 and price_move_pct < 0.4:
                     print(f"⚖️ [SIDEWAYS EXIT] Closing {symbol} - Flat for {round(duration_hours, 1)}h")
-                    self.exchange.create_order(symbol, 'market', 'sell' if side == 'long' else 'buy', size)
+                    self.exchange.create_order(symbol, 'market', 'sell' if side in ['long', 'buy'] else 'buy', size)
                     if symbol in state.pos_start_time: del state.pos_start_time[symbol]
                     continue
 
-                if now - self._last_sl_check.get(symbol, 0) < 15: continue
+                if now - self._last_sl_check.get(symbol, 0) < 10: continue
                 self._last_sl_check[symbol] = now
                 
                 plans = self.get_pending_plan_orders(symbol)
                 has_sl = False
-                sl_p = 0
                 for p in plans:
                     p_type = p['type']
                     if 'sl' in p_type or 'loss' in p_type or 'stop' in p_type or p_type == 'pl':
                         has_sl = True
-                        sl_p = p['price']
 
-                # Military Status Log (Every 15s)
-                if int(now) % 15 < 3:
+                # Military Status Log
+                if int(now) % 15 < 2:
                     o_h = "🟢" if now - state.last_order_update < 300 else "🔴"
                     a_h = "🟢" if now - state.last_algo_update < 300 else "🔴"
                     b_h = "🟢" if now - state.last_acc_update < 300 else "🔴"
@@ -311,9 +312,8 @@ class BitgetExecutor:
 
                 # 1. INITIAL GUARD
                 if not has_sl and now - self.startup_time > self.warmup_period:
-                    if now - self._last_sl_set.get(symbol, 0) > 300:
+                    if now - self._last_sl_set.get(symbol, 0) > 60:
                         sl_price = entry * 0.95 if side in ['long', 'buy'] else entry * 1.05
-                        # Safety check against mark price
                         if side in ['long', 'buy'] and sl_price >= mark_price: sl_price = mark_price * 0.98
                         if side in ['short', 'sell'] and sl_price <= mark_price: sl_price = mark_price * 1.02
                         

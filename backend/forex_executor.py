@@ -163,7 +163,7 @@ class ForexExecutor:
                             print(f"📊 [FOREX ENGINE] Waiting for Setup... RSI: {rsi} | OB: {ob_status}")
 
                     if should_trade and (time.time() - last_auto_trade > AUTO_COOLDOWN):
-                        if len(positions) >= 100: continue
+                        if len(positions) >= 15: continue
                         if spread > 150: continue # Spread safety
                         
                         # Institutional Barrage (Military Style)
@@ -198,7 +198,7 @@ class ForexExecutor:
                         elif p.get('type') == 'POSITION_TYPE_SELL' and (open_price - current_price) > 1.2:
                             self.update_forex_sl(pos_id, open_price - 0.1)
 
-                time.sleep(10)
+                time.sleep(1)
             except Exception as e:
                 print(f"[FOREX ENGINE ERROR] {e}")
-                time.sleep(10)
+                time.sleep(1)
