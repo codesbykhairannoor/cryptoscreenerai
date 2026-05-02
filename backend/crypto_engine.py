@@ -61,6 +61,9 @@ def run_crypto_engine():
             raw_data = fetch_all_tickers()
             candidates = analyze_and_sort(raw_data)
             
+            if int(time.time()) % 60 < 15:
+                print(f"[SCANNER] Found {len(candidates)} candidates matching basic filters.")
+            
             # CHECK ACTIVE CRYPTO POSITIONS BEFORE TRADING
             try:
                 positions = executor.get_all_positions()
@@ -180,7 +183,9 @@ def run_crypto_engine():
                     # DXY OVERRIDE: Anti-Dollar Strength
                     from data_fetcher import get_forex_data
                     dxy = get_forex_data(symbol="DXY")
-                    if dxy and dxy.get('trend') == 'BULLISH' and dxy.get('change', 0) > 0.2:
+                    # If DXY market is CLOSED (change is 0 on weekend), ignore the override
+                    is_dxy_active = dxy and abs(dxy.get('change', 0)) > 0.0001
+                    if is_dxy_active and dxy.get('trend') == 'BULLISH' and dxy.get('change', 0) > 0.2:
                          print(f"[DXY OVERRIDE] Dollar too strong! Aborting {symbol} Long.")
                          continue
 
