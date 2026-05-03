@@ -175,25 +175,156 @@ class ForexExecutor:
 
     def _calc_indicators(self):
         """
-        Hitung semua indikator teknikal dari candle MetaAPI 5m.
-        Kalau candle tidak tersedia, fallback ke scoring berbasis harga live saja.
+        XAUUSD PUMP PREDICTOR v1.0
+        ===========================
+        Deteksi kapan gold akan pump/dump berdasarkan:
+        1. RSI divergence (harga turun tapi RSI naik = bullish divergence)
+        2. Volume spike pada candle terakhir
+        3. Posisi harga vs VWAP dan EMA200
+        4. MSS/CHoCH dengan volume konfirmasi
+        5. FVG yang belum terisi (magnet harga)
+        6. Liquidity sweep (stop hunt sebelum pump)
         """
         candles = self.get_candles(timeframe="5m", limit=100)
 
-        # FALLBACK: kalau candle tidak bisa diambil, pakai indikator minimal dari harga live
+        # Fallback silent kalau candle tidak tersedia
         if len(candles) < 20:
             price_data = self.get_live_price()
             price = price_data.get("mid", 0)
             if price == 0:
                 return {}
-            # Silent fallback — tidak spam log
             return {
                 "rsi": 50.0, "ema200": price, "atr": price * 0.001,
                 "vwap": price, "vwap_dist": 0.0, "trend": "NEUTRAL",
                 "mss_bullish": False, "mss_bearish": False,
                 "choch_bullish": False, "choch_bearish": False,
-                "fvg": "NONE", "is_liquidity_sweep": False, "last_close": price,
+                "fvg": "NONE", "is_liquidity_sweep": False,
+                "last_close": price, "vol_spike": False,
+                "rsi_divergence": "NONE", "pump_signal": "NONE",
             }
+
+        closes = [float(c.get("close", 0)) for c in candles]
+        highs  = [float(c.get("high",  0)) for c in candles]
+        lows   = [float(c.get("low",   0)) for c in candles]
+        vols   = [float(c.get("tickVolume", c.get("volume", 1))) for c in candles]
+
+        # RSI 14
+        period = 14
+        gains, losses = [], []
+        for i in range(1, len(closes)):
+            diff = closes[i] - closes[i-1]
+            gains.append(max(diff, 0))
+            losses.append(max(-diff, 0))
+        avg_gain = sum(gains[:period]) / period
+        avg_loss = sum(losses[:period]) / period
+        for i in range(period, len(gains)):
+            avg_gain = (avg_gain * (period-1) + gains[i]) / period
+            avg_loss = (avg_loss * (period-1) + losses[i]) / period
+        rsi = 100 - (100 / (1 + avg_gain / avg_loss)) if avg_loss > 0 else 100.0
+
+        # RSI history untuk divergence
+        rsi_history = []
+        ag, al = sum(gains[:period]) / period, sum(losses[:period]) / period
+        for i in range(period, len(gains)):
+            ag = (ag * (period-1) + gains[i]) / period
+            al = (al * (period-1) + losses[i]) / period
+            rsi_history.append(100 - (100 / (1 + ag / al)) if al > 0 else 100.0)
+
+        # EMA 200
+        ema200 = closes[0]
+        k = 2 / (200 + 1)
+        for c in closes:
+            ema200 = c * k + ema200 * (1 - k)
+
+        # ATR 14
+        trs = []
+        for i in range(1, len(closes)):
+            tr = max(highs[i] - lows[i],
+                     abs(highs[i] - closes[i-1]),
+                     abs(lows[i]  - closes[i-1]))
+            trs.append(tr)
+        atr = sum(trs[-14:]) / 14 if len(trs) >= 14 else 1.5
+
+        # VWAP
+        cum_pv = sum((highs[i]+lows[i]+closes[i])/3 * vols[i] for i in range(len(closes)))
+        cum_v  = sum(vols)
+        vwap   = cum_pv / cum_v if cum_v > 0 else closes[-1]
+        vwap_dist = ((closes[-1] - vwap) / vwap * 100) if vwap > 0 else 0
+
+        # Market Structure
+        last_close  = closes[-1]
+        recent_high = max(highs[-10:-1])
+        recent_low  = min(lows[-10:-1])
+        avg_vol     = sum(vols[-20:]) / 20 if len(vols) >= 20 else 1
+        last_vol    = vols[-1]
+
+        choch_bull = last_close > recent_high
+        choch_bear = last_close < recent_low
+        mss_bull   = choch_bull and last_vol > avg_vol * 1.5
+        mss_bear   = choch_bear and last_vol > avg_vol * 1.5
+
+        # FVG
+        fvg = "NONE"
+        if len(candles) >= 3:
+            if highs[-3] < lows[-1]:  fvg = "BULLISH_FVG"
+            elif lows[-3] > highs[-1]: fvg = "BEARISH_FVG"
+
+        # Liquidity Sweep
+        liq_sweep = (lows[-1] < lows[-2] and closes[-1] > lows[-2]) or \
+                    (highs[-1] > highs[-2] and closes[-1] < highs[-2])
+
+        # Trend
+        trend = "NEUTRAL"
+        if last_close > ema200: trend = "BULLISH"
+        elif last_close < ema200: trend = "BEARISH"
+
+        # ── PUMP SIGNALS KHUSUS XAUUSD ────────────────────────────────────────
+
+        # Volume Spike: candle terakhir > 2x rata-rata
+        vol_spike = last_vol > avg_vol * 2.0
+
+        # RSI Divergence: harga buat lower low tapi RSI buat higher low = bullish divergence
+        rsi_divergence = "NONE"
+        if len(rsi_history) >= 5 and len(closes) >= 5:
+            price_lower_low = closes[-1] < min(closes[-5:-1])
+            rsi_higher_low  = rsi > min(rsi_history[-5:]) if rsi_history else False
+            if price_lower_low and rsi_higher_low:
+                rsi_divergence = "BULLISH_DIVERGENCE"  # Pump signal kuat
+
+            price_higher_high = closes[-1] > max(closes[-5:-1])
+            rsi_lower_high    = rsi < max(rsi_history[-5:]) if rsi_history else False
+            if price_higher_high and rsi_lower_high:
+                rsi_divergence = "BEARISH_DIVERGENCE"  # Dump signal kuat
+
+        # Pump Signal Summary
+        pump_signal = "NONE"
+        if rsi_divergence == "BULLISH_DIVERGENCE" or (liq_sweep and fvg == "BULLISH_FVG"):
+            pump_signal = "PUMP_IMMINENT"
+        elif rsi_divergence == "BEARISH_DIVERGENCE" or (liq_sweep and fvg == "BEARISH_FVG"):
+            pump_signal = "DUMP_IMMINENT"
+        elif mss_bull and vol_spike:
+            pump_signal = "BREAKOUT_UP"
+        elif mss_bear and vol_spike:
+            pump_signal = "BREAKOUT_DOWN"
+
+        return {
+            "rsi":              round(rsi, 2),
+            "ema200":           round(ema200, 3),
+            "atr":              round(atr, 3),
+            "vwap":             round(vwap, 3),
+            "vwap_dist":        round(vwap_dist, 4),
+            "trend":            trend,
+            "mss_bullish":      mss_bull,
+            "mss_bearish":      mss_bear,
+            "choch_bullish":    choch_bull,
+            "choch_bearish":    choch_bear,
+            "fvg":              fvg,
+            "is_liquidity_sweep": liq_sweep,
+            "last_close":       last_close,
+            "vol_spike":        vol_spike,
+            "rsi_divergence":   rsi_divergence,
+            "pump_signal":      pump_signal,
+        }
 
         closes = [float(c.get("close", 0)) for c in candles]
         highs  = [float(c.get("high",  0)) for c in candles]
@@ -286,7 +417,10 @@ class ForexExecutor:
     # --- MOMENTUM SCORING ---
 
     def _score_setup(self, ind, side, spread_points):
-        """Hitung momentum score 0-100 untuk setup XAUUSD."""
+        """
+        XAUUSD Pump Predictor Score 0-100.
+        Prioritas: pump_signal > rsi_divergence > MSS > FVG > RSI > VWAP
+        """
         score     = 0
         rsi       = ind.get("rsi", 50)
         vwap_dist = ind.get("vwap_dist", 0)
@@ -297,49 +431,51 @@ class ForexExecutor:
         choch_s   = ind.get("choch_bearish", False)
         liq       = ind.get("is_liquidity_sweep", False)
         trend     = ind.get("trend", "NEUTRAL")
+        vol_spike = ind.get("vol_spike", False)
+        rsi_div   = ind.get("rsi_divergence", "NONE")
+        pump_sig  = ind.get("pump_signal", "NONE")
 
-        # RSI (max 25 poin)
+        # ── PUMP SIGNAL (max 35 poin) — sinyal terkuat ───────────────────────
         if side == "buy":
-            if 30 <= rsi <= 50:   score += 25
-            elif 50 < rsi <= 60:  score += 15
-            elif rsi < 30:        score += 8
-            elif rsi > 70:        score -= 15
+            if pump_sig == "PUMP_IMMINENT":  score += 35
+            elif pump_sig == "BREAKOUT_UP":  score += 25
+            if rsi_div == "BULLISH_DIVERGENCE": score += 20
         else:
-            if 50 <= rsi <= 70:   score += 25
-            elif 40 <= rsi < 50:  score += 15
-            elif rsi > 80:        score += 8
-            elif rsi < 30:        score -= 15
+            if pump_sig == "DUMP_IMMINENT":   score += 35
+            elif pump_sig == "BREAKOUT_DOWN": score += 25
+            if rsi_div == "BEARISH_DIVERGENCE": score += 20
 
-        # VWAP Distance (max 20 poin)
+        # ── Volume Spike (max 15 poin) ────────────────────────────────────────
+        if vol_spike: score += 15
+
+        # ── RSI Zone (max 15 poin) ────────────────────────────────────────────
         if side == "buy":
-            if -3.0 <= vwap_dist <= -0.3: score += 20
-            elif -0.3 < vwap_dist <= 0.5: score += 10
-            elif vwap_dist > 3.0:         score -= 10
+            if 30 <= rsi <= 50:   score += 15
+            elif 50 < rsi <= 60:  score += 8
+            elif rsi > 70:        score -= 10
         else:
-            if 0.3 <= vwap_dist <= 3.0:   score += 20
-            elif -0.5 <= vwap_dist < 0.3: score += 10
-            elif vwap_dist < -3.0:        score -= 10
+            if 50 <= rsi <= 70:   score += 15
+            elif 40 <= rsi < 50:  score += 8
+            elif rsi < 30:        score -= 10
 
-        # FVG (max 15 poin)
-        if side == "buy"  and fvg == "BULLISH_FVG": score += 15
-        if side == "sell" and fvg == "BEARISH_FVG": score += 15
+        # ── FVG (max 10 poin) ─────────────────────────────────────────────────
+        if side == "buy"  and fvg == "BULLISH_FVG": score += 10
+        if side == "sell" and fvg == "BEARISH_FVG": score += 10
 
-        # MSS / CHoCH (max 20 poin)
-        if side == "buy"  and mss_b:    score += 20
-        if side == "sell" and mss_s:    score += 20
-        if side == "buy"  and choch_b:  score += 10
-        if side == "sell" and choch_s:  score += 10
+        # ── MSS / CHoCH (max 10 poin) ─────────────────────────────────────────
+        if side == "buy"  and (mss_b or choch_b): score += 10
+        if side == "sell" and (mss_s or choch_s): score += 10
 
-        # Liquidity Sweep (max 10 poin)
-        if liq: score += 10
+        # ── Liquidity Sweep (max 5 poin) ──────────────────────────────────────
+        if liq: score += 5
 
-        # Trend alignment (max 10 poin)
-        if side == "buy"  and trend == "BULLISH": score += 10
-        if side == "sell" and trend == "BEARISH": score += 10
+        # ── Trend alignment (max 5 poin) ──────────────────────────────────────
+        if side == "buy"  and trend == "BULLISH": score += 5
+        if side == "sell" and trend == "BEARISH": score += 5
         if side == "buy"  and trend == "BEARISH": score -= 5
         if side == "sell" and trend == "BULLISH": score -= 5
 
-        # Spread penalty
+        # ── Spread penalty ────────────────────────────────────────────────────
         if spread_points > 100: score -= 10
         if spread_points > 150: score -= 20
 
@@ -600,9 +736,12 @@ class ForexExecutor:
                 vwap_val = ind.get("vwap_dist", 0)
                 trend    = ind.get("trend", "NEUTRAL")
                 fvg_val  = ind.get("fvg", "NONE")
+                pump_sig = ind.get("pump_signal", "NONE")
+                rsi_div  = ind.get("rsi_divergence", "NONE")
                 print("")
                 print("=" * 60)
                 print(f"[FOREX SCALPER v4.0] XAUUSD {side.upper()} | Score: {score}/100")
+                print(f"  Pump Signal : {pump_sig} | RSI Div: {rsi_div}")
                 print(f"  Price  : {entry_price} | ATR: {atr}")
                 print(f"  RSI    : {rsi_val} | VWAP Dist: {vwap_val}%")
                 print(f"  Trend  : {trend} | FVG: {fvg_val}")

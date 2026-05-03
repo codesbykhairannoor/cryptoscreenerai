@@ -469,17 +469,6 @@ def run_crypto_engine():
                 if side == "buy"  and ob_ratio < 0.0: continue
                 if side == "sell" and ob_ratio > 0.0: continue
 
-                # ── 9f. GEMINI AI FINAL FILTER ────────────────────────────────
-                # Panggil Gemini hanya untuk kandidat yang sudah lolos semua filter
-                # supaya tidak buang API quota untuk koin jelek
-                from ai_model import smart_trade_decision
-                news_ctx = get_crypto_news(symbol)
-                ai_ok, ai_reason = smart_trade_decision(symbol, tech, news_ctx)
-                if not ai_ok:
-                    print(f"[GEMINI VETO] {clean_base}: {ai_reason[:80]}")
-                    continue
-                print(f"[GEMINI OK] {clean_base}: {ai_reason[:80]}")
-
                 # ── 9f. HITUNG TP/SL ──────────────────────────────────────────
                 tp, sl = _calc_tp_sl(mark_price, side, tech)
 
