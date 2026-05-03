@@ -33,7 +33,7 @@ SCAN_INTERVAL        = 8      # Scan setiap 8 detik (tangkap momentum cepat)
 COOLDOWN_AFTER_TRADE = 45     # Cooldown 45 detik (lebih sering entry)
 NEWS_REPORT_INTERVAL = 600    # Detik antar news report
 GLOBAL_REPORT_INTERVAL = 300  # Detik antar global report
-LEVERAGE             = 20     # 20x leverage (amplify profit modal kecil)
+LEVERAGE             = 10     # 10x leverage (sesuai request user)
 MIN_MOMENTUM_SCORE   = 42     # Threshold lebih rendah = lebih berani
 MAX_SPREAD_PCT       = 0.5    # Toleransi spread lebih longgar
 DAILY_LOSS_LIMIT_PCT = -40    # Circuit breaker (lebih toleran untuk scalping)
@@ -338,7 +338,7 @@ def run_crypto_engine():
     from database import check_pending_trades, get_performance_stats
     from sentiment import get_market_news_digest
 
-    print("[CRYPTO SCALPER v4.0] Small Capital Aggressive Mode AKTIF!")
+    print("[CRYPTO SCALPER v4.1] Small Capital Scalping Mode AKTIF!")
     print(f"  Leverage: {LEVERAGE}x | Min Score: {MIN_MOMENTUM_SCORE} | Cooldown: {COOLDOWN_AFTER_TRADE}s")
 
     last_exec_time    = 0
@@ -493,7 +493,7 @@ def run_crypto_engine():
                 print(f"  Leverage: {LEVERAGE}x | Sentiment: {market_sentiment}")
                 print(f"{'='*60}\n")
 
-                success, order = executor.place_order(symbol, side, amount, tp=tp, sl=sl)
+                success, order = executor.place_order(symbol, side, amount, tp=tp, sl=sl, leverage=LEVERAGE)
                 if success:
                     log_trade(symbol, mark_price, tp, sl)
                     last_exec_time    = time.time()

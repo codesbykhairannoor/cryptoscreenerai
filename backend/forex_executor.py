@@ -133,18 +133,39 @@ class ForexExecutor:
     # --- CANDLE DATA FROM METAAPI ---
 
     def get_candles(self, symbol=None, timeframe="5m", limit=CANDLE_LIMIT):
-        """Ambil candle historis dari MetaAPI langsung."""
+        """
+        Ambil candle historis dari MetaAPI langsung.
+        MetaAPI timeframe format: 1m, 5m, 15m, 1h, 4h, 1d
+        Endpoint: /historical-market-data/{symbol}/timeframes/{tf}/candles
+        """
         sym = symbol or self._working_symbol or "XAUUSD"
-        try:
-            url = f"{self.base_url}/users/current/accounts/{self.account_id}/historical-market-data/{sym}/{timeframe}/candles?limit={limit}"
-            headers = {"auth-token": self.api_token}
-            res = requests.get(url, headers=headers, timeout=10)
-            if res.status_code == 200:
-                candles = res.json()
-                if isinstance(candles, list) and len(candles) > 0:
-                    return candles
-        except Exception as e:
-            print(f"[FOREX CANDLE ERROR] {e}")
+
+        # MetaAPI v1 pakai format berbeda — coba dua endpoint
+        endpoints = [
+            # Format 1: path-based timeframe (MetaAPI v1 standard)
+            f"{self.base_url}/users/current/accounts/{self.account_id}/historical-market-data/{sym}/timeframes/{timeframe}/candles?limit={limit}",
+            # Format 2: query param (beberapa versi MetaAPI)
+            f"{self.base_url}/users/current/accounts/{self.account_id}/historical-market-data/{sym}/{timeframe}/candles?limit={limit}",
+        ]
+        headers = {"auth-token": self.api_token}
+
+        for url in endpoints:
+            try:
+                res = requests.get(url, headers=headers, timeout=10)
+                if res.status_code == 200:
+                    data = res.json()
+                    # MetaAPI bisa return list langsung atau dict dengan key 'candles'
+                    if isinstance(data, list) and len(data) > 0:
+                        return data
+                    if isinstance(data, dict):
+                        candles = data.get('candles', data.get('data', []))
+                        if candles and len(candles) > 0:
+                            return candles
+            except Exception as e:
+                print(f"[FOREX CANDLE ERROR] {url[-50:]}: {e}")
+                continue
+
+        print(f"[FOREX CANDLE] Both endpoints failed for {sym} {timeframe}")
         return []
 
     # --- TECHNICAL INDICATORS FROM METAAPI CANDLES ---
@@ -152,11 +173,33 @@ class ForexExecutor:
     def _calc_indicators(self):
         """
         Hitung semua indikator teknikal dari candle MetaAPI 5m.
-        RSI, EMA200, ATR, VWAP, MSS, CHoCH, FVG, Liquidity Sweep.
+        Kalau candle tidak tersedia, fallback ke scoring berbasis harga live saja.
         """
         candles = self.get_candles(timeframe="5m", limit=100)
+
+        # FALLBACK: kalau candle tidak bisa diambil, pakai indikator minimal dari harga live
         if len(candles) < 20:
-            return {}
+            price_data = self.get_live_price()
+            price = price_data.get("mid", 0)
+            if price == 0:
+                return {}
+            print(f"[FOREX CANDLE FALLBACK] Using live price only for indicators (price={price})")
+            # Return minimal indicators — bot tetap bisa entry dengan score rendah
+            return {
+                "rsi":              50.0,   # Neutral RSI
+                "ema200":           price,
+                "atr":              price * 0.001,  # 0.1% ATR estimate
+                "vwap":             price,
+                "vwap_dist":        0.0,
+                "trend":            "NEUTRAL",
+                "mss_bullish":      False,
+                "mss_bearish":      False,
+                "choch_bullish":    False,
+                "choch_bearish":    False,
+                "fvg":              "NONE",
+                "is_liquidity_sweep": False,
+                "last_close":       price,
+            }
 
         closes = [float(c.get("close", 0)) for c in candles]
         highs  = [float(c.get("high",  0)) for c in candles]
@@ -537,11 +580,10 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # CALCULATE INDICATORS FROM METAAPI CANDLES
+                # CALCULATE INDICATORS (with fallback if candles unavailable)
                 ind = self._calc_indicators()
                 if not ind:
-                    print("[FOREX] Cannot get candles from MetaAPI. Retrying...")
-                    time.sleep(10)
+                    time.sleep(SCAN_INTERVAL)
                     continue
 
                 # DETERMINE SIDE

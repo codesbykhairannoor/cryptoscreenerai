@@ -133,26 +133,33 @@ class BitgetExecutor:
         try:
             balance = self.get_balance()
             free_usdt = balance['free']
-            
-            # BITGET REQUIREMENT: Minimum notional must be at least 5 USDT
-            if free_usdt * leverage < 5.5: # 5.5 for buffer
+
+            # Bitget minimum notional: 5 USDT
+            if free_usdt < 0.5:  # butuh minimal ~0.5 USDT margin untuk 5 USDT notional di 10x
                 return 0
-                
+
             ticker = self.exchange.fetch_ticker(symbol)
             price = ticker['last']
-            raw_amount = (free_usdt * leverage * 0.9) / price
+
+            # Gunakan 80% dari free balance sebagai margin (sisakan 20% untuk fee & slippage)
+            margin_to_use = free_usdt * 0.80
+            notional      = margin_to_use * leverage
+            raw_amount    = notional / price
+
             formatted_amount = float(self.exchange.amount_to_precision(symbol, raw_amount))
-            
-            # Check against exchange limits
-            market = self.exchange.market(symbol)
-            min_amount = market.get('limits', {}).get('amount', {}).get('min', 0.01)
-            
-            # Final Notional Check
+
+            # Check exchange minimum
+            market     = self.exchange.market(symbol)
+            min_amount = market.get('limits', {}).get('amount', {}).get('min', 0.001)
+
+            # Final notional check — Bitget requires >= 5 USDT notional
             if formatted_amount * price < 5.0:
                 return 0
-                
+
             return formatted_amount if formatted_amount >= min_amount else 0
-        except: return 0
+        except Exception as e:
+            print(f"[GET_MAX ERROR] {e}")
+            return 0
 
     def get_all_positions(self):
         try:
@@ -222,10 +229,16 @@ class BitgetExecutor:
             return plans
         except: return []
 
-    def place_order(self, symbol, side, amount, tp=None, sl=None):
+    def place_order(self, symbol, side, amount, tp=None, sl=None, leverage=10):
         try:
+            # SET LEVERAGE DULU sebelum order — ini yang sering dilupakan
+            try:
+                self.exchange.set_leverage(leverage, symbol, params={'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
+            except Exception as lev_err:
+                print(f"[LEVERAGE] Set {leverage}x for {symbol}: {lev_err}")
+
             order = self.exchange.create_order(symbol, 'market', side, amount)
-            print(f"[BITGET CLASSIC] {side.upper()} {symbol} executed.")
+            print(f"[BITGET CLASSIC] {side.upper()} {symbol} executed @ {leverage}x.")
             params = {'productType': 'USDT-FUTURES'}
             tp_side = 'sell' if side.lower() in ['long', 'buy'] else 'buy'
             price = float(order.get('price', order.get('average', 0)))
@@ -233,16 +246,16 @@ class BitgetExecutor:
                 ticker = self.exchange.fetch_ticker(symbol)
                 price = ticker['last']
 
-            # 1. MANDATORY SL (30% PnL at 10x)
+            # 1. MANDATORY SL
             final_sl = sl if sl else (price * 0.97 if side.lower() in ['long', 'buy'] else price * 1.03)
             sl_params = {**params, 'stopLossPrice': final_sl}
             self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=sl_params)
 
-            # 2. MANDATORY TP (100% PnL at 10x)
+            # 2. MANDATORY TP
             final_tp = tp if tp else (price * 1.10 if side.lower() in ['long', 'buy'] else price * 0.90)
             tp_params = {**params, 'takeProfitPrice': final_tp}
             self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=tp_params)
-            
+
             return True, order
         except Exception as e:
             print(f"[CLASSIC ORDER FAILED] {e}")
