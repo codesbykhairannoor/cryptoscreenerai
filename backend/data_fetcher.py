@@ -179,11 +179,36 @@ def get_technical_indicators(symbol, interval="15m"):
         pattern = detect_candle_patterns(df_cur)
         smc = detect_smart_money_concepts(df_cur)
         inst_flow = detect_institutional_flow(df_cur)
-        
+
+        # 7. ATR 14 (True Range)
+        trs = []
+        for i in range(1, len(df_cur)):
+            high_i  = df_cur['high'].iloc[i]
+            low_i   = df_cur['low'].iloc[i]
+            close_p = df_cur['close'].iloc[i - 1]
+            tr = max(high_i - low_i, abs(high_i - close_p), abs(low_i - close_p))
+            trs.append(tr)
+        atr_val = round(sum(trs[-14:]) / 14, 6) if len(trs) >= 14 else round(mark_price * 0.015, 6)
+
+        # 8. RSI 14
+        closes_list = df_cur['close'].tolist()
+        rsi_gains, rsi_losses = [], []
+        for i in range(1, len(closes_list)):
+            diff = closes_list[i] - closes_list[i - 1]
+            rsi_gains.append(max(diff, 0))
+            rsi_losses.append(max(-diff, 0))
+        rsi_period = 14
+        rsi_avg_gain = sum(rsi_gains[:rsi_period]) / rsi_period
+        rsi_avg_loss = sum(rsi_losses[:rsi_period]) / rsi_period
+        for i in range(rsi_period, len(rsi_gains)):
+            rsi_avg_gain = (rsi_avg_gain * (rsi_period - 1) + rsi_gains[i]) / rsi_period
+            rsi_avg_loss = (rsi_avg_loss * (rsi_period - 1) + rsi_losses[i]) / rsi_period
+        rsi_val = round(100 - (100 / (1 + rsi_avg_gain / rsi_avg_loss)), 2) if rsi_avg_loss > 0 else 100.0
+
         return {
             "mark_price": mark_price,
-            "rsi": 50,
-            "atr": 1.0,
+            "rsi": rsi_val,
+            "atr": atr_val,
             "candle_pattern": pattern,
             "is_liquidity_sweep": is_bull_sweep or is_bear_sweep,
             "mss_bullish": mss_bullish,
