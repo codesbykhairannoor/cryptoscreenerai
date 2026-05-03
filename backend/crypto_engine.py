@@ -1,23 +1,21 @@
 """
-CRYPTO SCALPER ENGINE v4.0 — SMALL CAPITAL AGGRESSIVE EDITION
-==============================================================
-Optimized untuk modal kecil ($10-$100) dengan scalping agresif.
+CRYPTO SCALPER ENGINE v5.0 — ONE TRADE ALL-IN DAILY SCALPER
+============================================================
+Filosofi: 1 trade terbaik per hari, pakai semua modal, scalp cepat.
 
-Perubahan dari v3.0:
-- MAX_POSITIONS: 5 → 3  (fokus, tidak spread tipis)
-- SCAN_INTERVAL: 15s → 8s  (lebih cepat tangkap momentum)
-- COOLDOWN_AFTER_TRADE: 120s → 45s  (lebih sering entry)
-- LEVERAGE: 10x → 20x  (amplify profit modal kecil)
-- MIN_MOMENTUM_SCORE: 55 → 42  (lebih berani entry)
-- TP/SL: ATR-based dengan scalp ratio 1:1.5 (cepat ambil profit)
-- Tambah: SCALP MODE — TP lebih kecil tapi lebih sering hit
-- Tambah: Altcoin focus — skip BTC/ETH, fokus mid-cap volatile
-- Tambah: Volume momentum filter — hanya coin yang lagi bergerak
+- MAX_POSITIONS: 1  (fokus total, satu koin terbaik)
+- SCAN_INTERVAL: 8s
+- COOLDOWN: 30s setelah trade tutup
+- LEVERAGE: 10x
+- MIN_SCORE: 45 (berani tapi tidak asal)
+- TP: 1.5% price (15% PnL di 10x) — scalp cepat
+- SL: 0.8% price (8% PnL di 10x) — cut loss cepat
+- Skip BTC/ETH, fokus altcoin volatile mid-cap
+- Pakai 95% modal untuk satu trade
 """
 
 import time
 import requests
-import threading
 from data_fetcher import (
     fetch_all_tickers, get_technical_indicators,
     get_retail_sentiment, detect_institutional_flow
@@ -27,22 +25,22 @@ from ai_model import analyze_and_sort
 from database import log_trade
 from bitget_executor import BitgetExecutor
 
-# ─── KONFIGURASI ENGINE — SMALL CAPITAL SCALPING ──────────────────────────────
-MAX_POSITIONS        = 3      # Fokus 3 posisi max (modal kecil = konsentrasi)
-SCAN_INTERVAL        = 8      # Scan setiap 8 detik (tangkap momentum cepat)
-COOLDOWN_AFTER_TRADE = 45     # Cooldown 45 detik (lebih sering entry)
-NEWS_REPORT_INTERVAL = 600    # Detik antar news report
-GLOBAL_REPORT_INTERVAL = 300  # Detik antar global report
-LEVERAGE             = 10     # 10x leverage (sesuai request user)
-MIN_MOMENTUM_SCORE   = 42     # Threshold lebih rendah = lebih berani
-MAX_SPREAD_PCT       = 0.5    # Toleransi spread lebih longgar
-DAILY_LOSS_LIMIT_PCT = -40    # Circuit breaker (lebih toleran untuk scalping)
+# ─── KONFIGURASI: ONE TRADE ALL-IN ────────────────────────────────────────────
+MAX_POSITIONS        = 1      # SATU trade terbaik, semua modal
+SCAN_INTERVAL        = 8      # Scan setiap 8 detik
+COOLDOWN_AFTER_TRADE = 30     # Cooldown 30 detik setelah trade selesai
+NEWS_REPORT_INTERVAL = 600
+GLOBAL_REPORT_INTERVAL = 300
+LEVERAGE             = 10     # 10x leverage
+MIN_MOMENTUM_SCORE   = 45     # Threshold — berani tapi tidak asal
+DAILY_LOSS_LIMIT_PCT = -40    # Circuit breaker
 
-# Scalp TP/SL ratio — ambil profit cepat, cut loss cepat
-SCALP_TP_ATR_MULT    = 2.0    # TP = 2x ATR (lebih cepat hit)
-SCALP_SL_ATR_MULT    = 1.0    # SL = 1x ATR (tight stop)
-SCALP_TP_FALLBACK    = 0.015  # TP fallback 1.5% (di 20x = 30% PnL)
-SCALP_SL_FALLBACK    = 0.008  # SL fallback 0.8% (di 20x = 16% PnL)
+# Scalp target — ambil profit cepat
+SCALP_TP_PCT         = 0.015  # TP 1.5% price move (= 15% PnL di 10x)
+SCALP_SL_PCT         = 0.008  # SL 0.8% price move (= 8% PnL di 10x)
+# ATR multiplier kalau ATR tersedia
+SCALP_TP_ATR         = 2.0
+SCALP_SL_ATR         = 1.0
 
 # ─── HELPER: HITUNG VWAP ──────────────────────────────────────────────────────
 def _calc_vwap_dist(mark_price: float, symbol: str) -> float:
@@ -305,41 +303,35 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
 # ─── CORE: HITUNG TP/SL BERBASIS ATR ─────────────────────────────────────────
 def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]:
     """
-    Hitung TP/SL untuk scalping modal kecil.
-    Ratio 1:2 (SL 1x ATR, TP 2x ATR) — cepat ambil profit.
+    Scalp TP/SL: ambil profit cepat, cut loss cepat.
+    ATR-based kalau tersedia, fallback ke fixed %.
     """
     atr = tech.get('atr', 0)
-
     if atr and atr > 0:
-        sl_dist = atr * SCALP_SL_ATR_MULT
-        tp_dist = atr * SCALP_TP_ATR_MULT
+        sl_dist = atr * SCALP_SL_ATR
+        tp_dist = atr * SCALP_TP_ATR
     else:
-        # Fallback: 0.8% SL, 1.5% TP (di 20x = 16% / 30% PnL)
-        sl_dist = mark_price * SCALP_SL_FALLBACK
-        tp_dist = mark_price * SCALP_TP_FALLBACK
+        sl_dist = mark_price * SCALP_SL_PCT
+        tp_dist = mark_price * SCALP_TP_PCT
 
     if side == "buy":
-        tp = mark_price + tp_dist
-        sl = mark_price - sl_dist
+        return round(mark_price + tp_dist, 6), round(mark_price - sl_dist, 6)
     else:
-        tp = mark_price - tp_dist
-        sl = mark_price + sl_dist
-
-    return round(tp, 6), round(sl, 6)
+        return round(mark_price - tp_dist, 6), round(mark_price + sl_dist, 6)
 
 
 # ─── MAIN ENGINE ──────────────────────────────────────────────────────────────
 def run_crypto_engine():
     """
-    [CRYPTO SCALPER v4.0] — Small Capital Aggressive Scalping Engine.
-    20x leverage, scan 8 detik, threshold rendah, TP cepat.
+    [CRYPTO SCALPER v5.0] — One Trade All-In Daily Scalper.
+    Satu koin terbaik, semua modal, scalp cepat, repeat.
     """
     executor = BitgetExecutor()
     from database import check_pending_trades, get_performance_stats
     from sentiment import get_market_news_digest
 
-    print("[CRYPTO SCALPER v4.1] Small Capital Scalping Mode AKTIF!")
-    print(f"  Leverage: {LEVERAGE}x | Min Score: {MIN_MOMENTUM_SCORE} | Cooldown: {COOLDOWN_AFTER_TRADE}s")
+    print("[CRYPTO SCALPER v5.0] One Trade All-In Mode AKTIF!")
+    print(f"  Strategy: 1 trade terbaik | {LEVERAGE}x leverage | TP {SCALP_TP_PCT*100}% | SL {SCALP_SL_PCT*100}%")
 
     last_exec_time    = 0
     last_news_report  = 0
@@ -486,7 +478,7 @@ def run_crypto_engine():
 
                 # ── 9h. EKSEKUSI ──────────────────────────────────────────────
                 print(f"\n{'='*60}")
-                print(f"[SCALPER v4.0] 🎯 {clean_base} {side.upper()} | Score: {score}/100")
+                print(f"[SCALPER v5.0] 🎯 {clean_base} {side.upper()} | Score: {score}/100")
                 print(f"  Reason : {reason}")
                 print(f"  Price  : {mark_price} | RSI: {rsi} | VWAP: {vwap_dist}%")
                 print(f"  TP     : {tp} (+{round((tp/mark_price-1)*100,2)}%) | SL: {sl} (-{round((1-sl/mark_price)*100,2)}%)" if side=="buy" else f"  TP: {tp} | SL: {sl}")

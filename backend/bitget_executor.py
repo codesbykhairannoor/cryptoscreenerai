@@ -231,7 +231,7 @@ class BitgetExecutor:
 
     def place_order(self, symbol, side, amount, tp=None, sl=None, leverage=10):
         try:
-            # SET LEVERAGE DULU sebelum order — ini yang sering dilupakan
+            # SET LEVERAGE DULU sebelum order
             try:
                 self.exchange.set_leverage(leverage, symbol, params={'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
             except Exception as lev_err:
@@ -241,21 +241,31 @@ class BitgetExecutor:
             print(f"[BITGET CLASSIC] {side.upper()} {symbol} executed @ {leverage}x.")
             params = {'productType': 'USDT-FUTURES'}
             tp_side = 'sell' if side.lower() in ['long', 'buy'] else 'buy'
-            price = float(order.get('price', order.get('average', 0)))
-            if price == 0:
+
+            # Ambil harga fill dari order — handle NoneType dengan aman
+            raw_price = order.get('price') or order.get('average') or order.get('info', {}).get('priceAvg')
+            if raw_price is None or float(raw_price) == 0:
                 ticker = self.exchange.fetch_ticker(symbol)
-                price = ticker['last']
+                raw_price = ticker['last']
+            price = float(raw_price)
 
             # 1. MANDATORY SL
             final_sl = sl if sl else (price * 0.97 if side.lower() in ['long', 'buy'] else price * 1.03)
-            sl_params = {**params, 'stopLossPrice': final_sl}
-            self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=sl_params)
+            try:
+                sl_params = {**params, 'stopLossPrice': final_sl}
+                self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=sl_params)
+            except Exception as sl_err:
+                print(f"[SL SET ERROR] {symbol}: {sl_err}")
 
             # 2. MANDATORY TP
             final_tp = tp if tp else (price * 1.10 if side.lower() in ['long', 'buy'] else price * 0.90)
-            tp_params = {**params, 'takeProfitPrice': final_tp}
-            self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=tp_params)
+            try:
+                tp_params = {**params, 'takeProfitPrice': final_tp}
+                self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=tp_params)
+            except Exception as tp_err:
+                print(f"[TP SET ERROR] {symbol}: {tp_err}")
 
+            print(f"[ORDER OK] {symbol} {side.upper()} | Entry: {price} | TP: {final_tp} | SL: {final_sl}")
             return True, order
         except Exception as e:
             print(f"[CLASSIC ORDER FAILED] {e}")

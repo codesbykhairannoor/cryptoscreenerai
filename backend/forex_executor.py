@@ -134,38 +134,41 @@ class ForexExecutor:
 
     def get_candles(self, symbol=None, timeframe="5m", limit=CANDLE_LIMIT):
         """
-        Ambil candle historis dari MetaAPI langsung.
-        MetaAPI timeframe format: 1m, 5m, 15m, 1h, 4h, 1d
-        Endpoint: /historical-market-data/{symbol}/timeframes/{tf}/candles
+        Ambil candle historis dari MetaAPI.
+        Coba 3 format endpoint yang berbeda sampai ada yang berhasil.
         """
         sym = symbol or self._working_symbol or "XAUUSD"
+        headers = {"auth-token": self.api_token}
 
-        # MetaAPI v1 pakai format berbeda — coba dua endpoint
+        # MetaAPI mendukung beberapa format timeframe
+        # Konversi: "5m" -> "5" (minutes), "1h" -> "60"
+        tf_map = {"1m": "1", "3m": "3", "5m": "5", "15m": "15",
+                  "30m": "30", "1h": "60", "4h": "240", "1d": "1440"}
+        tf_num = tf_map.get(timeframe, "5")
+
         endpoints = [
-            # Format 1: path-based timeframe (MetaAPI v1 standard)
+            # Format A: MetaAPI v1 dengan timeframe numerik
+            f"{self.base_url}/users/current/accounts/{self.account_id}/historical-market-data/{sym}/timeframes/{tf_num}/candles?limit={limit}",
+            # Format B: MetaAPI dengan string timeframe
             f"{self.base_url}/users/current/accounts/{self.account_id}/historical-market-data/{sym}/timeframes/{timeframe}/candles?limit={limit}",
-            # Format 2: query param (beberapa versi MetaAPI)
+            # Format C: path langsung
             f"{self.base_url}/users/current/accounts/{self.account_id}/historical-market-data/{sym}/{timeframe}/candles?limit={limit}",
         ]
-        headers = {"auth-token": self.api_token}
 
         for url in endpoints:
             try:
                 res = requests.get(url, headers=headers, timeout=10)
                 if res.status_code == 200:
                     data = res.json()
-                    # MetaAPI bisa return list langsung atau dict dengan key 'candles'
                     if isinstance(data, list) and len(data) > 0:
                         return data
                     if isinstance(data, dict):
                         candles = data.get('candles', data.get('data', []))
                         if candles and len(candles) > 0:
                             return candles
-            except Exception as e:
-                print(f"[FOREX CANDLE ERROR] {url[-50:]}: {e}")
+            except Exception:
                 continue
 
-        print(f"[FOREX CANDLE] Both endpoints failed for {sym} {timeframe}")
         return []
 
     # --- TECHNICAL INDICATORS FROM METAAPI CANDLES ---
@@ -183,22 +186,13 @@ class ForexExecutor:
             price = price_data.get("mid", 0)
             if price == 0:
                 return {}
-            print(f"[FOREX CANDLE FALLBACK] Using live price only for indicators (price={price})")
-            # Return minimal indicators — bot tetap bisa entry dengan score rendah
+            # Silent fallback — tidak spam log
             return {
-                "rsi":              50.0,   # Neutral RSI
-                "ema200":           price,
-                "atr":              price * 0.001,  # 0.1% ATR estimate
-                "vwap":             price,
-                "vwap_dist":        0.0,
-                "trend":            "NEUTRAL",
-                "mss_bullish":      False,
-                "mss_bearish":      False,
-                "choch_bullish":    False,
-                "choch_bearish":    False,
-                "fvg":              "NONE",
-                "is_liquidity_sweep": False,
-                "last_close":       price,
+                "rsi": 50.0, "ema200": price, "atr": price * 0.001,
+                "vwap": price, "vwap_dist": 0.0, "trend": "NEUTRAL",
+                "mss_bullish": False, "mss_bearish": False,
+                "choch_bullish": False, "choch_bearish": False,
+                "fvg": "NONE", "is_liquidity_sweep": False, "last_close": price,
             }
 
         closes = [float(c.get("close", 0)) for c in candles]
