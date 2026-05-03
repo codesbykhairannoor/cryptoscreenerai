@@ -35,12 +35,15 @@ LEVERAGE             = 10     # 10x leverage
 MIN_MOMENTUM_SCORE   = 45     # Threshold — berani tapi tidak asal
 DAILY_LOSS_LIMIT_PCT = -40    # Circuit breaker
 
-# Scalp target — ambil profit cepat
-SCALP_TP_PCT         = 0.015  # TP 1.5% price move (= 15% PnL di 10x)
-SCALP_SL_PCT         = 0.008  # SL 0.8% price move (= 8% PnL di 10x)
+# Scalp target — TP 50% PnL, SL 12% PnL di 10x leverage
+# 10x leverage: 1% price move = 10% PnL
+# TP 50% PnL = 5% price move
+# SL 12% PnL = 1.2% price move
+SCALP_TP_PCT         = 0.05   # TP 5% price move  (= 50% PnL di 10x) ✅
+SCALP_SL_PCT         = 0.012  # SL 1.2% price move (= 12% PnL di 10x) ✅
 # ATR multiplier kalau ATR tersedia
-SCALP_TP_ATR         = 2.0
-SCALP_SL_ATR         = 1.0
+SCALP_TP_ATR         = 4.0    # TP = 4x ATR
+SCALP_SL_ATR         = 1.0    # SL = 1x ATR (tight)
 
 # ─── HELPER: HITUNG VWAP ──────────────────────────────────────────────────────
 def _calc_vwap_dist(mark_price: float, symbol: str) -> float:

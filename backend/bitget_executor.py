@@ -372,26 +372,26 @@ class BitgetExecutor:
                 if int(now) % 60 < 2: # Reduced log frequency
                     print(f"[MONITOR] {symbol} | PNL: {pnl}% | SL: {'OK' if has_sl else 'MISSING'} | TP: {'OK' if has_tp else 'MISSING'}")
 
-                # 1. EMERGENCY HARD EXIT (-35%)
-                if pnl <= -35:
-                    print(f"[HARD EXIT] Symbol {symbol} hit -35% PNL. Closing immediately.")
+                # 1. EMERGENCY HARD EXIT (-15% PnL = 1.5x SL, proteksi ekstra)
+                if pnl <= -15:
+                    print(f"[HARD EXIT] {symbol} hit {pnl}% PNL. Closing immediately.")
                     self.exchange.create_order(symbol, 'market', 'sell' if side in ['long', 'buy'] else 'buy', size)
                     continue
 
-                # 2. INITIAL GUARD (SL 30% & TP 100%)
+                # 2. INITIAL GUARD — SL 12% PnL, TP 50% PnL
                 if (not has_sl or not has_tp) and now - self.startup_time > self.warmup_period:
                     if now - self._last_sl_set.get(symbol, 0) > 60:
-                        print(f"[GUARD] Protecting {symbol} with Aggressive SL/TP")
-                        # SL 30% and TP 100%
-                        sl_price = entry * 0.70 if side in ['long', 'buy'] else entry * 1.30
-                        tp_price = entry * 2.0 if side in ['long', 'buy'] else entry * 0.10
-                        
-                        # Set SL/TP via unified update
+                        print(f"[GUARD] Protecting {symbol} with SL 12% / TP 50%")
+                        # SL 12% PnL = 1.2% price move di 10x
+                        sl_price = entry * 0.988 if side in ['long', 'buy'] else entry * 1.012
+                        # TP 50% PnL = 5% price move di 10x
+                        tp_price = entry * 1.05 if side in ['long', 'buy'] else entry * 0.95
                         self.update_sl_price(symbol, side, size, sl_price)
                         self.update_sl_price(symbol, side, size, tp_price, is_tp=True)
                         self._last_sl_set[symbol] = now
 
-                # 3. PROGRESSIVE 15% STEP-TRAILING
+                # 3. PROGRESSIVE TRAILING — naik setiap +10% PnL
+                # Target TP 50% PnL, trail agresif untuk lock profit
                 new_sl = 0
                 sl_p = 0
                 for p in plans:
@@ -399,13 +399,12 @@ class BitgetExecutor:
                         sl_p = p['price']
                         break
 
-                # Trail every 15% increase
-                if pnl >= 90: new_sl = entry * 1.75 if side in ['long', 'buy'] else entry * 0.25 
-                elif pnl >= 75: new_sl = entry * 1.60 if side in ['long', 'buy'] else entry * 0.40 
-                elif pnl >= 60: new_sl = entry * 1.45 if side in ['long', 'buy'] else entry * 0.55 
-                elif pnl >= 45: new_sl = entry * 1.30 if side in ['long', 'buy'] else entry * 0.70 
-                elif pnl >= 30: new_sl = entry * 1.15 if side in ['long', 'buy'] else entry * 0.85 
-                elif pnl >= 15: new_sl = entry * 1.005 if side in ['long', 'buy'] else entry * 0.995 # Breakeven +0.5%
+                # Trail setiap 10% PnL naik — lock profit agresif
+                if pnl >= 45: new_sl = entry * 1.35 if side in ['long', 'buy'] else entry * 0.65  # Lock +35%
+                elif pnl >= 35: new_sl = entry * 1.25 if side in ['long', 'buy'] else entry * 0.75  # Lock +25%
+                elif pnl >= 25: new_sl = entry * 1.15 if side in ['long', 'buy'] else entry * 0.85  # Lock +15%
+                elif pnl >= 15: new_sl = entry * 1.05 if side in ['long', 'buy'] else entry * 0.95  # Lock +5%
+                elif pnl >= 10: new_sl = entry * 1.005 if side in ['long', 'buy'] else entry * 0.995  # Breakeven
                 
                 if new_sl > 0:
                     is_better = (side in ['long', 'buy'] and new_sl > sl_p) or \
