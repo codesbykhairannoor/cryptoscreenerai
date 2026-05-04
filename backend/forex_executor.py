@@ -620,14 +620,25 @@ class ForexExecutor:
         return any_success
 
     def update_forex_sl(self, position_id, new_sl):
+        """Update SL posisi via MetaAPI. Log response untuk debug."""
         if not self.is_active: return False
         try:
             url = f"{self.base_url}/users/current/accounts/{self.account_id}/positions/{position_id}"
             headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
             payload = {"stopLoss": new_sl}
             res = requests.put(url, headers=headers, json=payload, timeout=10)
-            return res.status_code in [200, 204]
-        except Exception:
+            if res.status_code in [200, 204]:
+                return True
+            else:
+                # Log error supaya bisa debug
+                try:
+                    err = res.json().get("message", res.text[:100])
+                except Exception:
+                    err = res.text[:100]
+                print(f"[UPDATE SL FAIL] pos={position_id} sl={new_sl} status={res.status_code}: {err}")
+                return False
+        except Exception as e:
+            print(f"[UPDATE SL ERROR] pos={position_id}: {e}")
             return False
 
     # --- TRAILING STOP ---
@@ -730,16 +741,26 @@ class ForexExecutor:
             buffer = 5.0
             if is_buy:
                 new_sl = round(open_price + (profit_pt - buffer), 3)
+                print(f"[TRAIL ATTEMPT] {sym} trying SL {current_sl} -> {new_sl} (profit_pt={round(profit_pt,1)})")
                 if current_sl == 0 or new_sl > current_sl:
                     ok = self.update_forex_sl(pos_id, new_sl)
                     if ok:
-                        print(f"[FOREX TRAIL] {sym} SL {current_sl} -> {new_sl} (+{round(profit_pt,1)}pt)")
+                        print(f"✅ [FOREX TRAIL] {sym} SL {current_sl} -> {new_sl} (+{round(profit_pt,1)}pt)")
+                    else:
+                        print(f"❌ [FOREX TRAIL FAIL] {sym} could not update SL to {new_sl}")
+                else:
+                    print(f"[TRAIL SKIP] {sym} new_sl={new_sl} not better than current_sl={current_sl}")
             else:
                 new_sl = round(open_price - (profit_pt - buffer), 3)
+                print(f"[TRAIL ATTEMPT] {sym} trying SL {current_sl} -> {new_sl} (profit_pt={round(profit_pt,1)})")
                 if current_sl == 0 or new_sl < current_sl:
                     ok = self.update_forex_sl(pos_id, new_sl)
                     if ok:
-                        print(f"[FOREX TRAIL] {sym} SL {current_sl} -> {new_sl} (+{round(profit_pt,1)}pt)")
+                        print(f"✅ [FOREX TRAIL] {sym} SL {current_sl} -> {new_sl} (+{round(profit_pt,1)}pt)")
+                    else:
+                        print(f"❌ [FOREX TRAIL FAIL] {sym} could not update SL to {new_sl}")
+                else:
+                    print(f"[TRAIL SKIP] {sym} new_sl={new_sl} not better than current_sl={current_sl}")
 
     # --- MAIN ENGINE LOOP ---
 
