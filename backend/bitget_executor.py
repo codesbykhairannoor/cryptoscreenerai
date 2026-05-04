@@ -374,126 +374,141 @@ class BitgetExecutor:
         return self.sync_memory()
 
     def manage_open_positions(self):
-        """Military Position Manager: Progressive Trailing & Small-Trade Cleanup"""
+        """
+        Position Manager: Trailing SL berbasis PEAK PnL.
+        
+        Prinsip kunci:
+        - SL dihitung dari PEAK PnL (tertinggi yang pernah dicapai), bukan PnL saat ini
+        - Kalau PnL pernah 50% lalu turun ke 30%, SL tetap di level dari puncak 50%
+        - SL hanya bergerak NAIK (long) atau TURUN (short) — tidak pernah mundur
+        - Gap SL = 15% dari peak PnL (misal peak 50% → SL di 35%)
+        """
         try:
             if not hasattr(self, '_last_sl_check'): self._last_sl_check = {}
-            if not hasattr(self, '_last_sl_set'): self._last_sl_set = {}
-            
+            if not hasattr(self, '_last_sl_set'):   self._last_sl_set = {}
+            if not hasattr(self, '_peak_pnl'):      self._peak_pnl = {}  # Track PnL tertinggi per symbol
+
             positions = self.get_all_positions()
             now = time.time()
             from shared_state import state
-            
+
             for pos in positions:
-                symbol = pos['symbol']
-                side = pos['side']
-                size = float(pos.get('size', 0))
-                entry = float(pos.get('entry', 0))
-                pnl = float(pos.get('pnl', 0))
+                symbol     = pos['symbol']
+                side       = pos['side']
+                size       = float(pos.get('size', 0))
+                entry      = float(pos.get('entry', 0))
+                pnl        = float(pos.get('pnl', 0))
                 mark_price = float(pos.get('mark_price', 0))
-                
-                # 0.5 SMALL TRADE SCRUBBER (Hapus modal dikit)
+
+                # ── SMALL TRADE SCRUBBER ──────────────────────────────────────
                 notional = size * mark_price
                 if 0 < notional < 5.0:
-                    print(f"[SCRUBBER] Closing micro-position {symbol} (Notional ${round(notional, 2)})")
+                    print(f"[SCRUBBER] Closing micro-position {symbol} (${round(notional,2)})")
                     try:
-                        # Use direct V2 close API for maximum priority
                         clean_sym = symbol.replace("/", "").split(":")[0]
-                        params = {
-                            'symbol': clean_sym,
-                            'productType': 'USDT-FUTURES',
-                            'holdSide': 'long' if side in ['long', 'buy'] else 'short',
+                        self._v3_request("POST", "/api/v2/mix/order/close-positions", {
+                            'symbol': clean_sym, 'productType': 'USDT-FUTURES',
+                            'holdSide': 'long' if side in ['long','buy'] else 'short',
                             'size': str(size)
-                        }
-                        self._v3_request("POST", "/api/v2/mix/order/close-positions", params)
+                        })
                         continue
                     except Exception as e:
                         print(f"[SCRUBBER ERROR] {symbol}: {e}")
 
-                # 0. SIDEWAYS DETECTION
+                # ── SIDEWAYS DETECTION ────────────────────────────────────────
                 if symbol not in state.pos_start_time:
                     state.pos_start_time[symbol] = now
-                
                 duration_hours = (now - state.pos_start_time[symbol]) / 3600
                 price_move_pct = abs((mark_price - entry) / entry * 100) if entry > 0 else 0
-                
                 if duration_hours > 4 and -1.5 < pnl < 1.5 and price_move_pct < 0.4:
-                    print(f"[SIDEWAYS EXIT] Closing {symbol} - Flat for {round(duration_hours, 1)}h")
-                    self.exchange.create_order(symbol, 'market', 'sell' if side in ['long', 'buy'] else 'buy', size)
+                    print(f"[SIDEWAYS EXIT] Closing {symbol} - Flat for {round(duration_hours,1)}h")
+                    self.exchange.create_order(symbol, 'market', 'sell' if side in ['long','buy'] else 'buy', size)
                     if symbol in state.pos_start_time: del state.pos_start_time[symbol]
+                    if symbol in self._peak_pnl: del self._peak_pnl[symbol]
                     continue
 
                 if now - self._last_sl_check.get(symbol, 0) < 10: continue
                 self._last_sl_check[symbol] = now
-                
-                # DUAL-LAYER DETECTION (REST + WebSocket Cache)
+
+                # ── UPDATE PEAK PnL ───────────────────────────────────────────
+                # Ini kunci: track PnL tertinggi yang pernah dicapai
+                prev_peak = self._peak_pnl.get(symbol, 0)
+                if pnl > prev_peak:
+                    self._peak_pnl[symbol] = pnl
+                peak_pnl = self._peak_pnl.get(symbol, pnl)
+
+                # ── DETECT SL/TP ──────────────────────────────────────────────
                 clean_sym = self._clean_symbol(symbol)
-                plans = self.get_pending_plan_orders(symbol)
-                ws_plans = [o for o in state.orders if self._clean_symbol(o.get('symbol', o.get('instId', ''))) == clean_sym]
-                
+                plans     = self.get_pending_plan_orders(symbol)
+                ws_plans  = [o for o in state.orders if self._clean_symbol(
+                    o.get('symbol', o.get('instId', ''))) == clean_sym]
+
                 has_sl = False
                 has_tp = False
+                sl_p   = 0
                 for p in (plans + ws_plans):
                     p_type = str(p.get('type', p.get('planType', ''))).lower()
-                    # Bitget V2: psl = profit_stop_loss (usually SL), ptp = partial_take_profit
                     if any(x in p_type for x in ['sl', 'loss', 'stop', 'psl']):
                         has_sl = True
+                        candidate = float(p.get('price', 0))
+                        if candidate > 0:
+                            sl_p = max(sl_p, candidate) if side in ['long','buy'] else (
+                                candidate if sl_p == 0 else min(sl_p, candidate))
                     if any(x in p_type for x in ['tp', 'profit', 'ptp']):
                         has_tp = True
 
-                # Military Status Log
-                if int(now) % 60 < 2: # Reduced log frequency
-                    print(f"[MONITOR] {symbol} | PNL: {pnl}% | SL: {'OK' if has_sl else 'MISSING'} | TP: {'OK' if has_tp else 'MISSING'}")
+                if int(now) % 60 < 2:
+                    print(f"[MONITOR] {symbol} | PNL:{pnl}% PEAK:{peak_pnl}% | "
+                          f"SL:{'OK' if has_sl else 'MISSING'} TP:{'OK' if has_tp else 'MISSING'}")
 
-                # 1. EMERGENCY HARD EXIT (-15% PnL = 1.5x SL, proteksi ekstra)
+                # ── HARD EXIT ─────────────────────────────────────────────────
                 if pnl <= -15:
-                    print(f"[HARD EXIT] {symbol} hit {pnl}% PNL. Closing immediately.")
-                    self.exchange.create_order(symbol, 'market', 'sell' if side in ['long', 'buy'] else 'buy', size)
+                    print(f"[HARD EXIT] {symbol} hit {pnl}% PNL. Closing.")
+                    self.exchange.create_order(symbol, 'market',
+                        'sell' if side in ['long','buy'] else 'buy', size)
+                    if symbol in self._peak_pnl: del self._peak_pnl[symbol]
                     continue
 
-                # 2. INITIAL GUARD — pasang SL/TP kalau belum ada
+                # ── INITIAL GUARD ─────────────────────────────────────────────
                 if (not has_sl or not has_tp) and now - self.startup_time > self.warmup_period:
                     if now - self._last_sl_set.get(symbol, 0) > 60:
-                        print(f"[GUARD] Protecting {symbol} | SL 15% PnL | TP 80% PnL")
-                        # TP 80% PnL = 8% price move di 10x
-                        # SL 15% PnL = 1.5% price move di 10x
-                        sl_price = entry * 0.985 if side in ['long', 'buy'] else entry * 1.015
-                        tp_price = entry * 1.08  if side in ['long', 'buy'] else entry * 0.92
-                        if not has_sl:
-                            self._set_sl_tp_bitget(symbol, side, size, sl_price=sl_price)
-                        if not has_tp:
-                            self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
+                        print(f"[GUARD] Protecting {symbol} | SL 15% | TP 80%")
+                        sl_price = entry * 0.985 if side in ['long','buy'] else entry * 1.015
+                        tp_price = entry * 1.08  if side in ['long','buy'] else entry * 0.92
+                        if not has_sl: self._set_sl_tp_bitget(symbol, side, size, sl_price=sl_price)
+                        if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                         self._last_sl_set[symbol] = now
 
-                # 3. PROGRESSIVE TRAILING — naik setiap +10% PnL
-                # Sesuai request: naik 10% → SL ke entry, naik 20% → SL ke +10%, dst
+                # ── TRAILING SL BERBASIS PEAK PnL ─────────────────────────────
+                # SL dihitung dari PEAK PnL, bukan PnL saat ini
+                # Gap = 15% → kalau peak 50%, SL di 35%
+                # Ini berarti kalau PnL turun dari 50% ke 30%, SL tetap di 35%
                 new_sl = 0
-                sl_p = 0
-                for p in plans:
-                    pt = p.get('type', '')
-                    if 'sl' in pt or 'loss' in pt or 'psl' in pt:
-                        sl_p = p['price']
-                        break
-
                 if side in ['long', 'buy']:
-                    if pnl >= 45: new_sl = entry * 1.35   # Lock +35%
-                    elif pnl >= 35: new_sl = entry * 1.25  # Lock +25%
-                    elif pnl >= 25: new_sl = entry * 1.15  # Lock +15%
-                    elif pnl >= 20: new_sl = entry * 1.10  # Lock +10%
-                    elif pnl >= 10: new_sl = entry * 1.002 # Breakeven +0.2%
+                    if peak_pnl >= 50: new_sl = entry * 1.35   # peak 50% → SL lock 35%
+                    elif peak_pnl >= 40: new_sl = entry * 1.25  # peak 40% → SL lock 25%
+                    elif peak_pnl >= 30: new_sl = entry * 1.15  # peak 30% → SL lock 15%
+                    elif peak_pnl >= 20: new_sl = entry * 1.05  # peak 20% → SL lock 5%
+                    elif peak_pnl >= 10: new_sl = entry * 1.002 # peak 10% → breakeven
                 else:
-                    if pnl >= 45: new_sl = entry * 0.65
-                    elif pnl >= 35: new_sl = entry * 0.75
-                    elif pnl >= 25: new_sl = entry * 0.85
-                    elif pnl >= 20: new_sl = entry * 0.90
-                    elif pnl >= 10: new_sl = entry * 0.998
+                    if peak_pnl >= 50: new_sl = entry * 0.65
+                    elif peak_pnl >= 40: new_sl = entry * 0.75
+                    elif peak_pnl >= 30: new_sl = entry * 0.85
+                    elif peak_pnl >= 20: new_sl = entry * 0.95
+                    elif peak_pnl >= 10: new_sl = entry * 0.998
 
                 if new_sl > 0:
-                    is_better = (side in ['long', 'buy'] and new_sl > sl_p) or \
-                                (side in ['short', 'sell'] and (new_sl < sl_p or sl_p == 0))
+                    # SL hanya boleh naik (long) atau turun (short) — tidak pernah mundur
+                    if side in ['long', 'buy']:
+                        is_better = new_sl > sl_p
+                    else:
+                        is_better = (sl_p == 0) or (new_sl < sl_p)
 
                     if is_better and now - self._last_sl_set.get(symbol, 0) > 60:
-                        print(f"🔥 [TRAIL] {symbol} SL → {round(new_sl,6)} (PNL: {pnl}%)")
+                        print(f"🔥 [TRAIL] {symbol} SL {round(sl_p,4)} → {round(new_sl,4)} "
+                              f"(PNL:{pnl}% PEAK:{peak_pnl}%)")
                         self._set_sl_tp_bitget(symbol, side, size, sl_price=new_sl)
                         self._last_sl_set[symbol] = now
+
         except Exception as e:
             print(f"[POSITION MANAGER CRASH] {e}")
