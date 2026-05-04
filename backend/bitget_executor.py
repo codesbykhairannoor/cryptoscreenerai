@@ -231,55 +231,99 @@ class BitgetExecutor:
 
     def place_order(self, symbol, side, amount, tp=None, sl=None, leverage=10):
         try:
-            # SET LEVERAGE DULU sebelum order
+            # 1. SET LEVERAGE
             try:
                 self.exchange.set_leverage(leverage, symbol, params={'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
             except Exception as lev_err:
                 print(f"[LEVERAGE] Set {leverage}x for {symbol}: {lev_err}")
 
+            # 2. MARKET ORDER
             order = self.exchange.create_order(symbol, 'market', side, amount)
             print(f"[BITGET CLASSIC] {side.upper()} {symbol} executed @ {leverage}x.")
-            params = {'productType': 'USDT-FUTURES'}
-            tp_side = 'sell' if side.lower() in ['long', 'buy'] else 'buy'
 
-            # Ambil harga fill dari order — handle NoneType dengan aman
+            # 3. AMBIL HARGA FILL — handle NoneType
             raw_price = order.get('price') or order.get('average') or order.get('info', {}).get('priceAvg')
             if raw_price is None or float(raw_price) == 0:
                 ticker = self.exchange.fetch_ticker(symbol)
                 raw_price = ticker['last']
             price = float(raw_price)
 
-            # 1. MANDATORY SL
-            final_sl = sl if sl else (price * 0.97 if side.lower() in ['long', 'buy'] else price * 1.03)
-            try:
-                sl_params = {**params, 'stopLossPrice': final_sl}
-                self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=sl_params)
-            except Exception as sl_err:
-                print(f"[SL SET ERROR] {symbol}: {sl_err}")
+            # 4. HITUNG SL/TP BERDASARKAN HARGA FILL AKTUAL
+            # SL 12% PnL = 1.2% price move di 10x
+            # TP 50% PnL = 5% price move di 10x
+            final_sl = sl if (sl and sl > 0) else (
+                price * 0.988 if side.lower() in ['long', 'buy'] else price * 1.012
+            )
+            final_tp = tp if (tp and tp > 0) else (
+                price * 1.05 if side.lower() in ['long', 'buy'] else price * 0.95
+            )
 
-            # 2. MANDATORY TP
-            final_tp = tp if tp else (price * 1.10 if side.lower() in ['long', 'buy'] else price * 0.90)
-            try:
-                tp_params = {**params, 'takeProfitPrice': final_tp}
-                self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=tp_params)
-            except Exception as tp_err:
-                print(f"[TP SET ERROR] {symbol}: {tp_err}")
+            # 5. SET SL/TP via Plan Order API (cara yang benar untuk Bitget Classic)
+            self._set_sl_tp_bitget(symbol, side, amount, sl_price=final_sl, tp_price=final_tp)
 
-            print(f"[ORDER OK] {symbol} {side.upper()} | Entry: {price} | TP: {final_tp} | SL: {final_sl}")
+            print(f"[ORDER OK] {symbol} {side.upper()} | Entry: {price} | TP: {final_tp} (+{round((final_tp/price-1)*100,2)}%) | SL: {final_sl} (-{round((1-final_sl/price)*100,2)}%)")
             return True, order
         except Exception as e:
             print(f"[CLASSIC ORDER FAILED] {e}")
             return False, str(e)
 
-    def update_sl_price(self, symbol, side, amount, new_price, is_tp=False):
+    def _set_sl_tp_bitget(self, symbol, side, size, sl_price=None, tp_price=None):
+        """
+        Set SL/TP untuk Bitget Classic menggunakan Plan Order API.
+        Ini cara yang BENAR untuk Bitget — bukan via create_order params.
+        """
         try:
-            tp_side = 'sell' if side.lower() in ['long', 'buy'] else 'buy'
-            params = {
-                'stopLossPrice' if not is_tp else 'takeProfitPrice': new_price,
-                'productType': 'USDT-FUTURES'
-            }
-            self.exchange.create_order(symbol, 'market', tp_side, amount, None, params=params)
-        except: pass
+            clean_sym = symbol.replace("/", "").split(":")[0]
+            if not clean_sym.endswith('USDT'):
+                clean_sym += 'USDT'
+            hold_side = 'long' if side in ['long', 'buy'] else 'short'
+
+            if sl_price and sl_price > 0:
+                sl_body = {
+                    "symbol":        clean_sym,
+                    "productType":   "USDT-FUTURES",
+                    "marginCoin":    "USDT",
+                    "planType":      "loss_plan",
+                    "triggerPrice":  str(round(sl_price, 6)),
+                    "triggerType":   "mark_price",
+                    "executePrice":  "0",          # market execution
+                    "holdSide":      hold_side,
+                    "size":          str(size),
+                }
+                res = self._v3_request("POST", "/api/v2/mix/order/plan/placePlan", body=sl_body)
+                if res.get('code') == '00000':
+                    print(f"[SL SET] {symbol} SL @ {sl_price} ✓")
+                else:
+                    print(f"[SL SET FAIL] {symbol}: {res.get('msg', res)}")
+
+            if tp_price and tp_price > 0:
+                tp_body = {
+                    "symbol":        clean_sym,
+                    "productType":   "USDT-FUTURES",
+                    "marginCoin":    "USDT",
+                    "planType":      "profit_plan",
+                    "triggerPrice":  str(round(tp_price, 6)),
+                    "triggerType":   "mark_price",
+                    "executePrice":  "0",
+                    "holdSide":      hold_side,
+                    "size":          str(size),
+                }
+                res = self._v3_request("POST", "/api/v2/mix/order/plan/placePlan", body=tp_body)
+                if res.get('code') == '00000':
+                    print(f"[TP SET] {symbol} TP @ {tp_price} ✓")
+                else:
+                    print(f"[TP SET FAIL] {symbol}: {res.get('msg', res)}")
+
+        except Exception as e:
+            print(f"[SL/TP SET ERROR] {symbol}: {e}")
+
+    def update_sl_price(self, symbol, side, amount, new_price, is_tp=False):
+        """Update SL atau TP yang sudah ada via Plan Order API."""
+        self._set_sl_tp_bitget(
+            symbol, side, amount,
+            sl_price=new_price if not is_tp else None,
+            tp_price=new_price if is_tp else None
+        )
 
     def sync_memory(self):
         """Database Sync: Ensures local DB matches exchange reality"""
@@ -378,41 +422,48 @@ class BitgetExecutor:
                     self.exchange.create_order(symbol, 'market', 'sell' if side in ['long', 'buy'] else 'buy', size)
                     continue
 
-                # 2. INITIAL GUARD — SL 12% PnL, TP 50% PnL
+                # 2. INITIAL GUARD — pasang SL/TP kalau belum ada
                 if (not has_sl or not has_tp) and now - self.startup_time > self.warmup_period:
                     if now - self._last_sl_set.get(symbol, 0) > 60:
-                        print(f"[GUARD] Protecting {symbol} with SL 12% / TP 50%")
-                        # SL 12% PnL = 1.2% price move di 10x
+                        print(f"[GUARD] Protecting {symbol} | SL 12% PnL | TP 50% PnL")
                         sl_price = entry * 0.988 if side in ['long', 'buy'] else entry * 1.012
-                        # TP 50% PnL = 5% price move di 10x
-                        tp_price = entry * 1.05 if side in ['long', 'buy'] else entry * 0.95
-                        self.update_sl_price(symbol, side, size, sl_price)
-                        self.update_sl_price(symbol, side, size, tp_price, is_tp=True)
+                        tp_price = entry * 1.05  if side in ['long', 'buy'] else entry * 0.95
+                        if not has_sl:
+                            self._set_sl_tp_bitget(symbol, side, size, sl_price=sl_price)
+                        if not has_tp:
+                            self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                         self._last_sl_set[symbol] = now
 
                 # 3. PROGRESSIVE TRAILING — naik setiap +10% PnL
-                # Target TP 50% PnL, trail agresif untuk lock profit
+                # Sesuai request: naik 10% → SL ke entry, naik 20% → SL ke +10%, dst
                 new_sl = 0
                 sl_p = 0
                 for p in plans:
-                    if 'sl' in p['type'] or 'loss' in p['type'] or 'psl' in p['type']:
+                    pt = p.get('type', '')
+                    if 'sl' in pt or 'loss' in pt or 'psl' in pt:
                         sl_p = p['price']
                         break
 
-                # Trail setiap 10% PnL naik — lock profit agresif
-                if pnl >= 45: new_sl = entry * 1.35 if side in ['long', 'buy'] else entry * 0.65  # Lock +35%
-                elif pnl >= 35: new_sl = entry * 1.25 if side in ['long', 'buy'] else entry * 0.75  # Lock +25%
-                elif pnl >= 25: new_sl = entry * 1.15 if side in ['long', 'buy'] else entry * 0.85  # Lock +15%
-                elif pnl >= 15: new_sl = entry * 1.05 if side in ['long', 'buy'] else entry * 0.95  # Lock +5%
-                elif pnl >= 10: new_sl = entry * 1.005 if side in ['long', 'buy'] else entry * 0.995  # Breakeven
-                
+                if side in ['long', 'buy']:
+                    if pnl >= 45: new_sl = entry * 1.35   # Lock +35%
+                    elif pnl >= 35: new_sl = entry * 1.25  # Lock +25%
+                    elif pnl >= 25: new_sl = entry * 1.15  # Lock +15%
+                    elif pnl >= 20: new_sl = entry * 1.10  # Lock +10%
+                    elif pnl >= 10: new_sl = entry * 1.002 # Breakeven +0.2%
+                else:
+                    if pnl >= 45: new_sl = entry * 0.65
+                    elif pnl >= 35: new_sl = entry * 0.75
+                    elif pnl >= 25: new_sl = entry * 0.85
+                    elif pnl >= 20: new_sl = entry * 0.90
+                    elif pnl >= 10: new_sl = entry * 0.998
+
                 if new_sl > 0:
                     is_better = (side in ['long', 'buy'] and new_sl > sl_p) or \
                                 (side in ['short', 'sell'] and (new_sl < sl_p or sl_p == 0))
-                    
-                    if is_better and now - self._last_sl_set.get(symbol, 0) > 300:
-                        print(f"🔥 [MILITARY TRAILING] Moving SL for {symbol} to {new_sl} (PNL: {pnl}%)")
-                        self.update_sl_price(symbol, side, size, new_sl)
+
+                    if is_better and now - self._last_sl_set.get(symbol, 0) > 60:
+                        print(f"🔥 [TRAIL] {symbol} SL → {round(new_sl,6)} (PNL: {pnl}%)")
+                        self._set_sl_tp_bitget(symbol, side, size, sl_price=new_sl)
                         self._last_sl_set[symbol] = now
         except Exception as e:
             print(f"[POSITION MANAGER CRASH] {e}")

@@ -26,7 +26,7 @@ SCAN_INTERVAL        = 3      # Scan setiap 3 detik
 COOLDOWN_AFTER_TRADE = 30     # Cooldown 30 detik (lebih agresif)
 EQUITY_GUARD_PCT     = 0.92   # Halt kalau equity < 92% (sedikit lebih toleran)
 MAX_SPREAD_POINTS    = 300    # Toleransi spread lebih longgar untuk scalping
-MIN_MOMENTUM_SCORE   = 40     # Threshold lebih rendah = lebih berani
+MIN_MOMENTUM_SCORE   = 30     # Turunkan threshold — lebih berani entry
 CANDLE_LIMIT         = 100
 
 # Scalp TP/SL untuk XAUUSD (dalam poin, 1 poin = 10 pip)
@@ -525,12 +525,18 @@ class ForexExecutor:
 
     def _is_trading_session(self):
         """
-        Trade saat London (07-16 UTC), NY (12-21 UTC), DAN Asia (02-06 UTC).
-        Asia session bagus untuk XAUUSD karena ada volatilitas dari China/India.
+        XAUUSD aktif hampir 24 jam kecuali Jumat malam - Minggu malam.
+        Buka semua session: Asia + London + NY.
+        Tutup hanya saat weekend (Sabtu-Minggu UTC).
         """
         now_utc = datetime.datetime.utcnow()
-        hour = now_utc.hour
-        return (2 <= hour < 6) or (7 <= hour < 16) or (12 <= hour < 21)
+        weekday = now_utc.weekday()  # 0=Senin, 5=Sabtu, 6=Minggu
+        # Tutup saat weekend
+        if weekday == 6:  # Minggu
+            return False
+        if weekday == 5 and now_utc.hour >= 21:  # Sabtu malam
+            return False
+        return True  # Semua jam lain = buka
 
     # --- POSITIONS ---
 
