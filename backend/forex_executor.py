@@ -777,27 +777,40 @@ class ForexExecutor:
                     time.sleep(60)
                     continue
 
-                # LIVE PRICE FROM METAAPI
+                # LIVE PRICE — simpan cache, jangan skip trailing kalau timeout
                 price_data   = self.get_live_price()
                 broker_price = price_data["mid"]
                 spread_pts   = price_data["spread_points"]
 
-                if broker_price == 0:
-                    time.sleep(5)
-                    continue
+                # Cache harga terakhir yang berhasil
+                if broker_price > 0:
+                    self._last_known_price = broker_price
+                    self._last_known_spread = spread_pts
+                else:
+                    # Pakai cache kalau timeout
+                    broker_price = getattr(self, '_last_known_price', 0)
+                    spread_pts   = getattr(self, '_last_known_spread', 999)
 
-                # POSITIONS
+                # POSITIONS — selalu ambil, tidak bergantung pada harga
                 positions    = self._get_positions()
                 active_count = len(positions)
                 total_lots   = sum(float(p.get("volume", 0)) for p in positions)
-                print(f"[FOREX DASHBOARD] Price: {broker_price} | Trades: {active_count} | Lots: {round(total_lots, 2)} | Spread: {spread_pts}pts")
 
-                # TRAILING STOP — inject live price ke setiap posisi
-                # Ini fix untuk MetaAPI yang tidak return currentPrice di positions endpoint
-                for p in positions:
-                    if "XAU" in p.get("symbol", "").upper() and broker_price > 0:
-                        p["currentPrice"] = broker_price
-                self._trail_positions(positions)
+                if broker_price > 0:
+                    print(f"[FOREX DASHBOARD] Price: {broker_price} | Trades: {active_count} | Lots: {round(total_lots, 2)} | Spread: {spread_pts}pts")
+
+                # TRAILING STOP — selalu jalan, inject harga ke posisi
+                # Tidak boleh di-skip karena timeout harga
+                if broker_price > 0 and positions:
+                    for p in positions:
+                        if "XAU" in p.get("symbol", "").upper():
+                            p["currentPrice"] = broker_price
+                    self._trail_positions(positions)
+
+                # Kalau tidak ada harga sama sekali, skip entry tapi trailing sudah jalan
+                if broker_price == 0:
+                    time.sleep(5)
+                    continue
 
                 # SPREAD FILTER
                 if spread_pts > MAX_SPREAD_POINTS:
