@@ -23,16 +23,18 @@ load_dotenv()
 
 MAX_POSITIONS        = 10     # Max 10 posisi XAUUSD sekaligus kalau sangat yakin
 SCAN_INTERVAL        = 3      # Scan setiap 3 detik
-COOLDOWN_AFTER_TRADE = 30     # Cooldown 30 detik (lebih agresif)
-EQUITY_GUARD_PCT     = 0.92   # Halt kalau equity < 92% (sedikit lebih toleran)
-MAX_SPREAD_POINTS    = 300    # Toleransi spread lebih longgar untuk scalping
-MIN_MOMENTUM_SCORE   = 15     # Sesuai score aktual saat candle fallback (RSI=50 = 15 poin)
+COOLDOWN_AFTER_TRADE = 60     # Cooldown 60 detik antar entry
+EQUITY_GUARD_PCT     = 0.92   # Halt kalau equity < 92%
+MAX_SPREAD_POINTS    = 300    # Toleransi spread
+MIN_MOMENTUM_SCORE   = 25     # Minimum score — harus ada sinyal, bukan pure neutral
 CANDLE_LIMIT         = 100
 
-# Scalp TP/SL untuk XAUUSD (dalam poin, 1 poin = 10 pip)
-SCALP_TP_POINTS      = 1.5    # TP 15 pip
-SCALP_SL_POINTS      = 1.0    # SL 10 pip (1:1.5 RR)
-RISK_PCT_PER_TRADE   = 0.02   # 2% risk per trade (agresif untuk modal kecil)
+# Scalp TP/SL untuk XAUUSD — disesuaikan dengan ATR aktual gold (~4-5 poin)
+# ATR gold 5m biasanya 1.5-3 poin. TP harus > ATR supaya tidak kena noise.
+SCALP_TP_POINTS      = 3.0    # TP 30 pip (3 poin) — cukup jauh dari noise
+SCALP_SL_POINTS      = 1.5    # SL 15 pip (1.5 poin) — 1:2 RR
+RISK_PCT_PER_TRADE   = 0.01   # 1% risk per trade (lebih konservatif)
+MAX_LOT_PER_TRADE    = 0.05   # Hard cap lot per trade — tidak boleh lebih dari ini
 
 
 class ForexExecutor:
@@ -441,7 +443,7 @@ class ForexExecutor:
     def _determine_side(self, ind, spread_points):
         """
         Return (side, score, trades_to_open) atau (None, 0, 0).
-        Kalau score sangat tinggi, buka lebih dari 1 trade sekaligus.
+        TIDAK entry kalau tidak ada sinyal sama sekali (RSI=50 NEUTRAL).
         """
         buy_score  = self._score_setup(ind, "buy",  spread_points)
         sell_score = self._score_setup(ind, "sell", spread_points)
@@ -456,11 +458,17 @@ class ForexExecutor:
         if best_side is None:
             return None, 0, 0
 
-        # Semakin tinggi score, semakin banyak trade yang dibuka
-        # Score 30-49: 1 trade (minimal confidence)
-        # Score 50-64: 2 trade (medium confidence)
-        # Score 65-79: 3 trade (high confidence)
-        # Score 80+:   5 trade (very high confidence — pump signal kuat)
+        # Kalau RSI=50 dan trend NEUTRAL dan tidak ada pump signal = skip
+        # Ini artinya tidak ada sinyal sama sekali, jangan gambling
+        rsi   = ind.get("rsi", 50)
+        trend = ind.get("trend", "NEUTRAL")
+        pump  = ind.get("pump_signal", "NONE")
+        choch_b = ind.get("choch_bullish", False)
+        choch_s = ind.get("choch_bearish", False)
+        if rsi == 50.0 and trend == "NEUTRAL" and pump == "NONE" and not choch_b and not choch_s:
+            return None, 0, 0  # Pure neutral — tidak ada alasan untuk entry
+
+        # Jumlah trade berdasarkan confidence
         if best_score >= 80:   trades = 5
         elif best_score >= 65: trades = 3
         elif best_score >= 50: trades = 2
@@ -472,18 +480,23 @@ class ForexExecutor:
 
     def _calc_tp_sl(self, price, side, atr):
         """
-        Scalp TP/SL untuk modal kecil.
-        Fixed: TP 15 pip, SL 10 pip (1:1.5 RR).
-        ATR dipakai kalau lebih kecil dari fixed (market tenang = target lebih kecil).
+        TP/SL berbasis ATR dengan minimum yang masuk akal.
+        ATR gold 5m biasanya 1.5-3 poin.
+        TP = max(ATR × 1.5, SCALP_TP_POINTS) — cukup jauh dari noise
+        SL = max(ATR × 0.8, SCALP_SL_POINTS) — tight tapi tidak terlalu dekat
         """
-        # Gunakan yang lebih kecil antara ATR-based dan fixed scalp target
-        atr_tp = atr * 2.0 if atr > 0 else SCALP_TP_POINTS
-        atr_sl = atr * 1.0 if atr > 0 else SCALP_SL_POINTS
-        tp_dist = min(atr_tp, SCALP_TP_POINTS * 2)  # Cap max TP
-        sl_dist = min(atr_sl, SCALP_SL_POINTS * 1.5)  # Cap max SL
-        # Minimum scalp target
-        tp_dist = max(tp_dist, SCALP_TP_POINTS)
-        sl_dist = max(sl_dist, SCALP_SL_POINTS)
+        # Gunakan ATR kalau tersedia dan masuk akal (0.5 - 10 poin)
+        if atr and 0.5 <= atr <= 10:
+            tp_dist = max(atr * 1.5, SCALP_TP_POINTS)
+            sl_dist = max(atr * 0.8, SCALP_SL_POINTS)
+        else:
+            tp_dist = SCALP_TP_POINTS
+            sl_dist = SCALP_SL_POINTS
+
+        # Cap maksimum supaya tidak terlalu jauh
+        tp_dist = min(tp_dist, 8.0)   # Max 80 pip TP
+        sl_dist = min(sl_dist, 3.0)   # Max 30 pip SL
+
         if side == "buy":
             return round(price + tp_dist, 3), round(price - sl_dist, 3)
         else:
@@ -491,13 +504,26 @@ class ForexExecutor:
 
     def _calc_lot_size(self, balance, risk_pct=RISK_PCT_PER_TRADE):
         """
-        2% risk per trade untuk modal kecil.
-        Cent account: balance dalam cents, lot minimum 0.01.
+        Lot sizing yang benar untuk cent account.
+        
+        Cent account: balance dalam cents (misal $779 = 77,900 cents)
+        1 lot cent = 0.01 lot standard = $0.01/pip
+        SL 15 pip × 0.01 lot = $0.15 risk per trade
+        
+        Formula: risk_amount / (SL_pips × pip_value_per_lot)
+        Untuk cent account: pip_value = $0.01 per pip per 0.01 lot
+        SL = 15 pip → risk per 0.01 lot = $0.15
+        
+        Dengan balance $779 dan risk 1%:
+        risk_amount = $7.79
+        lot = 7.79 / (15 × 0.01) = 7.79 / 0.15 = 0.05 lot → capped di MAX_LOT_PER_TRADE
         """
         risk_amount = balance * risk_pct
-        # XAUUSD: $1 per pip per 0.01 lot (standard), atau $0.01 per pip (cent account)
-        # Asumsi cent account: 1 lot = $0.10/pip, SL = 10 pip = $1 per 0.01 lot
-        lot = round(max(0.01, min(risk_amount / 100, 1.0)), 2)
+        sl_pips     = SCALP_SL_POINTS * 10  # 1.5 poin = 15 pip
+        pip_value   = 0.01                   # $0.01 per pip per 0.01 lot (cent account)
+        
+        raw_lot = risk_amount / (sl_pips * pip_value * 100)  # × 100 karena per 0.01 lot
+        lot = round(max(0.01, min(raw_lot, MAX_LOT_PER_TRADE)), 2)
         return lot
 
     def _is_trading_session(self):
