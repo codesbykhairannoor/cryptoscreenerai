@@ -689,20 +689,20 @@ class ForexExecutor:
             is_buy = pos_type == "POSITION_TYPE_BUY"
 
             # Hitung profit_pt dari dua sumber:
-            # 1. currentPrice - openPrice (kalau currentPrice tersedia)
-            # 2. profit dollar / (volume × 10) sebagai fallback
-            #    Cent account: 0.01 lot × 10 pip/poin = $0.10/poin
+            # Hitung profit_pt (selisih harga dalam poin):
+            # Prioritas 1: currentPrice dari posisi (paling akurat)
+            # Prioritas 2: harga live dari MetaAPI
+            # Prioritas 3: estimasi dari profit dollar
             if current_price > 0 and current_price != open_price:
                 profit_pt = (current_price - open_price) if is_buy else (open_price - current_price)
-            elif profit != 0 and volume > 0:
-                # Fallback: estimasi dari profit dollar
-                # 1 poin XAUUSD = volume × $10 (standard) atau volume × $0.10 (cent)
-                # Cent account: 0.01 lot → $0.10/poin
-                pip_value_per_poin = volume * 10  # $0.10 per poin untuk 0.01 lot cent
-                profit_pt = abs(profit) / pip_value_per_poin if pip_value_per_poin > 0 else 0
-                if profit < 0: profit_pt = -profit_pt
             else:
-                profit_pt = 0
+                # Ambil harga live dari MetaAPI
+                price_data = self.get_live_price()
+                live_price = price_data.get("mid", 0)
+                if live_price > 0:
+                    profit_pt = (live_price - open_price) if is_buy else (open_price - live_price)
+                else:
+                    profit_pt = 0
 
             # AUTO-CLOSE: rugi > 
             if profit < -8.0 and pos_id not in self._close_attempted:
