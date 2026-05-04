@@ -136,25 +136,29 @@ class ForexExecutor:
 
     def get_candles(self, symbol=None, timeframe="5m", limit=CANDLE_LIMIT):
         """
-        Ambil candle historis dari MetaAPI.
-        Coba 3 format endpoint yang berbeda sampai ada yang berhasil.
+        Ambil candle historis dari MetaAPI langsung.
+        
+        MetaAPI REST API untuk historical candles:
+        GET /users/current/accounts/{id}/historical-market-data/{symbol}/{timeframe}/candles
+        
+        Timeframe yang valid di MetaAPI: 1m, 5m, 15m, 30m, 1h, 4h, 1d
         """
-        sym = symbol or self._working_symbol or "XAUUSD"
+        sym     = symbol or self._working_symbol or "XAUUSD"
         headers = {"auth-token": self.api_token}
 
-        # MetaAPI mendukung beberapa format timeframe
-        # Konversi: "5m" -> "5" (minutes), "1h" -> "60"
-        tf_map = {"1m": "1", "3m": "3", "5m": "5", "15m": "15",
-                  "30m": "30", "1h": "60", "4h": "240", "1d": "1440"}
-        tf_num = tf_map.get(timeframe, "5")
+        # MetaAPI timeframe format mapping
+        tf_map = {
+            "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m",
+            "30m": "30m", "1h": "1h", "4h": "4h", "1d": "1d",
+        }
+        tf = tf_map.get(timeframe, timeframe)
 
+        # Coba semua format endpoint MetaAPI yang diketahui
         endpoints = [
-            # Format A: MetaAPI v1 dengan timeframe numerik
-            f"{self.base_url}/users/current/accounts/{self.account_id}/historical-market-data/{sym}/timeframes/{tf_num}/candles?limit={limit}",
-            # Format B: MetaAPI dengan string timeframe
-            f"{self.base_url}/users/current/accounts/{self.account_id}/historical-market-data/{sym}/timeframes/{timeframe}/candles?limit={limit}",
-            # Format C: path langsung
-            f"{self.base_url}/users/current/accounts/{self.account_id}/historical-market-data/{sym}/{timeframe}/candles?limit={limit}",
+            # Format resmi MetaAPI v1
+            f"{self.base_url}/users/current/accounts/{self.account_id}/historical-market-data/{sym}/{tf}/candles?limit={limit}",
+            # Format dengan startTime (beberapa broker butuh ini)
+            f"{self.base_url}/users/current/accounts/{self.account_id}/historical-market-data/{sym}/{tf}/candles?limit={limit}&startTime=2020-01-01T00:00:00.000Z",
         ]
 
         for url in endpoints:
@@ -168,7 +172,15 @@ class ForexExecutor:
                         candles = data.get('candles', data.get('data', []))
                         if candles and len(candles) > 0:
                             return candles
-            except Exception:
+                else:
+                    # Log status dan response untuk debug
+                    try:
+                        err_msg = res.json().get('message', res.text[:100])
+                    except Exception:
+                        err_msg = res.text[:100]
+                    print(f"[METAAPI CANDLE] {res.status_code} for {sym} {tf}: {err_msg}")
+            except Exception as e:
+                print(f"[METAAPI CANDLE ERROR] {sym} {tf}: {e}")
                 continue
 
         return []
@@ -181,8 +193,8 @@ class ForexExecutor:
         Prioritas:
         1. Candle 5m dari MetaAPI (paling akurat)
         2. Candle 1m dari MetaAPI
-        3. PAXGUSDT dari Bitget sebagai proxy gold (candle selalu tersedia)
-        4. Price momentum fallback (last resort)
+        3. Price momentum dari harga live MetaAPI (fallback)
+        Tidak pakai proxy atau data dari exchange lain.
         """
         candles = self.get_candles(timeframe="5m", limit=100)
 
@@ -190,79 +202,52 @@ class ForexExecutor:
         if len(candles) < 20:
             candles = self.get_candles(timeframe="1m", limit=50)
 
-        # Level 3: PAXGUSDT proxy dari Bitget (PAXG = PAX Gold, harga mengikuti XAU 1:1)
-        if len(candles) < 10:
-            try:
-                url = ("https://api.bitget.com/api/v2/mix/market/history-candles"
-                       "?symbol=PAXGUSDT&granularity=5m&limit=100&productType=USDT-FUTURES")
-                r = requests.get(url, timeout=5, verify=False)
-                if r.status_code == 200:
-                    raw = r.json().get('data', [])
-                    if len(raw) >= 20:
-                        # Convert Bitget format [ts,open,high,low,close,vol,quoteVol]
-                        # ke format dict yang dipakai _calc_indicators
-                        candles = [
-                            {"open": float(c[1]), "high": float(c[2]),
-                             "low": float(c[3]), "close": float(c[4]),
-                             "tickVolume": float(c[5])}
-                            for c in raw
-                        ]
-                        print(f"[FOREX PROXY] Using PAXGUSDT candles ({len(candles)} candles)")
-            except Exception as e:
-                print(f"[FOREX PROXY ERROR] {e}")
-
-        # Level 3: Pure price momentum fallback
+        # Level 3: Fallback — tidak ada candle tersedia
+        # Gunakan price momentum dari harga live MetaAPI
+        # (TIDAK pakai PAXG atau proxy lain — data harus dari MetaAPI)
         if len(candles) < 10:
             price_data = self.get_live_price()
             price = price_data.get("mid", 0)
             if price == 0:
                 return {}
 
-            # Ambil beberapa harga live untuk deteksi momentum
-            # Simpan history harga di instance variable
+            # Simpan history harga live untuk deteksi momentum
             if not hasattr(self, '_price_history'):
                 self._price_history = []
             self._price_history.append(price)
             if len(self._price_history) > 20:
                 self._price_history.pop(0)
 
-            # Hitung momentum dari price history
-            trend = "NEUTRAL"
+            trend      = "NEUTRAL"
             rsi_approx = 50.0
-            liq_sweep = False
+            liq_sweep  = False
             choch_bull = False
             choch_bear = False
 
             if len(self._price_history) >= 5:
                 prices = self._price_history
-                # Trend: bandingkan harga sekarang vs 5 harga lalu
-                if prices[-1] > prices[-5] * 1.0005:   # Naik 0.05%
-                    trend = "BULLISH"
-                    choch_bull = True
-                elif prices[-1] < prices[-5] * 0.9995:  # Turun 0.05%
-                    trend = "BEARISH"
-                    choch_bear = True
+                if prices[-1] > prices[-5] * 1.0005:
+                    trend = "BULLISH"; choch_bull = True
+                elif prices[-1] < prices[-5] * 0.9995:
+                    trend = "BEARISH"; choch_bear = True
 
-                # RSI approximation dari price changes
                 ups   = sum(1 for i in range(1, len(prices)) if prices[i] > prices[i-1])
                 downs = sum(1 for i in range(1, len(prices)) if prices[i] < prices[i-1])
                 total = ups + downs
                 if total > 0:
                     rsi_approx = round((ups / total) * 100, 1)
 
-                # Liquidity sweep: harga turun lalu balik naik (atau sebaliknya)
                 if len(prices) >= 3:
                     liq_sweep = (prices[-1] < prices[-2] and prices[-1] > prices[-3]) or \
                                 (prices[-1] > prices[-2] and prices[-1] < prices[-3])
 
-            print(f"[FOREX PRICE MOMENTUM] RSI~{rsi_approx} Trend:{trend} Liq:{liq_sweep} | History:{len(self._price_history)} pts")
+            print(f"[FOREX FALLBACK] MetaAPI candle unavailable. Using price momentum. RSI~{rsi_approx} Trend:{trend}")
             return {
                 "rsi": rsi_approx, "ema200": price, "atr": price * 0.001,
                 "vwap": price, "vwap_dist": 0.0, "trend": trend,
                 "mss_bullish": trend == "BULLISH" and liq_sweep,
                 "mss_bearish": trend == "BEARISH" and liq_sweep,
-                "choch_bullish": choch_bull,
-                "choch_bearish": choch_bear,
+                "choch_bullish": choch_bull, "choch_bearish": choch_bear,
                 "fvg": "NONE", "is_liquidity_sweep": liq_sweep,
                 "last_close": price, "vol_spike": False,
                 "rsi_divergence": "NONE", "pump_signal": "NONE",
