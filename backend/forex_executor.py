@@ -690,13 +690,11 @@ class ForexExecutor:
 
             # Hitung profit_pt dari dua sumber:
             # Hitung profit_pt (selisih harga dalam poin):
-            # Prioritas 1: currentPrice dari posisi (paling akurat)
-            # Prioritas 2: harga live dari MetaAPI
-            # Prioritas 3: estimasi dari profit dollar
+            # currentPrice sudah di-inject dari broker_price di main loop
             if current_price > 0 and current_price != open_price:
                 profit_pt = (current_price - open_price) if is_buy else (open_price - current_price)
             else:
-                # Ambil harga live dari MetaAPI
+                # Fallback: ambil live price (tapi ini jarang terjadi karena sudah di-inject)
                 price_data = self.get_live_price()
                 live_price = price_data.get("mid", 0)
                 if live_price > 0:
@@ -724,7 +722,10 @@ class ForexExecutor:
             # TRAILING SL: SL = entry + (profit_pt - buffer)
             # Buffer = 5 poin. SL hanya naik, tidak pernah turun.
             # Contoh: entry=4580, profit_pt=12 -> SL = 4580 + (12-5) = 4587
-            if profit_pt < 5.0: continue
+            if profit_pt < 5.0:
+                if profit_pt > 0:
+                    print(f"[FOREX TRAIL] {sym} profit_pt={round(profit_pt,2)} < 5.0, waiting...")
+                continue
 
             buffer = 5.0
             if is_buy:
@@ -791,7 +792,11 @@ class ForexExecutor:
                 total_lots   = sum(float(p.get("volume", 0)) for p in positions)
                 print(f"[FOREX DASHBOARD] Price: {broker_price} | Trades: {active_count} | Lots: {round(total_lots, 2)} | Spread: {spread_pts}pts")
 
-                # TRAILING STOP
+                # TRAILING STOP — inject live price ke setiap posisi
+                # Ini fix untuk MetaAPI yang tidak return currentPrice di positions endpoint
+                for p in positions:
+                    if "XAU" in p.get("symbol", "").upper() and broker_price > 0:
+                        p["currentPrice"] = broker_price
                 self._trail_positions(positions)
 
                 # SPREAD FILTER
