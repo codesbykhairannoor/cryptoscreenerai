@@ -676,31 +676,31 @@ class ForexExecutor:
         # TRAILING SL
         for p in positions:
             if "XAU" not in p.get("symbol", "").upper(): continue
-            open_price    = float(p.get("openPrice", 0))
-            current_price = float(p.get("currentPrice", 0))
-            pos_id        = p.get("id")
-            pos_type      = p.get("type", "")
-            profit        = float(p.get("profit", 0))
-            current_sl    = float(p.get("stopLoss", 0))
-            volume        = float(p.get("volume", 0.01))
-            sym           = p.get("symbol", self._working_symbol or "XAUUSDc")
+            open_price = float(p.get("openPrice", 0))
+            pos_id     = p.get("id")
+            pos_type   = p.get("type", "")
+            profit     = float(p.get("profit", 0))
+            current_sl = float(p.get("stopLoss", 0))
+            sym        = p.get("symbol", self._working_symbol or "XAUUSDc")
             if open_price == 0: continue
 
             is_buy = pos_type == "POSITION_TYPE_BUY"
 
-            # Hitung profit_pt dari dua sumber:
-            # Hitung profit_pt (selisih harga dalam poin):
-            # currentPrice sudah di-inject dari broker_price di main loop
+            # Hitung profit_pt dari currentPrice (di-inject) atau dari profit dollar
+            current_price = float(p.get("currentPrice", 0))
             if current_price > 0 and current_price != open_price:
                 profit_pt = (current_price - open_price) if is_buy else (open_price - current_price)
+            elif profit > 0:
+                # Dari data aktual: profit $15 pada posisi 0.01 lot
+                # Entry 4545, current ~4565 = 20 poin
+                # $15 / 20 poin = $0.75/poin per 0.01 lot
+                # Jadi: profit_pt = profit / 0.75 (untuk 0.01 lot)
+                # Atau lebih aman: profit_pt = profit / (volume * 75)
+                profit_pt = profit / max(float(p.get("volume", 0.01)) * 75, 0.01)
             else:
-                # Fallback: ambil live price (tapi ini jarang terjadi karena sudah di-inject)
-                price_data = self.get_live_price()
-                live_price = price_data.get("mid", 0)
-                if live_price > 0:
-                    profit_pt = (live_price - open_price) if is_buy else (open_price - live_price)
-                else:
-                    profit_pt = 0
+                profit_pt = 0
+
+            print(f"[TRAIL DEBUG] {sym} open={open_price} current={current_price} profit=${profit} profit_pt={round(profit_pt,2)} sl={current_sl}")
 
             # AUTO-CLOSE: rugi > 
             if profit < -8.0 and pos_id not in self._close_attempted:
