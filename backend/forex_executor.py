@@ -424,7 +424,12 @@ class ForexExecutor:
         if spread_points > 100: score -= 10
         if spread_points > 150: score -= 20
 
-        return max(0, min(100, score))
+        # ── Session bonus: London/NY open lebih volatile ──────────────────────
+        now_utc = datetime.datetime.utcnow()
+        hour = now_utc.hour
+        # London open (07-09 UTC) dan NY open (13-15 UTC) = paling volatile
+        if (7 <= hour <= 9) or (13 <= hour <= 15):
+            score += 8   # Bonus sesi paling aktif
 
         return max(0, min(100, score))
 
@@ -674,19 +679,34 @@ class ForexExecutor:
                     continue
 
                 # COOLDOWN
-                if time.time() - last_auto_trade < COOLDOWN_AFTER_TRADE:
+                now = time.time()
+                cooldown_remaining = COOLDOWN_AFTER_TRADE - (now - last_auto_trade)
+                if cooldown_remaining > 0:
+                    # Hanya print setiap 30 detik supaya tidak spam
+                    if int(now) % 30 < 3:
+                        print(f"[FOREX COOLDOWN] {round(cooldown_remaining)}s remaining")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
                 # CALCULATE INDICATORS (with fallback if candles unavailable)
+                print(f"[FOREX SCAN] Calculating indicators for {self._working_symbol}...")
                 ind = self._calc_indicators()
                 if not ind:
-                    time.sleep(SCAN_INTERVAL)
+                    print(f"[FOREX SCAN] No indicators available (price=0?). Retrying...")
+                    time.sleep(5)
                     continue
+
+                rsi_val  = ind.get("rsi", 0)
+                trend    = ind.get("trend", "NEUTRAL")
+                pump_sig = ind.get("pump_signal", "NONE")
+                print(f"[FOREX SCAN] RSI:{rsi_val} Trend:{trend} Pump:{pump_sig} | Slots:{MAX_POSITIONS - active_count}")
 
                 # DETERMINE SIDE + CONFIDENCE
                 side, score, trades_to_open = self._determine_side(ind, spread_pts)
                 if side is None:
+                    buy_sc  = self._score_setup(ind, "buy",  spread_pts)
+                    sell_sc = self._score_setup(ind, "sell", spread_pts)
+                    print(f"[FOREX SCAN] No setup. BuyScore:{buy_sc} SellScore:{sell_sc} (need {MIN_MOMENTUM_SCORE}+)")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
