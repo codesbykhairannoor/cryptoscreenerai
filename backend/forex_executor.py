@@ -136,51 +136,45 @@ class ForexExecutor:
 
     def get_candles(self, symbol=None, timeframe="5m", limit=CANDLE_LIMIT):
         """
-        Ambil candle historis dari MetaAPI langsung.
+        Ambil candle historis dari MetaAPI.
         
-        MetaAPI REST API untuk historical candles:
-        GET /users/current/accounts/{id}/historical-market-data/{symbol}/{timeframe}/candles
+        PENTING: Historical candles pakai hostname BERBEDA dari trading API:
+        Trading:   mt-client-api-v1.london.agiliumtrade.ai
+        Candles:   mt-market-data-client-api-v1.new-york.agiliumtrade.ai
         
-        Timeframe yang valid di MetaAPI: 1m, 5m, 15m, 30m, 1h, 4h, 1d
+        Path yang benar:
+        /users/current/accounts/{id}/historical-market-data/symbols/{symbol}/timeframes/{tf}/candles
         """
         sym     = symbol or self._working_symbol or "XAUUSD"
         headers = {"auth-token": self.api_token}
 
-        # MetaAPI timeframe format mapping
-        tf_map = {
-            "1m": "1m", "3m": "3m", "5m": "5m", "15m": "15m",
-            "30m": "30m", "1h": "1h", "4h": "4h", "1d": "1d",
-        }
-        tf = tf_map.get(timeframe, timeframe)
-
-        # Coba semua format endpoint MetaAPI yang diketahui
-        endpoints = [
-            # Format resmi MetaAPI v1
-            f"{self.base_url}/users/current/accounts/{self.account_id}/historical-market-data/{sym}/{tf}/candles?limit={limit}",
-            # Format dengan startTime (beberapa broker butuh ini)
-            f"{self.base_url}/users/current/accounts/{self.account_id}/historical-market-data/{sym}/{tf}/candles?limit={limit}&startTime=2020-01-01T00:00:00.000Z",
+        # Hostname khusus untuk historical market data
+        market_data_hosts = [
+            "https://mt-market-data-client-api-v1.new-york.agiliumtrade.ai",
+            "https://mt-market-data-client-api-v1.london.agiliumtrade.ai",
+            "https://mt-market-data-client-api-v1.singapore.agiliumtrade.ai",
         ]
 
-        for url in endpoints:
+        for host in market_data_hosts:
+            url = (f"{host}/users/current/accounts/{self.account_id}"
+                   f"/historical-market-data/symbols/{sym}/timeframes/{timeframe}/candles"
+                   f"?limit={limit}")
             try:
-                res = requests.get(url, headers=headers, timeout=10)
+                res = requests.get(url, headers=headers, timeout=15)
                 if res.status_code == 200:
                     data = res.json()
                     if isinstance(data, list) and len(data) > 0:
+                        print(f"[METAAPI CANDLE] Got {len(data)} candles from {host.split('.')[0].split('-')[-1]}")
                         return data
-                    if isinstance(data, dict):
-                        candles = data.get('candles', data.get('data', []))
-                        if candles and len(candles) > 0:
-                            return candles
-                else:
-                    # Log status dan response untuk debug
+                elif res.status_code != 404:
+                    # Log error selain 404 (404 = coba host lain)
                     try:
-                        err_msg = res.json().get('message', res.text[:100])
+                        err = res.json().get('message', res.text[:80])
                     except Exception:
-                        err_msg = res.text[:100]
-                    print(f"[METAAPI CANDLE] {res.status_code} for {sym} {tf}: {err_msg}")
+                        err = res.text[:80]
+                    print(f"[METAAPI CANDLE] {res.status_code} from {host}: {err}")
             except Exception as e:
-                print(f"[METAAPI CANDLE ERROR] {sym} {tf}: {e}")
+                print(f"[METAAPI CANDLE ERROR] {host}: {e}")
                 continue
 
         return []
