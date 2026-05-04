@@ -447,13 +447,20 @@ class ForexExecutor:
     def _determine_side(self, ind, spread_points):
         """
         Return (side, score, trades_to_open) atau (None, 0, 0).
-        TIDAK entry kalau tidak ada sinyal sama sekali (RSI=50 NEUTRAL).
+        Max 5 trade. TP fixed dari entry, tidak berubah.
         """
         buy_score  = self._score_setup(ind, "buy",  spread_points)
         sell_score = self._score_setup(ind, "sell", spread_points)
 
+        trend    = ind.get("trend", "NEUTRAL")
+        pump_sig = ind.get("pump_signal", "NONE")
+        rsi      = ind.get("rsi", 50)
+        choch_b  = ind.get("choch_bullish", False)
+        choch_s  = ind.get("choch_bearish", False)
+
         best_score = 0
         best_side  = None
+
         if buy_score >= sell_score and buy_score >= MIN_MOMENTUM_SCORE:
             best_side, best_score = "buy", buy_score
         elif sell_score > buy_score and sell_score >= MIN_MOMENTUM_SCORE:
@@ -462,17 +469,11 @@ class ForexExecutor:
         if best_side is None:
             return None, 0, 0
 
-        # Kalau RSI=50 dan trend NEUTRAL dan tidak ada pump signal = skip
-        # Ini artinya tidak ada sinyal sama sekali, jangan gambling
-        rsi   = ind.get("rsi", 50)
-        trend = ind.get("trend", "NEUTRAL")
-        pump  = ind.get("pump_signal", "NONE")
-        choch_b = ind.get("choch_bullish", False)
-        choch_s = ind.get("choch_bearish", False)
-        if rsi == 50.0 and trend == "NEUTRAL" and pump == "NONE" and not choch_b and not choch_s:
-            return None, 0, 0  # Pure neutral — tidak ada alasan untuk entry
+        # Skip kalau pure neutral (tidak ada sinyal sama sekali)
+        if rsi == 50.0 and trend == "NEUTRAL" and pump_sig == "NONE" and not choch_b and not choch_s:
+            return None, 0, 0
 
-        # Jumlah trade berdasarkan confidence
+        # Jumlah trade berdasarkan confidence (max 5)
         if best_score >= 80:   trades = 5
         elif best_score >= 65: trades = 3
         elif best_score >= 50: trades = 2
@@ -617,11 +618,11 @@ class ForexExecutor:
             time.sleep(0.1)
         return any_success
 
-    def update_forex_sl(self, position_id, new_sl):
+    def update_forex_sl(self, position_id, new_sl, new_tp=None):
         """
-        Update SL posisi via MetaAPI.
-        Endpoint yang benar: POST /trade dengan actionType POSITION_MODIFY
-        (bukan PUT /positions/{id} yang return 404)
+        Update SL posisi via MetaAPI POSITION_MODIFY.
+        TP TIDAK diubah — TP fixed dari entry dan tidak boleh berubah.
+        new_tp parameter diabaikan untuk menjaga TP tetap.
         """
         if not self.is_active: return False
         try:
@@ -631,6 +632,7 @@ class ForexExecutor:
                 "actionType": "POSITION_MODIFY",
                 "positionId": str(position_id),
                 "stopLoss":   new_sl,
+                # takeProfit TIDAK dimasukkan — biarkan TP tetap seperti saat entry
             }
             res = requests.post(url, headers=headers, json=payload, timeout=10)
             if res.status_code == 200:
@@ -752,10 +754,6 @@ class ForexExecutor:
                 else:
                     print(f"[TRAIL SKIP] {sym} new_sl={new_sl} not better than current_sl={current_sl}")
             else:
-                # SELL: profit_pt = open - current (harga turun = profit)
-                # SL untuk SELL harus TURUN mengikuti harga
-                # SL baru = open - (profit_pt - buffer)
-                # Contoh: open=4568, profit_pt=12 -> SL = 4568 - (12-5) = 4561
                 new_sl = round(open_price - (profit_pt - buffer), 3)
                 print(f"[TRAIL ATTEMPT] {sym} SELL trying SL {current_sl} -> {new_sl} (profit_pt={round(profit_pt,1)})")
                 if current_sl == 0 or new_sl < current_sl:
