@@ -26,7 +26,7 @@ SCAN_INTERVAL        = 3      # Scan setiap 3 detik
 COOLDOWN_AFTER_TRADE = 30     # Cooldown 30 detik (lebih agresif)
 EQUITY_GUARD_PCT     = 0.92   # Halt kalau equity < 92% (sedikit lebih toleran)
 MAX_SPREAD_POINTS    = 300    # Toleransi spread lebih longgar untuk scalping
-MIN_MOMENTUM_SCORE   = 30     # Turunkan threshold — lebih berani entry
+MIN_MOMENTUM_SCORE   = 15     # Sesuai score aktual saat candle fallback (RSI=50 = 15 poin)
 CANDLE_LIMIT         = 100
 
 # Scalp TP/SL untuk XAUUSD (dalam poin, 1 poin = 10 pip)
@@ -175,63 +175,68 @@ class ForexExecutor:
 
     def _calc_indicators(self):
         """
-        XAUUSD PUMP PREDICTOR v1.0
-        ===========================
-        Deteksi kapan gold akan pump/dump berdasarkan:
-        1. RSI divergence (harga turun tapi RSI naik = bullish divergence)
-        2. Volume spike pada candle terakhir
-        3. Posisi harga vs VWAP dan EMA200
-        4. MSS/CHoCH dengan volume konfirmasi
-        5. FVG yang belum terisi (magnet harga)
-        6. Liquidity sweep (stop hunt sebelum pump)
+        XAUUSD Indicator Engine.
+        Prioritas: candle 5m → candle 1m → price momentum fallback.
         """
         candles = self.get_candles(timeframe="5m", limit=100)
 
-        # Fallback: kalau candle tidak tersedia, pakai price movement dari live price
-        # Saat sesi aktif (London/NY), tetap bisa entry berdasarkan price action sederhana
+        # Level 2: Coba candle 1m kalau 5m gagal
         if len(candles) < 20:
+            candles = self.get_candles(timeframe="1m", limit=50)
+
+        # Level 3: Pure price momentum fallback
+        if len(candles) < 10:
             price_data = self.get_live_price()
             price = price_data.get("mid", 0)
             if price == 0:
                 return {}
 
-            # Coba ambil candle 1m sebagai fallback (lebih mudah tersedia)
-            candles_1m = self.get_candles(timeframe="1m", limit=30)
-            if len(candles_1m) >= 10:
-                closes_1m = [float(c.get("close", 0)) for c in candles_1m]
-                highs_1m  = [float(c.get("high", 0)) for c in candles_1m]
-                lows_1m   = [float(c.get("low", 0)) for c in candles_1m]
-                # RSI sederhana dari 1m
-                gains_1m = [max(closes_1m[i]-closes_1m[i-1], 0) for i in range(1, len(closes_1m))]
-                losses_1m = [max(closes_1m[i-1]-closes_1m[i], 0) for i in range(1, len(closes_1m))]
-                ag = sum(gains_1m[:7]) / 7 if gains_1m else 0.5
-                al = sum(losses_1m[:7]) / 7 if losses_1m else 0.5
-                rsi_1m = 100 - (100 / (1 + ag/al)) if al > 0 else 50.0
-                # Trend dari 1m
-                trend_1m = "BULLISH" if closes_1m[-1] > closes_1m[0] else "BEARISH"
-                # Liquidity sweep dari 1m
-                liq_1m = (lows_1m[-1] < lows_1m[-2] and closes_1m[-1] > lows_1m[-2]) or \
-                         (highs_1m[-1] > highs_1m[-2] and closes_1m[-1] < highs_1m[-2])
-                print(f"[FOREX FALLBACK 1m] RSI:{round(rsi_1m,1)} Trend:{trend_1m} Liq:{liq_1m}")
-                return {
-                    "rsi": round(rsi_1m, 2), "ema200": price, "atr": price * 0.001,
-                    "vwap": price, "vwap_dist": 0.0, "trend": trend_1m,
-                    "mss_bullish": trend_1m == "BULLISH" and liq_1m,
-                    "mss_bearish": trend_1m == "BEARISH" and liq_1m,
-                    "choch_bullish": trend_1m == "BULLISH",
-                    "choch_bearish": trend_1m == "BEARISH",
-                    "fvg": "NONE", "is_liquidity_sweep": liq_1m,
-                    "last_close": price, "vol_spike": False,
-                    "rsi_divergence": "NONE", "pump_signal": "NONE",
-                }
+            # Ambil beberapa harga live untuk deteksi momentum
+            # Simpan history harga di instance variable
+            if not hasattr(self, '_price_history'):
+                self._price_history = []
+            self._price_history.append(price)
+            if len(self._price_history) > 20:
+                self._price_history.pop(0)
 
-            # Pure price fallback — tidak ada candle sama sekali
+            # Hitung momentum dari price history
+            trend = "NEUTRAL"
+            rsi_approx = 50.0
+            liq_sweep = False
+            choch_bull = False
+            choch_bear = False
+
+            if len(self._price_history) >= 5:
+                prices = self._price_history
+                # Trend: bandingkan harga sekarang vs 5 harga lalu
+                if prices[-1] > prices[-5] * 1.0005:   # Naik 0.05%
+                    trend = "BULLISH"
+                    choch_bull = True
+                elif prices[-1] < prices[-5] * 0.9995:  # Turun 0.05%
+                    trend = "BEARISH"
+                    choch_bear = True
+
+                # RSI approximation dari price changes
+                ups   = sum(1 for i in range(1, len(prices)) if prices[i] > prices[i-1])
+                downs = sum(1 for i in range(1, len(prices)) if prices[i] < prices[i-1])
+                total = ups + downs
+                if total > 0:
+                    rsi_approx = round((ups / total) * 100, 1)
+
+                # Liquidity sweep: harga turun lalu balik naik (atau sebaliknya)
+                if len(prices) >= 3:
+                    liq_sweep = (prices[-1] < prices[-2] and prices[-1] > prices[-3]) or \
+                                (prices[-1] > prices[-2] and prices[-1] < prices[-3])
+
+            print(f"[FOREX PRICE MOMENTUM] RSI~{rsi_approx} Trend:{trend} Liq:{liq_sweep} | History:{len(self._price_history)} pts")
             return {
-                "rsi": 50.0, "ema200": price, "atr": price * 0.001,
-                "vwap": price, "vwap_dist": 0.0, "trend": "NEUTRAL",
-                "mss_bullish": False, "mss_bearish": False,
-                "choch_bullish": False, "choch_bearish": False,
-                "fvg": "NONE", "is_liquidity_sweep": False,
+                "rsi": rsi_approx, "ema200": price, "atr": price * 0.001,
+                "vwap": price, "vwap_dist": 0.0, "trend": trend,
+                "mss_bullish": trend == "BULLISH" and liq_sweep,
+                "mss_bearish": trend == "BEARISH" and liq_sweep,
+                "choch_bullish": choch_bull,
+                "choch_bearish": choch_bear,
+                "fvg": "NONE", "is_liquidity_sweep": liq_sweep,
                 "last_close": price, "vol_spike": False,
                 "rsi_divergence": "NONE", "pump_signal": "NONE",
             }
