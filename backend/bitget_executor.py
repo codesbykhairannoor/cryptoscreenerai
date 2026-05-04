@@ -416,12 +416,14 @@ class BitgetExecutor:
                         print(f"[SCRUBBER ERROR] {symbol}: {e}")
 
                 # ── SIDEWAYS DETECTION ────────────────────────────────────────
+                # Kalau koin tidak bergerak 1 jam, exit dan cari koin lain
                 if symbol not in state.pos_start_time:
                     state.pos_start_time[symbol] = now
                 duration_hours = (now - state.pos_start_time[symbol]) / 3600
                 price_move_pct = abs((mark_price - entry) / entry * 100) if entry > 0 else 0
-                if duration_hours > 4 and -1.5 < pnl < 1.5 and price_move_pct < 0.4:
-                    print(f"[SIDEWAYS EXIT] Closing {symbol} - Flat for {round(duration_hours,1)}h")
+                if duration_hours > 1.0 and -2.0 < pnl < 2.0 and price_move_pct < 0.5:
+                    print(f"[SIDEWAYS EXIT] {symbol} flat {round(duration_hours,1)}h "
+                          f"(PnL:{pnl}% Move:{round(price_move_pct,2)}%). Finding better coin.")
                     self.exchange.create_order(symbol, 'market', 'sell' if side in ['long','buy'] else 'buy', size)
                     if symbol in state.pos_start_time: del state.pos_start_time[symbol]
                     if symbol in self._peak_pnl: del self._peak_pnl[symbol]

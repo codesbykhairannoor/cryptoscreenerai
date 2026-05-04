@@ -1,13 +1,19 @@
 """
-CRYPTO ENGINE v7.0 — UNIFIED SCORING + SMART ENTRY
-====================================================
-Fix dari v6.0:
-- Pump score dari analyze_and_sort() sekarang DIPAKAI langsung
-  sebagai pre-filter, bukan diabaikan
-- Threshold diturunkan ke 35 (realistis berdasarkan data aktual)
-- Tambah debug log: setiap koin yang dievaluasi tampil scorenya
-- Cooldown dikurangi ke 120s (2 menit) — 5 menit terlalu lama
-- Simulasi: dengan kondisi market normal, bot akan entry 2-5x per hari
+CRYPTO ENGINE v8.0 — FOCUS MODE: 1 TRADE, SEMUA MODAL
+=======================================================
+Filosofi:
+- 1 trade terbaik, semua modal, fokus penuh
+- Kalau sideways 1 jam → exit, cari koin lain
+- SL berbasis peak PnL (tidak pernah turun)
+- TP full di satu level (tidak partial — fee terlalu besar untuk modal kecil)
+- RR 1:5.3 → butuh win rate 15.8% untuk break-even
+
+MATEMATIKA:
+- Modal $8, leverage 10x = $80 notional
+- Fee round trip = $80 × 0.12% = $0.096 = 1.2% PnL
+- TP 80% PnL bersih = 78.8% → $6.30 per win
+- SL 15% PnL = $1.20 per loss
+- 1 win = 5.25 loss → butuh win 1 dari 6 trade
 """
 
 import time
@@ -22,22 +28,29 @@ from database import log_trade
 from bitget_executor import BitgetExecutor
 
 # ─── KONFIGURASI ──────────────────────────────────────────────────────────────
-MAX_POSITIONS        = 1
-SCAN_INTERVAL        = 10
-COOLDOWN_AFTER_TRADE = 120    # 2 menit — tidak terlalu sering, tidak terlalu jarang
+MAX_POSITIONS        = 1      # FOKUS: 1 trade saja
+SCAN_INTERVAL        = 10     # Scan setiap 10 detik
+COOLDOWN_AFTER_TRADE = 120    # 2 menit cooldown setelah trade selesai
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 30     # Threshold realistis — score 28-30 normal, 35+ ada sinyal kuat
-DAILY_LOSS_LIMIT_PCT = -40
+MIN_MOMENTUM_SCORE   = 30
 
 # TP/SL spread-aware (10x leverage):
-# TP 80% PnL = 8% price move
+# TP 80% PnL = 8% price move → bersih ~78.8% setelah fee
 # SL 15% PnL = 1.5% price move
 SCALP_TP_PCT  = 0.08
 SCALP_SL_PCT  = 0.015
 SCALP_TP_ATR  = 5.0
 SCALP_SL_ATR  = 1.2
+
+# Sideways detection: 1 jam (bukan 4 jam)
+# Kalau koin tidak bergerak 1 jam, exit dan cari koin lain
+SIDEWAYS_HOURS       = 1.0    # Exit kalau sideways > 1 jam
+SIDEWAYS_PNL_RANGE   = 2.0    # PnL range yang dianggap sideways (-2% sampai +2%)
+SIDEWAYS_PRICE_MOVE  = 0.5    # Price move < 0.5% = sideways
+
+DAILY_LOSS_LIMIT_PCT = -40
 
 # ─── HELPER: HITUNG VWAP ──────────────────────────────────────────────────────
 def _calc_vwap_dist(mark_price: float, symbol: str) -> float:
