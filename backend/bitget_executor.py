@@ -432,12 +432,13 @@ class BitgetExecutor:
                         print(f"[SCRUBBER ERROR] {symbol}: {e}")
 
                 # ── SIDEWAYS DETECTION ────────────────────────────────────────
-                # Kalau koin tidak bergerak 1 jam, exit dan cari koin lain
+                # Kalau koin tidak bergerak 2 jam, exit dan cari koin lain
+                # Threshold longgar: price_move < 1% DAN PnL -3% sampai +3%
                 if symbol not in state.pos_start_time:
                     state.pos_start_time[symbol] = now
                 duration_hours = (now - state.pos_start_time[symbol]) / 3600
                 price_move_pct = abs((mark_price - entry) / entry * 100) if entry > 0 else 0
-                if duration_hours > 1.0 and -2.0 < pnl < 2.0 and price_move_pct < 0.5:
+                if duration_hours > 2.0 and -3.0 < pnl < 3.0 and price_move_pct < 1.0:
                     print(f"[SIDEWAYS EXIT] {symbol} flat {round(duration_hours,1)}h "
                           f"(PnL:{pnl}% Move:{round(price_move_pct,2)}%). Finding better coin.")
                     self.exchange.create_order(symbol, 'market', 'sell' if side in ['long','buy'] else 'buy', size)
