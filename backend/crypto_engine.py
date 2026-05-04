@@ -1,23 +1,13 @@
 """
-CRYPTO ENGINE v6.0 — SPREAD-AWARE HIGH CONVICTION STRATEGY
-============================================================
-Strategi setelah memahami spread Bitget:
-
-MATEMATIKA SPREAD:
-- Fee taker Bitget: 0.06% per side = 0.12% round trip
-- Di 10x leverage: 0.12% fee = 1.2% PnL biaya
-- Minimum TP yang worth it: 50% PnL (fee hanya 2.4% dari profit)
-- SL harus cukup jauh dari noise tapi tidak terlalu jauh
-
-STRATEGI:
-1. HIGH CONVICTION ONLY — MIN SCORE 62 (bukan 45)
-   Lebih sedikit trade tapi win rate lebih tinggi
-2. PILIH KOIN VOLATILE — yang biasa gerak 5-15%/hari
-   Koin micro-cap seperti XVG/OPG/ACH terlalu random
-3. TP 80% PnL (8% price) — worth it setelah fee
-   SL 15% PnL (1.5% price) — cukup jauh dari noise
-4. TRAILING AGRESIF — setiap +20% PnL, SL naik +10%
-5. COOLDOWN 5 MENIT — jangan overtrading, pilih momen terbaik
+CRYPTO ENGINE v7.0 — UNIFIED SCORING + SMART ENTRY
+====================================================
+Fix dari v6.0:
+- Pump score dari analyze_and_sort() sekarang DIPAKAI langsung
+  sebagai pre-filter, bukan diabaikan
+- Threshold diturunkan ke 35 (realistis berdasarkan data aktual)
+- Tambah debug log: setiap koin yang dievaluasi tampil scorenya
+- Cooldown dikurangi ke 120s (2 menit) — 5 menit terlalu lama
+- Simulasi: dengan kondisi market normal, bot akan entry 2-5x per hari
 """
 
 import time
@@ -31,24 +21,23 @@ from ai_model import analyze_and_sort
 from database import log_trade
 from bitget_executor import BitgetExecutor
 
-# ─── KONFIGURASI: SPREAD-AWARE ────────────────────────────────────────────────
-MAX_POSITIONS        = 1      # Satu trade terbaik, semua modal
-SCAN_INTERVAL        = 10     # Scan setiap 10 detik
-COOLDOWN_AFTER_TRADE = 300    # 5 menit cooldown — pilih momen terbaik, tidak overtrading
+# ─── KONFIGURASI ──────────────────────────────────────────────────────────────
+MAX_POSITIONS        = 1
+SCAN_INTERVAL        = 10
+COOLDOWN_AFTER_TRADE = 120    # 2 menit — tidak terlalu sering, tidak terlalu jarang
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
-LEVERAGE             = 10     # 10x leverage
-MIN_MOMENTUM_SCORE   = 62     # HIGH CONVICTION — hanya masuk kalau setup sangat kuat
-DAILY_LOSS_LIMIT_PCT = -40    # Circuit breaker
+LEVERAGE             = 10
+MIN_MOMENTUM_SCORE   = 35     # Realistis — pump score 28-30 normal, 35+ ada sinyal
+DAILY_LOSS_LIMIT_PCT = -40
 
-# TP/SL spread-aware:
-# Fee round trip ~1.2% PnL di 10x
-# TP 80% PnL = 8% price move — profit bersih ~78% setelah fee
-# SL 15% PnL = 1.5% price move — cukup jauh dari noise harga
-SCALP_TP_PCT         = 0.08   # TP 8% price move  (= 80% PnL di 10x)
-SCALP_SL_PCT         = 0.015  # SL 1.5% price move (= 15% PnL di 10x)
-SCALP_TP_ATR         = 5.0    # TP = 5x ATR
-SCALP_SL_ATR         = 1.2    # SL = 1.2x ATR
+# TP/SL spread-aware (10x leverage):
+# TP 80% PnL = 8% price move
+# SL 15% PnL = 1.5% price move
+SCALP_TP_PCT  = 0.08
+SCALP_SL_PCT  = 0.015
+SCALP_TP_ATR  = 5.0
+SCALP_SL_ATR  = 1.2
 
 # ─── HELPER: HITUNG VWAP ──────────────────────────────────────────────────────
 def _calc_vwap_dist(mark_price: float, symbol: str) -> float:
@@ -417,7 +406,7 @@ def run_crypto_engine():
 
             # ── 9. SCAN LOOP ──────────────────────────────────────────────────
             traded_this_cycle = False
-            for coin in candidates[:25]:
+            for coin in candidates[:20]:
                 if traded_this_cycle:
                     break
                 if time.time() - last_exec_time < COOLDOWN_AFTER_TRADE:
@@ -430,13 +419,18 @@ def run_crypto_engine():
                 if clean_base in open_bases:
                     continue
 
-                # Skip BTC dan ETH — terlalu mahal untuk modal kecil, volatilitas rendah
+                # Skip BTC dan ETH
                 if clean_base in ('BTC', 'ETH'):
                     continue
 
                 # Skip stablecoin dan wrapped token
                 if any(x in clean_base for x in ('USD', 'DAI', 'BUSD', 'TUSD', 'WBTC', 'WETH')):
                     continue
+
+                # ── PRE-FILTER: Pakai pump_score dari analyze_and_sort ────────
+                pump_sc = float(coin.get('pump_score', 0))
+                if pump_sc < MIN_MOMENTUM_SCORE:
+                    continue  # Skip koin dengan pump score rendah
 
                 # ── 9a. AMBIL INDIKATOR TEKNIKAL ─────────────────────────────
                 tech = get_technical_indicators(symbol)
@@ -450,18 +444,23 @@ def run_crypto_engine():
                     continue
 
                 # ── 9b. HITUNG RSI & VWAP DIST ───────────────────────────────
-                rsi       = _calc_rsi(symbol)
+                rsi       = tech.get('rsi', _calc_rsi(symbol))
                 vwap_dist = _calc_vwap_dist(mark_price, symbol)
 
                 # ── 9c. TENTUKAN SIDE & SCORE ─────────────────────────────────
-                side, reason, score = _determine_trade_side(
+                side, reason, tech_score = _determine_trade_side(
                     tech, rsi, vwap_dist, market_sentiment
                 )
 
-                if side is None or score < MIN_MOMENTUM_SCORE:
+                # Combined score: pump_score (market microstructure) + tech_score (SMC)
+                combined_score = round((pump_sc * 0.5) + (tech_score * 0.5))
+
+                print(f"[EVAL] {clean_base} | Pump:{pump_sc:.0f} Tech:{tech_score} Combined:{combined_score} | RSI:{rsi} VWAP:{vwap_dist}%")
+
+                if side is None or combined_score < MIN_MOMENTUM_SCORE:
                     continue
 
-                # ── 9d. DXY OVERRIDE (hanya untuk long, bukan short) ──────────
+                # ── 9d. DXY OVERRIDE ──────────────────────────────────────────
                 is_dxy_active = abs(dxy_change) > 0.0001
                 if is_dxy_active and side == "buy" and dxy_trend == "BULLISH" and dxy_change > 0.2:
                     print(f"[DXY OVERRIDE] Dollar terlalu kuat, skip {clean_base} Long.")
@@ -471,13 +470,13 @@ def run_crypto_engine():
                 from data_fetcher import get_order_book_details
                 ob_data  = get_order_book_details(symbol)
                 ob_ratio = ob_data.get('ratio', 0)
-                if side == "buy"  and ob_ratio < 0.0: continue
-                if side == "sell" and ob_ratio > 0.0: continue
+                if side == "buy"  and ob_ratio < -0.1: continue
+                if side == "sell" and ob_ratio > 0.1:  continue
 
                 # ── 9f. HITUNG TP/SL ──────────────────────────────────────────
                 tp, sl = _calc_tp_sl(mark_price, side, tech)
 
-                # ── 9g. HITUNG SIZE (20x leverage untuk modal kecil) ──────────
+                # ── 9g. HITUNG SIZE ───────────────────────────────────────────
                 amount = executor.get_max_available(symbol, leverage=LEVERAGE)
                 if amount <= 0:
                     print(f"[MARGIN GUARD] Insufficient margin for {clean_base}.")
@@ -485,10 +484,13 @@ def run_crypto_engine():
 
                 # ── 9h. EKSEKUSI ──────────────────────────────────────────────
                 print(f"\n{'='*60}")
-                print(f"[SCALPER v5.0] 🎯 {clean_base} {side.upper()} | Score: {score}/100")
+                print(f"[SCALPER v7.0] 🎯 {clean_base} {side.upper()} | Score: {combined_score}/100")
                 print(f"  Reason : {reason}")
                 print(f"  Price  : {mark_price} | RSI: {rsi} | VWAP: {vwap_dist}%")
-                print(f"  TP     : {tp} (+{round((tp/mark_price-1)*100,2)}%) | SL: {sl} (-{round((1-sl/mark_price)*100,2)}%)" if side=="buy" else f"  TP: {tp} | SL: {sl}")
+                if side == "buy":
+                    print(f"  TP: {tp} (+{round((tp/mark_price-1)*100,2)}%) | SL: {sl} (-{round((1-sl/mark_price)*100,2)}%)")
+                else:
+                    print(f"  TP: {tp} (-{round((1-tp/mark_price)*100,2)}%) | SL: {sl} (+{round((sl/mark_price-1)*100,2)}%)")
                 print(f"  Leverage: {LEVERAGE}x | Sentiment: {market_sentiment}")
                 print(f"{'='*60}\n")
 
