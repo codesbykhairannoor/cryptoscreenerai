@@ -249,13 +249,13 @@ class BitgetExecutor:
             price = float(raw_price)
 
             # 4. HITUNG SL/TP BERDASARKAN HARGA FILL AKTUAL
-            # SL 12% PnL = 1.2% price move di 10x
-            # TP 50% PnL = 5% price move di 10x
+            # TP 80% PnL = 8% price move di 10x
+            # SL 15% PnL = 1.5% price move di 10x
             final_sl = sl if (sl and sl > 0) else (
-                price * 0.988 if side.lower() in ['long', 'buy'] else price * 1.012
+                price * 0.985 if side.lower() in ['long', 'buy'] else price * 1.015
             )
             final_tp = tp if (tp and tp > 0) else (
-                price * 1.05 if side.lower() in ['long', 'buy'] else price * 0.95
+                price * 1.08 if side.lower() in ['long', 'buy'] else price * 0.92
             )
 
             # 5. SET SL/TP via Plan Order API (cara yang benar untuk Bitget Classic)
@@ -269,8 +269,9 @@ class BitgetExecutor:
 
     def _set_sl_tp_bitget(self, symbol, side, size, sl_price=None, tp_price=None):
         """
-        Set SL/TP untuk Bitget Classic menggunakan Plan Order API.
-        Ini cara yang BENAR untuk Bitget — bukan via create_order params.
+        Set SL/TP untuk Bitget Classic.
+        Bitget Classic pakai endpoint /api/v2/mix/order/plan/placeTPSL
+        bukan /placePlan yang untuk conditional orders biasa.
         """
         try:
             clean_sym = symbol.replace("/", "").split(":")[0]
@@ -278,44 +279,61 @@ class BitgetExecutor:
                 clean_sym += 'USDT'
             hold_side = 'long' if side in ['long', 'buy'] else 'short'
 
+            # Bitget placeTPSL endpoint — set SL dan TP sekaligus dalam satu call
+            body = {
+                "symbol":      clean_sym,
+                "productType": "USDT-FUTURES",
+                "marginCoin":  "USDT",
+                "holdSide":    hold_side,
+            }
             if sl_price and sl_price > 0:
-                sl_body = {
-                    "symbol":        clean_sym,
-                    "productType":   "USDT-FUTURES",
-                    "marginCoin":    "USDT",
-                    "planType":      "loss_plan",
-                    "triggerPrice":  str(round(sl_price, 6)),
-                    "triggerType":   "mark_price",
-                    "executePrice":  "0",          # market execution
-                    "holdSide":      hold_side,
-                    "size":          str(size),
-                }
-                res = self._v3_request("POST", "/api/v2/mix/order/plan/placePlan", body=sl_body)
-                if res.get('code') == '00000':
-                    print(f"[SL SET] {symbol} SL @ {sl_price} ✓")
-                else:
-                    print(f"[SL SET FAIL] {symbol}: {res.get('msg', res)}")
-
+                body["stopLossTriggerPrice"] = str(round(sl_price, 6))
+                body["stopLossTriggerType"]  = "mark_price"
+                body["stopLossExecutePrice"] = "0"   # market
             if tp_price and tp_price > 0:
-                tp_body = {
-                    "symbol":        clean_sym,
-                    "productType":   "USDT-FUTURES",
-                    "marginCoin":    "USDT",
-                    "planType":      "profit_plan",
-                    "triggerPrice":  str(round(tp_price, 6)),
-                    "triggerType":   "mark_price",
-                    "executePrice":  "0",
-                    "holdSide":      hold_side,
-                    "size":          str(size),
-                }
-                res = self._v3_request("POST", "/api/v2/mix/order/plan/placePlan", body=tp_body)
-                if res.get('code') == '00000':
-                    print(f"[TP SET] {symbol} TP @ {tp_price} ✓")
-                else:
-                    print(f"[TP SET FAIL] {symbol}: {res.get('msg', res)}")
+                body["takeProfitTriggerPrice"] = str(round(tp_price, 6))
+                body["takeProfitTriggerType"]  = "mark_price"
+                body["takeProfitExecutePrice"] = "0"  # market
+
+            res = self._v3_request("POST", "/api/v2/mix/order/plan/placeTPSL", body=body)
+            if res.get('code') == '00000':
+                sl_str = f"SL@{round(sl_price,4)}" if sl_price else ""
+                tp_str = f"TP@{round(tp_price,4)}" if tp_price else ""
+                print(f"[SL/TP SET] {clean_sym} {sl_str} {tp_str} ✓")
+            else:
+                # Fallback: coba via ccxt stopLossPrice/takeProfitPrice params
+                print(f"[SL/TP placeTPSL failed] {clean_sym}: {res.get('msg','?')} — trying ccxt fallback")
+                self._set_sl_tp_ccxt(symbol, side, size, sl_price, tp_price)
 
         except Exception as e:
             print(f"[SL/TP SET ERROR] {symbol}: {e}")
+            self._set_sl_tp_ccxt(symbol, side, size, sl_price, tp_price)
+
+    def _set_sl_tp_ccxt(self, symbol, side, size, sl_price=None, tp_price=None):
+        """Fallback: set SL/TP via ccxt create_order dengan params."""
+        try:
+            tp_side = 'sell' if side in ['long', 'buy'] else 'buy'
+            params  = {'productType': 'USDT-FUTURES', 'reduceOnly': True}
+            if sl_price and sl_price > 0:
+                try:
+                    self.exchange.create_order(
+                        symbol, 'market', tp_side, size, None,
+                        params={**params, 'stopLossPrice': sl_price}
+                    )
+                    print(f"[SL CCXT] {symbol} SL@{round(sl_price,4)} ✓")
+                except Exception as e:
+                    print(f"[SL CCXT FAIL] {symbol}: {e}")
+            if tp_price and tp_price > 0:
+                try:
+                    self.exchange.create_order(
+                        symbol, 'market', tp_side, size, None,
+                        params={**params, 'takeProfitPrice': tp_price}
+                    )
+                    print(f"[TP CCXT] {symbol} TP@{round(tp_price,4)} ✓")
+                except Exception as e:
+                    print(f"[TP CCXT FAIL] {symbol}: {e}")
+        except Exception as e:
+            print(f"[SL/TP CCXT ERROR] {symbol}: {e}")
 
     def update_sl_price(self, symbol, side, amount, new_price, is_tp=False):
         """Update SL atau TP yang sudah ada via Plan Order API."""
@@ -425,9 +443,11 @@ class BitgetExecutor:
                 # 2. INITIAL GUARD — pasang SL/TP kalau belum ada
                 if (not has_sl or not has_tp) and now - self.startup_time > self.warmup_period:
                     if now - self._last_sl_set.get(symbol, 0) > 60:
-                        print(f"[GUARD] Protecting {symbol} | SL 12% PnL | TP 50% PnL")
-                        sl_price = entry * 0.988 if side in ['long', 'buy'] else entry * 1.012
-                        tp_price = entry * 1.05  if side in ['long', 'buy'] else entry * 0.95
+                        print(f"[GUARD] Protecting {symbol} | SL 15% PnL | TP 80% PnL")
+                        # TP 80% PnL = 8% price move di 10x
+                        # SL 15% PnL = 1.5% price move di 10x
+                        sl_price = entry * 0.985 if side in ['long', 'buy'] else entry * 1.015
+                        tp_price = entry * 1.08  if side in ['long', 'buy'] else entry * 0.92
                         if not has_sl:
                             self._set_sl_tp_bitget(symbol, side, size, sl_price=sl_price)
                         if not has_tp:

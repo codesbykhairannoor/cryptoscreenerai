@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MAX_POSITIONS        = 3      # Max 3 posisi XAUUSD (fokus modal kecil)
+MAX_POSITIONS        = 10     # Max 10 posisi XAUUSD sekaligus kalau sangat yakin
 SCAN_INTERVAL        = 3      # Scan setiap 3 detik
 COOLDOWN_AFTER_TRADE = 30     # Cooldown 30 detik (lebih agresif)
 EQUITY_GUARD_PCT     = 0.92   # Halt kalau equity < 92% (sedikit lebih toleran)
@@ -482,14 +482,34 @@ class ForexExecutor:
         return max(0, min(100, score))
 
     def _determine_side(self, ind, spread_points):
-        """Return (side, score) atau (None, 0) kalau tidak ada setup."""
+        """
+        Return (side, score, trades_to_open) atau (None, 0, 0).
+        Kalau score sangat tinggi, buka lebih dari 1 trade sekaligus.
+        """
         buy_score  = self._score_setup(ind, "buy",  spread_points)
         sell_score = self._score_setup(ind, "sell", spread_points)
+
+        best_score = 0
+        best_side  = None
         if buy_score >= sell_score and buy_score >= MIN_MOMENTUM_SCORE:
-            return "buy",  buy_score
-        if sell_score > buy_score and sell_score >= MIN_MOMENTUM_SCORE:
-            return "sell", sell_score
-        return None, 0
+            best_side, best_score = "buy", buy_score
+        elif sell_score > buy_score and sell_score >= MIN_MOMENTUM_SCORE:
+            best_side, best_score = "sell", sell_score
+
+        if best_side is None:
+            return None, 0, 0
+
+        # Semakin tinggi score, semakin banyak trade yang dibuka
+        # Score 30-49: 1 trade (minimal confidence)
+        # Score 50-64: 2 trade (medium confidence)
+        # Score 65-79: 3 trade (high confidence)
+        # Score 80+:   5 trade (very high confidence — pump signal kuat)
+        if best_score >= 80:   trades = 5
+        elif best_score >= 65: trades = 3
+        elif best_score >= 50: trades = 2
+        else:                  trades = 1
+
+        return best_side, best_score, trades
 
     # --- TP/SL & LOT SIZING ---
 
@@ -700,11 +720,6 @@ class ForexExecutor:
                 # TRAILING STOP
                 self._trail_positions(positions)
 
-                # POSITION LIMIT
-                if active_count >= MAX_POSITIONS:
-                    time.sleep(SCAN_INTERVAL)
-                    continue
-
                 # SPREAD FILTER
                 if spread_pts > MAX_SPREAD_POINTS:
                     print(f"[SPREAD GUARD] Spread {spread_pts}pts too wide. Skipping.")
@@ -722,9 +737,16 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # DETERMINE SIDE
-                side, score = self._determine_side(ind, spread_pts)
+                # DETERMINE SIDE + CONFIDENCE
+                side, score, trades_to_open = self._determine_side(ind, spread_pts)
                 if side is None:
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+
+                # POSITION LIMIT — jangan melebihi MAX_POSITIONS
+                slots_available = MAX_POSITIONS - active_count
+                trades_to_open  = min(trades_to_open, slots_available)
+                if trades_to_open <= 0:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
@@ -736,8 +758,8 @@ class ForexExecutor:
                 # LOT SIZE
                 lot = self._calc_lot_size(balance)
 
-                # EXECUTE
-                sym = self._working_symbol or "XAUUSD"
+                # EXECUTE — buka sejumlah trades_to_open
+                sym      = self._working_symbol or "XAUUSD"
                 rsi_val  = ind.get("rsi", 0)
                 vwap_val = ind.get("vwap_dist", 0)
                 trend    = ind.get("trend", "NEUTRAL")
@@ -746,18 +768,25 @@ class ForexExecutor:
                 rsi_div  = ind.get("rsi_divergence", "NONE")
                 print("")
                 print("=" * 60)
-                print(f"[FOREX SCALPER v4.0] XAUUSD {side.upper()} | Score: {score}/100")
+                print(f"[FOREX SCALPER] XAUUSD {side.upper()} x{trades_to_open} | Score: {score}/100")
                 print(f"  Pump Signal : {pump_sig} | RSI Div: {rsi_div}")
                 print(f"  Price  : {entry_price} | ATR: {atr}")
                 print(f"  RSI    : {rsi_val} | VWAP Dist: {vwap_val}%")
                 print(f"  Trend  : {trend} | FVG: {fvg_val}")
-                print(f"  TP     : {tp} (+{SCALP_TP_POINTS}pt) | SL: {sl} (-{SCALP_SL_POINTS}pt) | Lot: {lot}")
+                print(f"  TP     : {tp} | SL: {sl} | Lot: {lot} each")
                 print("=" * 60)
 
-                success, _ = self.place_forex_order(sym, side, lot, tp=tp, sl=sl)
-                if success:
-                    from database import log_trade
-                    log_trade(sym, entry_price, tp, sl, market="forex")
+                opened = 0
+                for _ in range(trades_to_open):
+                    success, _ = self.place_forex_order(sym, side, lot, tp=tp, sl=sl)
+                    if success:
+                        from database import log_trade
+                        log_trade(sym, entry_price, tp, sl, market="forex")
+                        opened += 1
+                    time.sleep(0.15)
+
+                if opened > 0:
+                    print(f"[FOREX] Opened {opened}/{trades_to_open} trades successfully")
                     last_auto_trade = time.time()
 
                 time.sleep(SCAN_INTERVAL)
