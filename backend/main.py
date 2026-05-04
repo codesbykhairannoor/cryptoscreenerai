@@ -12,7 +12,7 @@ from database import log_trade, get_performance_stats
 from bitget_executor import BitgetExecutor
 from crypto_engine import run_crypto_engine, detect_volatility_spike
 from forex_executor import ForexExecutor
-from news_sniper import NewsSniper, news_execution_handler
+from news_sniper import get_sniper_instance, news_execution_handler
 import requests
 import random
 import threading
@@ -64,8 +64,9 @@ def startup_event():
         print(f"[SYSTEM] Gagal memulai Forex Engine: {e}")
 
     # 4. Start News Sniper (Sub-millisecond Execution)
+    # Pakai singleton — ForexExecutor sudah pre-initialized
     try:
-        news_sniper = NewsSniper(news_execution_handler)
+        news_sniper = get_sniper_instance()
         news_sniper.start()
         print("[SYSTEM] News Sniper Engine AKTIF (Sub-millisecond Ready)!")
     except Exception as e:
