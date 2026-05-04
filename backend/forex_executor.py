@@ -178,13 +178,38 @@ class ForexExecutor:
     def _calc_indicators(self):
         """
         XAUUSD Indicator Engine.
-        Prioritas: candle 5m → candle 1m → price momentum fallback.
+        Prioritas:
+        1. Candle 5m dari MetaAPI (paling akurat)
+        2. Candle 1m dari MetaAPI
+        3. PAXGUSDT dari Bitget sebagai proxy gold (candle selalu tersedia)
+        4. Price momentum fallback (last resort)
         """
         candles = self.get_candles(timeframe="5m", limit=100)
 
         # Level 2: Coba candle 1m kalau 5m gagal
         if len(candles) < 20:
             candles = self.get_candles(timeframe="1m", limit=50)
+
+        # Level 3: PAXGUSDT proxy dari Bitget (PAXG = PAX Gold, harga mengikuti XAU 1:1)
+        if len(candles) < 10:
+            try:
+                url = ("https://api.bitget.com/api/v2/mix/market/history-candles"
+                       "?symbol=PAXGUSDT&granularity=5m&limit=100&productType=USDT-FUTURES")
+                r = requests.get(url, timeout=5, verify=False)
+                if r.status_code == 200:
+                    raw = r.json().get('data', [])
+                    if len(raw) >= 20:
+                        # Convert Bitget format [ts,open,high,low,close,vol,quoteVol]
+                        # ke format dict yang dipakai _calc_indicators
+                        candles = [
+                            {"open": float(c[1]), "high": float(c[2]),
+                             "low": float(c[3]), "close": float(c[4]),
+                             "tickVolume": float(c[5])}
+                            for c in raw
+                        ]
+                        print(f"[FOREX PROXY] Using PAXGUSDT candles ({len(candles)} candles)")
+            except Exception as e:
+                print(f"[FOREX PROXY ERROR] {e}")
 
         # Level 3: Pure price momentum fallback
         if len(candles) < 10:
