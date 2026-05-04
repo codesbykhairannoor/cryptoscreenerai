@@ -28,7 +28,7 @@ COOLDOWN_AFTER_TRADE = 120    # 2 menit — tidak terlalu sering, tidak terlalu 
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 35     # Realistis — pump score 28-30 normal, 35+ ada sinyal
+MIN_MOMENTUM_SCORE   = 30     # Threshold realistis — score 28-30 normal, 35+ ada sinyal kuat
 DAILY_LOSS_LIMIT_PCT = -40
 
 # TP/SL spread-aware (10x leverage):
