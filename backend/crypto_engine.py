@@ -41,7 +41,11 @@ SCALP_SL_ATR  = 1.2
 
 # ─── HELPER: HITUNG VWAP ──────────────────────────────────────────────────────
 def _calc_vwap_dist(mark_price: float, symbol: str) -> float:
-    """Hitung jarak harga dari VWAP dalam persen menggunakan candle 15m."""
+    """
+    Hitung jarak harga dari VWAP dalam persen menggunakan candle 15m.
+    Bitget candle format: [ts, open, high, low, close, vol, quoteVol]
+    Index:                  0    1     2    3    4      5    6
+    """
     try:
         url = (
             f"https://api.bitget.com/api/v2/mix/market/history-candles"
@@ -51,22 +55,35 @@ def _calc_vwap_dist(mark_price: float, symbol: str) -> float:
         if r.status_code != 200:
             return 0.0
         data = r.json().get('data', [])
-        if not data:
+        if not data or len(data) < 5:
             return 0.0
 
         cum_pv = 0.0
         cum_v  = 0.0
         for c in data:
-            # [ts, open, high, low, close, vol, vol_usd]
-            typical = (float(c[2]) + float(c[3]) + float(c[4])) / 3
-            vol     = float(c[5])
-            cum_pv += typical * vol
-            cum_v  += vol
+            # Bitget: [ts, open, high, low, close, baseVol, quoteVol]
+            try:
+                high  = float(c[2])
+                low   = float(c[3])
+                close = float(c[4])
+                vol   = float(c[5])  # base volume
+                if vol <= 0:
+                    continue
+                typical = (high + low + close) / 3
+                cum_pv += typical * vol
+                cum_v  += vol
+            except (IndexError, ValueError):
+                continue
 
         if cum_v == 0:
             return 0.0
         vwap = cum_pv / cum_v
+        if vwap == 0:
+            return 0.0
         dist = ((mark_price - vwap) / vwap) * 100
+        # Sanity check: VWAP dist > 20% tidak masuk akal untuk 24h
+        if abs(dist) > 20:
+            return 0.0
         return round(dist, 4)
     except Exception:
         return 0.0
@@ -232,14 +249,14 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     # Setup 2: Bullish FVG Re-entry
     if fvg == 'BULLISH_FVG' and rsi < 60:
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "BULLISH FVG RE-ENTRY (INSTITUTIONAL DISCOUNT)"))
+        long_candidates.append((s, "BULLISH FVG RE-ENTRY"))
 
     # Setup 3: MSS Bullish Breakout
     if mss_b and obi > 0.05:
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "MARKET STRUCTURE SHIFT BULLISH (MSS BREAKOUT)"))
+        long_candidates.append((s, "MSS BULLISH BREAKOUT"))
 
-    # Setup 4: CHoCH + Liquidity Sweep (Reversal)
+    # Setup 4: CHoCH + Liquidity Sweep
     if choch_b and liq and rsi < 55:
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
         long_candidates.append((s, "CHoCH REVERSAL + LIQUIDITY SWEEP"))
@@ -248,6 +265,16 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     if ob == 'BULLISH_OB' and rsi < 45:
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
         long_candidates.append((s, "BULLISH ORDER BLOCK + OVERSOLD RSI"))
+
+    # Setup 6: RSI Oversold Recovery (tidak butuh SMC signal)
+    if 28 <= rsi <= 42 and vwap_dist < 2.0:
+        s = _score_candidate(tech, rsi, vwap_dist, "buy")
+        long_candidates.append((s, "RSI OVERSOLD RECOVERY"))
+
+    # Setup 7: Momentum Breakout (harga di bawah VWAP, mulai naik)
+    if -3.0 <= vwap_dist <= -0.3 and (choch_b or mss_b or fvg == 'BULLISH_FVG'):
+        s = _score_candidate(tech, rsi, vwap_dist, "buy")
+        long_candidates.append((s, "MOMENTUM BREAKOUT FROM DISCOUNT"))
 
     # ── SHORT SETUPS ─────────────────────────────────────────────────────────
     short_candidates = []
@@ -260,22 +287,32 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     # Setup 2: Bearish FVG Rejection
     if fvg == 'BEARISH_FVG' and rsi > 45:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "BEARISH FVG REJECTION (INSTITUTIONAL PREMIUM)"))
+        short_candidates.append((s, "BEARISH FVG REJECTION"))
 
     # Setup 3: MSS Bearish Breakdown
     if mss_s and obi < -0.05:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "MARKET STRUCTURE SHIFT BEARISH (MSS BREAKDOWN)"))
+        short_candidates.append((s, "MSS BEARISH BREAKDOWN"))
 
-    # Setup 4: CHoCH + Liquidity Sweep (Bearish Reversal)
+    # Setup 4: CHoCH + Liquidity Sweep Bearish
     if choch_s and liq and rsi > 50:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "CHoCH BEARISH REVERSAL + LIQUIDITY SWEEP"))
+        short_candidates.append((s, "CHoCH BEARISH + LIQUIDITY SWEEP"))
 
     # Setup 5: Bearish OB + Overbought RSI
     if ob == 'BEARISH_OB' and rsi > 60:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
         short_candidates.append((s, "BEARISH ORDER BLOCK + OVERBOUGHT RSI"))
+
+    # Setup 6: RSI Overbought Rejection (tidak butuh SMC signal)
+    if 68 <= rsi <= 85 and vwap_dist > 1.0:
+        s = _score_candidate(tech, rsi, vwap_dist, "sell")
+        short_candidates.append((s, "RSI OVERBOUGHT REJECTION"))
+
+    # Setup 7: Bearish Momentum (harga di atas VWAP, mulai turun)
+    if 1.0 <= vwap_dist <= 5.0 and (choch_s or mss_s or fvg == 'BEARISH_FVG'):
+        s = _score_candidate(tech, rsi, vwap_dist, "sell")
+        short_candidates.append((s, "BEARISH MOMENTUM FROM PREMIUM"))
 
     # ── PILIH SETUP TERBAIK ───────────────────────────────────────────────────
     all_candidates = [("buy", s, r) for s, r in long_candidates] + \

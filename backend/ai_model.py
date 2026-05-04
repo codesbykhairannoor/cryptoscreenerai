@@ -48,12 +48,13 @@ def analyze_and_sort(raw_data):
         return []
 
     # ── Normalisasi kolom ─────────────────────────────────────────────────────
+    # Bitget V2 ticker fields: symbol, lastPr, high24h, low24h, change24h, baseVolume, quoteVolume
     col_map = {
-        'priceChangePercent': ['priceChangePercent', 'chgPct', 'change', 'change24h'],
-        'quoteVolume':        ['quoteVolume', 'quoteVol', 'usdtVolume', 'vol'],
-        'lastPrice':          ['lastPrice', 'last', 'close', 'price'],
-        'high24h':            ['high24h', 'high', 'highPrice'],
-        'low24h':             ['low24h', 'low', 'lowPrice'],
+        'priceChangePercent': ['change24h', 'priceChangePercent', 'chgPct', 'change'],
+        'quoteVolume':        ['quoteVolume', 'quoteVol', 'usdtVolume'],
+        'lastPrice':          ['lastPr', 'lastPrice', 'last', 'close'],
+        'high24h':            ['high24h', 'highPrice'],
+        'low24h':             ['low24h', 'lowPrice'],
         'symbol':             ['symbol', 'instId'],
     }
     for target, alts in col_map.items():
@@ -67,6 +68,11 @@ def analyze_and_sort(raw_data):
 
     for col in ['quoteVolume', 'priceChangePercent', 'lastPrice', 'high24h', 'low24h']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    # Fix: Bitget change24h adalah desimal (0.008 = 0.8%), bukan persen langsung
+    # Kalau nilai max < 1.0, berarti masih dalam format desimal
+    if df['priceChangePercent'].abs().max() < 2.0:
+        df['priceChangePercent'] = df['priceChangePercent'] * 100
 
     # ── BLACKLIST ─────────────────────────────────────────────────────────────
     def is_blacklisted(sym):
