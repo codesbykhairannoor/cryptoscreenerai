@@ -620,17 +620,24 @@ class ForexExecutor:
         return any_success
 
     def update_forex_sl(self, position_id, new_sl):
-        """Update SL posisi via MetaAPI. Log response untuk debug."""
+        """
+        Update SL posisi via MetaAPI.
+        Endpoint yang benar: POST /trade dengan actionType POSITION_MODIFY
+        (bukan PUT /positions/{id} yang return 404)
+        """
         if not self.is_active: return False
         try:
-            url = f"{self.base_url}/users/current/accounts/{self.account_id}/positions/{position_id}"
+            url = f"{self.base_url}/users/current/accounts/{self.account_id}/trade"
             headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
-            payload = {"stopLoss": new_sl}
-            res = requests.put(url, headers=headers, json=payload, timeout=10)
-            if res.status_code in [200, 204]:
+            payload = {
+                "actionType": "POSITION_MODIFY",
+                "positionId": str(position_id),
+                "stopLoss":   new_sl,
+            }
+            res = requests.post(url, headers=headers, json=payload, timeout=10)
+            if res.status_code == 200:
                 return True
             else:
-                # Log error supaya bisa debug
                 try:
                     err = res.json().get("message", res.text[:100])
                 except Exception:
