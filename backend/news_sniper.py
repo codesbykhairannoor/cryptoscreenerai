@@ -210,11 +210,8 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
     """
     ULTRA-FAST EXECUTION HANDLER
     =============================
-    Confidence 1-5 menentukan berapa lot yang dibuka:
-    - Confidence 2: 2 trade × 0.01 lot
-    - Confidence 3: 3 trade × 0.01 lot
-    - Confidence 4: 5 trade × 0.01 lot
-    - Confidence 5: 8 trade × 0.01 lot (NFP/FOMC = max aggression)
+    Confidence 1-5 menentukan berapa lot yang dibuka.
+    Cek kondisi teknikal sebelum fire — kalau trend berlawanan, kurangi size.
     """
     execution_start = time.time()
     latency_ms      = (execution_start - ingestion_time) * 1000
@@ -223,6 +220,28 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
     lot_map    = {2: (2, 0.01), 3: (3, 0.01), 4: (5, 0.01), 5: (8, 0.01)}
     trades, lot = lot_map.get(confidence, (2, 0.01))
 
+    # Cek kondisi teknikal — kalau trend berlawanan, kurangi trades
+    sniper = get_sniper_instance()
+    try:
+        ind = sniper.fx._calc_indicators()
+        trend = ind.get("trend", "NEUTRAL") if ind else "NEUTRAL"
+        rsi   = ind.get("rsi", 50) if ind else 50
+
+        # Kalau trend berlawanan dengan news direction, kurangi agresivitas
+        if side == "buy" and trend == "BEARISH" and rsi < 35:
+            # RSI oversold + trend bearish = potential reversal, tetap entry tapi lebih kecil
+            trades = max(1, trades - 2)
+            print(f"[NEWS FILTER] Trend BEARISH tapi RSI oversold ({rsi}). Reduced to {trades} trades.")
+        elif side == "buy" and trend == "BEARISH" and rsi >= 35:
+            # Trend bearish + RSI tidak oversold = risky, kurangi lebih banyak
+            trades = max(1, trades - 3)
+            print(f"[NEWS FILTER] Trend BEARISH RSI:{rsi}. Reduced to {trades} trades.")
+        elif side == "sell" and trend == "BULLISH":
+            trades = max(1, trades - 2)
+            print(f"[NEWS FILTER] Trend BULLISH. Reduced to {trades} trades.")
+    except Exception:
+        pass  # Kalau gagal cek, tetap fire dengan jumlah normal
+
     print(f"\n{'='*60}")
     print(f"🎯 [NEWS EXECUTION] {side.upper()} XAUUSD")
     print(f"   News     : {title[:70]}")
@@ -230,8 +249,6 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
     print(f"   Confidence: {confidence}/5 → {trades} trades × {lot} lot")
     print(f"{'='*60}")
 
-    # Pakai instance yang sudah pre-initialized (zero cold-start)
-    sniper = get_sniper_instance()
     sniper.fx.place_xauusd_scalp_batch(side, trades_count=trades, volume=lot)
 
 

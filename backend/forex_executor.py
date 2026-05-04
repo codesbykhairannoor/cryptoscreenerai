@@ -449,8 +449,8 @@ class ForexExecutor:
         # ── Trend alignment (max 5 poin) ──────────────────────────────────────
         if side == "buy"  and trend == "BULLISH": score += 5
         if side == "sell" and trend == "BEARISH": score += 5
-        if side == "buy"  and trend == "BEARISH": score -= 5
-        if side == "sell" and trend == "BULLISH": score -= 5
+        if side == "buy"  and trend == "BEARISH": score -= 8   # Lebih besar penaltinya
+        if side == "sell" and trend == "BULLISH": score -= 8
 
         # ── Spread penalty ────────────────────────────────────────────────────
         if spread_points > 100: score -= 10
@@ -650,8 +650,7 @@ class ForexExecutor:
 
     def _trail_positions(self, positions):
         """
-        Aggressive trailing stop untuk scalping modal kecil.
-        Breakeven lebih cepat di +5 pip (bukan +10 pip).
+        Aggressive trailing stop + auto-close posisi yang terlalu lama rugi.
         """
         for p in positions:
             if "XAU" not in p.get("symbol", "").upper(): continue
@@ -659,10 +658,31 @@ class ForexExecutor:
             current_price = float(p.get("currentPrice", 0))
             pos_id        = p.get("id")
             pos_type      = p.get("type", "")
+            profit        = float(p.get("profit", 0))
             if open_price == 0 or current_price == 0: continue
 
             is_buy    = pos_type == "POSITION_TYPE_BUY"
             profit_pt = (current_price - open_price) if is_buy else (open_price - current_price)
+
+            # AUTO-CLOSE: kalau rugi > $5 per posisi, close langsung
+            # Ini proteksi untuk posisi lama yang SL-nya tidak terpasang
+            if profit < -5.0:
+                print(f"[FOREX AUTO-CLOSE] Position {pos_id} loss ${profit:.2f} > $5. Closing.")
+                try:
+                    close_side = "ORDER_TYPE_SELL" if is_buy else "ORDER_TYPE_BUY"
+                    url = f"{self.base_url}/users/current/accounts/{self.account_id}/trade"
+                    headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
+                    payload = {
+                        "symbol": p.get("symbol"),
+                        "actionType": close_side,
+                        "volume": float(p.get("volume", 0.01)),
+                        "comment": "AutoClose-MaxLoss",
+                        "positionId": pos_id,
+                    }
+                    requests.post(url, headers=headers, json=payload, timeout=5)
+                except Exception as e:
+                    print(f"[FOREX AUTO-CLOSE ERROR] {e}")
+                continue
 
             # Breakeven lebih cepat: +5 pip (0.5 point)
             if profit_pt >= 0.5:
