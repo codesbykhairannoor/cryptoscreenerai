@@ -526,7 +526,7 @@ def run_crypto_engine():
                 # ── 9f. HITUNG TP/SL ──────────────────────────────────────────
                 tp, sl = _calc_tp_sl(mark_price, side, tech)
 
-                # ── 9g. HITUNG SIZE ───────────────────────────────────────────
+                # ── 9g. HITUNG SIZE ($7 fixed margin per trade) ───────────────
                 amount = executor.get_max_available(symbol, leverage=LEVERAGE)
                 if amount <= 0:
                     print(f"[MARGIN GUARD] Insufficient margin for {clean_base}.")

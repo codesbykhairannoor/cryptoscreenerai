@@ -677,16 +677,32 @@ class ForexExecutor:
         for p in positions:
             if "XAU" not in p.get("symbol", "").upper(): continue
             open_price    = float(p.get("openPrice", 0))
-            current_price = float(p.get("currentPrice", open_price))
+            current_price = float(p.get("currentPrice", 0))
             pos_id        = p.get("id")
             pos_type      = p.get("type", "")
             profit        = float(p.get("profit", 0))
             current_sl    = float(p.get("stopLoss", 0))
+            volume        = float(p.get("volume", 0.01))
             sym           = p.get("symbol", self._working_symbol or "XAUUSDc")
             if open_price == 0: continue
 
-            is_buy    = pos_type == "POSITION_TYPE_BUY"
-            profit_pt = (current_price - open_price) if is_buy else (open_price - current_price)
+            is_buy = pos_type == "POSITION_TYPE_BUY"
+
+            # Hitung profit_pt dari dua sumber:
+            # 1. currentPrice - openPrice (kalau currentPrice tersedia)
+            # 2. profit dollar / (volume × 10) sebagai fallback
+            #    Cent account: 0.01 lot × 10 pip/poin = $0.10/poin
+            if current_price > 0 and current_price != open_price:
+                profit_pt = (current_price - open_price) if is_buy else (open_price - current_price)
+            elif profit != 0 and volume > 0:
+                # Fallback: estimasi dari profit dollar
+                # 1 poin XAUUSD = volume × $10 (standard) atau volume × $0.10 (cent)
+                # Cent account: 0.01 lot → $0.10/poin
+                pip_value_per_poin = volume * 10  # $0.10 per poin untuk 0.01 lot cent
+                profit_pt = abs(profit) / pip_value_per_poin if pip_value_per_poin > 0 else 0
+                if profit < 0: profit_pt = -profit_pt
+            else:
+                profit_pt = 0
 
             # AUTO-CLOSE: rugi > 
             if profit < -8.0 and pos_id not in self._close_attempted:

@@ -129,33 +129,49 @@ class BitgetExecutor:
             }
         except: return {'total': 0, 'free': 0}
 
-    def get_max_available(self, symbol, leverage=10):
-        try:
-            balance = self.get_balance()
-            free_usdt = balance['free']
+    def get_max_available(self, symbol, leverage=10, risk_usdt=None):
+        """
+        Hitung size berdasarkan FIXED MARGIN per trade.
+        
+        Default: $7 margin per trade (fixed, tidak berubah)
+        Notional = $7 × 10x = $70
+        SL 15% PnL = -$1.05 per loss
+        TP 80% PnL = +$5.60 per win
+        1 win = 5.3 loss → konsisten tidak peduli balance berapa
+        
+        Kalau balance < $7, pakai semua yang tersedia (minimum $5 notional).
+        """
+        FIXED_MARGIN = 7.0  # $7 margin per trade — FIXED
 
-            # Bitget minimum notional: 5 USDT
-            if free_usdt < 0.5:  # butuh minimal ~0.5 USDT margin untuk 5 USDT notional di 10x
-                return 0
+        try:
+            balance    = self.get_balance()
+            free_usdt  = balance['free']
+
+            # Pakai fixed $7, tapi tidak boleh melebihi free balance
+            margin_to_use = min(FIXED_MARGIN, free_usdt * 0.95)
+
+            # Minimum notional Bitget = 5 USDT
+            if margin_to_use * leverage < 5.0:
+                if free_usdt * leverage < 5.0:
+                    print(f"[SIZE] Balance terlalu kecil: ${free_usdt:.2f}")
+                    return 0
+                margin_to_use = 5.0 / leverage
 
             ticker = self.exchange.fetch_ticker(symbol)
-            price = ticker['last']
+            price  = ticker['last']
 
-            # Gunakan 80% dari free balance sebagai margin (sisakan 20% untuk fee & slippage)
-            margin_to_use = free_usdt * 0.80
-            notional      = margin_to_use * leverage
-            raw_amount    = notional / price
+            notional   = margin_to_use * leverage
+            raw_amount = notional / price
 
             formatted_amount = float(self.exchange.amount_to_precision(symbol, raw_amount))
 
-            # Check exchange minimum
             market     = self.exchange.market(symbol)
             min_amount = market.get('limits', {}).get('amount', {}).get('min', 0.001)
 
-            # Final notional check — Bitget requires >= 5 USDT notional
             if formatted_amount * price < 5.0:
                 return 0
 
+            print(f"[SIZE] Fixed margin=${margin_to_use:.2f} | Notional=${round(notional,1)} | {formatted_amount} {symbol}")
             return formatted_amount if formatted_amount >= min_amount else 0
         except Exception as e:
             print(f"[GET_MAX ERROR] {e}")
