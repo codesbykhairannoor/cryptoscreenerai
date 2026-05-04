@@ -626,52 +626,70 @@ class ForexExecutor:
             return False
 
     # --- TRAILING STOP ---
+    # --- TRAILING STOP ---
 
     def _trail_positions(self, positions):
-        """
-        Aggressive trailing stop + auto-close posisi yang terlalu lama rugi.
-        """
+        """Smart trailing stop. Auto-close rugi >  dengan cooldown."""
+        if not hasattr(self, "_close_attempted"):
+            self._close_attempted = set()
+
         for p in positions:
             if "XAU" not in p.get("symbol", "").upper(): continue
             open_price    = float(p.get("openPrice", 0))
-            current_price = float(p.get("currentPrice", 0))
+            current_price = float(p.get("currentPrice", open_price))
             pos_id        = p.get("id")
             pos_type      = p.get("type", "")
             profit        = float(p.get("profit", 0))
-            if open_price == 0 or current_price == 0: continue
+            sym           = p.get("symbol", self._working_symbol or "XAUUSDc")
+            if open_price == 0: continue
 
             is_buy    = pos_type == "POSITION_TYPE_BUY"
             profit_pt = (current_price - open_price) if is_buy else (open_price - current_price)
 
-            # AUTO-CLOSE: kalau rugi > $5 per posisi, close langsung
-            # Ini proteksi untuk posisi lama yang SL-nya tidak terpasang
-            if profit < -5.0:
-                print(f"[FOREX AUTO-CLOSE] Position {pos_id} loss ${profit:.2f} > $5. Closing.")
+            # AUTO-CLOSE: rugi > , cooldown agar tidak loop
+            if profit < -8.0 and pos_id not in self._close_attempted:
+                self._close_attempted.add(pos_id)
+                print(f"[FOREX AUTO-CLOSE] {pos_id} loss . Closing.")
                 try:
-                    close_side = "ORDER_TYPE_SELL" if is_buy else "ORDER_TYPE_BUY"
                     url = f"{self.base_url}/users/current/accounts/{self.account_id}/trade"
                     headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
-                    payload = {
-                        "symbol": p.get("symbol"),
-                        "actionType": close_side,
-                        "volume": float(p.get("volume", 0.01)),
-                        "comment": "AutoClose-MaxLoss",
-                        "positionId": pos_id,
-                    }
-                    requests.post(url, headers=headers, json=payload, timeout=5)
+                    payload = {"actionType": "POSITION_CLOSE_ID", "positionId": pos_id}
+                    res = requests.post(url, headers=headers, json=payload, timeout=8)
+                    if res.status_code == 200:
+                        print(f"[FOREX AUTO-CLOSE] {pos_id} closed OK")
+                    else:
+                        print(f"[FOREX AUTO-CLOSE FAIL] {pos_id}: {res.text[:80]}")
+                        self._close_attempted.discard(pos_id)
                 except Exception as e:
                     print(f"[FOREX AUTO-CLOSE ERROR] {e}")
+                    self._close_attempted.discard(pos_id)
                 continue
 
-            # Breakeven lebih cepat: +5 pip (0.5 point)
-            if profit_pt >= 0.5:
-                be_sl = open_price + 0.05 if is_buy else open_price - 0.05
-                self.update_forex_sl(pos_id, be_sl)
+            # TRAILING STOP berdasarkan profit poin (price move)
+            # +1.5 pt (15 pip) -> breakeven
+            # +2.0 pt (20 pip) -> lock +1.0 pt
+            # +3.0 pt (30 pip) -> lock +2.0 pt
+            # +4.0 pt (40 pip) -> lock +3.0 pt
+            if profit_pt <= 0: continue
 
-            # Trail agresif: setiap +3 pip setelah BE
-            if profit_pt >= 0.8:
-                trail_sl = current_price - 0.3 if is_buy else current_price + 0.3
-                self.update_forex_sl(pos_id, trail_sl)
+            new_sl = None
+            if profit_pt >= 4.0:
+                new_sl = (open_price + 3.0) if is_buy else (open_price - 3.0)
+            elif profit_pt >= 3.0:
+                new_sl = (open_price + 2.0) if is_buy else (open_price - 2.0)
+            elif profit_pt >= 2.0:
+                new_sl = (open_price + 1.0) if is_buy else (open_price - 1.0)
+            elif profit_pt >= 1.5:
+                new_sl = (open_price + 0.1) if is_buy else (open_price - 0.1)
+
+            if new_sl:
+                current_sl = float(p.get("stopLoss", 0))
+                is_better = (is_buy and (current_sl == 0 or new_sl > current_sl)) or \
+                            (not is_buy and (current_sl == 0 or new_sl < current_sl))
+                if is_better:
+                    ok = self.update_forex_sl(pos_id, round(new_sl, 3))
+                    if ok:
+                        print(f"[FOREX TRAIL] {sym} SL -> {round(new_sl,3)} (profit_pt: +{round(profit_pt,2)})")
 
     # --- MAIN ENGINE LOOP ---
 
