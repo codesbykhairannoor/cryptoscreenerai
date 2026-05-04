@@ -27,16 +27,14 @@ SCAN_INTERVAL        = 3      # Scan setiap 3 detik
 COOLDOWN_AFTER_TRADE = 60     # Cooldown 60 detik antar entry
 EQUITY_GUARD_PCT     = 0.92   # Halt kalau equity < 92%
 MAX_SPREAD_POINTS    = 300    # Toleransi spread
-MIN_MOMENTUM_SCORE   = 25     # Minimum score untuk entry
+MIN_MOMENTUM_SCORE   = 35     # Naikkan threshold — score 28 terlalu rendah
 CANDLE_LIMIT         = 100
 
 # TP/SL yang masuk akal untuk XAUUSD cent account
-# Spread gold = 2.8 pts → SL harus jauh lebih besar dari spread
-# ATR gold 5m = 3-5 poin → SL harus > ATR supaya tidak kena noise
-SCALP_TP_POINTS      = 20.0   # TP 200 pip (20 poin) — target yang worth it
-SCALP_SL_POINTS      = 8.0    # SL 80 pip (8 poin) — cukup jauh dari noise
+SCALP_TP_POINTS      = 20.0   # TP 200 pip (20 poin)
+SCALP_SL_POINTS      = 8.0    # SL 80 pip (8 poin)
 RISK_PCT_PER_TRADE   = 0.01   # 1% risk per trade
-MAX_LOT_PER_TRADE    = 0.01   # Max 0.01 lot per trade (cent account, risk terkontrol)
+MAX_LOT_PER_TRADE    = 0.01   # Max 0.01 lot per trade
 
 
 class ForexExecutor:
@@ -704,21 +702,17 @@ class ForexExecutor:
 
             is_buy = pos_type == "POSITION_TYPE_BUY"
 
-            # Hitung profit_pt dari currentPrice (di-inject) atau dari profit dollar
+            # Hitung profit_pt dari currentPrice (di-inject dari broker_price)
+            # BUY: profit kalau current > open → profit_pt = current - open
+            # SELL: profit kalau current < open → profit_pt = open - current
             current_price = float(p.get("currentPrice", 0))
             if current_price > 0 and current_price != open_price:
                 profit_pt = (current_price - open_price) if is_buy else (open_price - current_price)
-            elif profit > 0:
-                # Dari data aktual: profit $15 pada posisi 0.01 lot
-                # Entry 4545, current ~4565 = 20 poin
-                # $15 / 20 poin = $0.75/poin per 0.01 lot
-                # Jadi: profit_pt = profit / 0.75 (untuk 0.01 lot)
-                # Atau lebih aman: profit_pt = profit / (volume * 75)
-                profit_pt = profit / max(float(p.get("volume", 0.01)) * 75, 0.01)
             else:
                 profit_pt = 0
 
-            print(f"[TRAIL DEBUG] {sym} open={open_price} current={current_price} profit=${profit} profit_pt={round(profit_pt,2)} sl={current_sl}")
+            direction = "BUY" if is_buy else "SELL"
+            print(f"[TRAIL DEBUG] {sym} {direction} open={open_price} current={current_price} profit=${profit} profit_pt={round(profit_pt,2)} sl={current_sl}")
 
             # AUTO-CLOSE: rugi > 
             if profit < -8.0 and pos_id not in self._close_attempted:
@@ -748,7 +742,7 @@ class ForexExecutor:
             buffer = 5.0
             if is_buy:
                 new_sl = round(open_price + (profit_pt - buffer), 3)
-                print(f"[TRAIL ATTEMPT] {sym} trying SL {current_sl} -> {new_sl} (profit_pt={round(profit_pt,1)})")
+                print(f"[TRAIL ATTEMPT] {sym} BUY trying SL {current_sl} -> {new_sl} (profit_pt={round(profit_pt,1)})")
                 if current_sl == 0 or new_sl > current_sl:
                     ok = self.update_forex_sl(pos_id, new_sl)
                     if ok:
@@ -758,8 +752,12 @@ class ForexExecutor:
                 else:
                     print(f"[TRAIL SKIP] {sym} new_sl={new_sl} not better than current_sl={current_sl}")
             else:
+                # SELL: profit_pt = open - current (harga turun = profit)
+                # SL untuk SELL harus TURUN mengikuti harga
+                # SL baru = open - (profit_pt - buffer)
+                # Contoh: open=4568, profit_pt=12 -> SL = 4568 - (12-5) = 4561
                 new_sl = round(open_price - (profit_pt - buffer), 3)
-                print(f"[TRAIL ATTEMPT] {sym} trying SL {current_sl} -> {new_sl} (profit_pt={round(profit_pt,1)})")
+                print(f"[TRAIL ATTEMPT] {sym} SELL trying SL {current_sl} -> {new_sl} (profit_pt={round(profit_pt,1)})")
                 if current_sl == 0 or new_sl < current_sl:
                     ok = self.update_forex_sl(pos_id, new_sl)
                     if ok:
