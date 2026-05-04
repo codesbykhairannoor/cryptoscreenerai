@@ -187,12 +187,45 @@ class ForexExecutor:
         """
         candles = self.get_candles(timeframe="5m", limit=100)
 
-        # Fallback silent kalau candle tidak tersedia
+        # Fallback: kalau candle tidak tersedia, pakai price movement dari live price
+        # Saat sesi aktif (London/NY), tetap bisa entry berdasarkan price action sederhana
         if len(candles) < 20:
             price_data = self.get_live_price()
             price = price_data.get("mid", 0)
             if price == 0:
                 return {}
+
+            # Coba ambil candle 1m sebagai fallback (lebih mudah tersedia)
+            candles_1m = self.get_candles(timeframe="1m", limit=30)
+            if len(candles_1m) >= 10:
+                closes_1m = [float(c.get("close", 0)) for c in candles_1m]
+                highs_1m  = [float(c.get("high", 0)) for c in candles_1m]
+                lows_1m   = [float(c.get("low", 0)) for c in candles_1m]
+                # RSI sederhana dari 1m
+                gains_1m = [max(closes_1m[i]-closes_1m[i-1], 0) for i in range(1, len(closes_1m))]
+                losses_1m = [max(closes_1m[i-1]-closes_1m[i], 0) for i in range(1, len(closes_1m))]
+                ag = sum(gains_1m[:7]) / 7 if gains_1m else 0.5
+                al = sum(losses_1m[:7]) / 7 if losses_1m else 0.5
+                rsi_1m = 100 - (100 / (1 + ag/al)) if al > 0 else 50.0
+                # Trend dari 1m
+                trend_1m = "BULLISH" if closes_1m[-1] > closes_1m[0] else "BEARISH"
+                # Liquidity sweep dari 1m
+                liq_1m = (lows_1m[-1] < lows_1m[-2] and closes_1m[-1] > lows_1m[-2]) or \
+                         (highs_1m[-1] > highs_1m[-2] and closes_1m[-1] < highs_1m[-2])
+                print(f"[FOREX FALLBACK 1m] RSI:{round(rsi_1m,1)} Trend:{trend_1m} Liq:{liq_1m}")
+                return {
+                    "rsi": round(rsi_1m, 2), "ema200": price, "atr": price * 0.001,
+                    "vwap": price, "vwap_dist": 0.0, "trend": trend_1m,
+                    "mss_bullish": trend_1m == "BULLISH" and liq_1m,
+                    "mss_bearish": trend_1m == "BEARISH" and liq_1m,
+                    "choch_bullish": trend_1m == "BULLISH",
+                    "choch_bearish": trend_1m == "BEARISH",
+                    "fvg": "NONE", "is_liquidity_sweep": liq_1m,
+                    "last_close": price, "vol_spike": False,
+                    "rsi_divergence": "NONE", "pump_signal": "NONE",
+                }
+
+            # Pure price fallback — tidak ada candle sama sekali
             return {
                 "rsi": 50.0, "ema200": price, "atr": price * 0.001,
                 "vwap": price, "vwap_dist": 0.0, "trend": "NEUTRAL",
@@ -326,94 +359,6 @@ class ForexExecutor:
             "pump_signal":      pump_signal,
         }
 
-        closes = [float(c.get("close", 0)) for c in candles]
-        highs  = [float(c.get("high",  0)) for c in candles]
-        lows   = [float(c.get("low",   0)) for c in candles]
-        vols   = [float(c.get("tickVolume", c.get("volume", 1))) for c in candles]
-
-        # RSI 14
-        period = 14
-        gains, losses = [], []
-        for i in range(1, len(closes)):
-            diff = closes[i] - closes[i-1]
-            gains.append(max(diff, 0))
-            losses.append(max(-diff, 0))
-        avg_gain = sum(gains[:period]) / period
-        avg_loss = sum(losses[:period]) / period
-        for i in range(period, len(gains)):
-            avg_gain = (avg_gain * (period-1) + gains[i]) / period
-            avg_loss = (avg_loss * (period-1) + losses[i]) / period
-        rsi = 100 - (100 / (1 + avg_gain / avg_loss)) if avg_loss > 0 else 100.0
-
-        # EMA 200
-        ema200 = closes[0]
-        k = 2 / (200 + 1)
-        for c in closes:
-            ema200 = c * k + ema200 * (1 - k)
-
-        # ATR 14
-        trs = []
-        for i in range(1, len(closes)):
-            tr = max(highs[i] - lows[i],
-                     abs(highs[i] - closes[i-1]),
-                     abs(lows[i]  - closes[i-1]))
-            trs.append(tr)
-        atr = sum(trs[-14:]) / 14 if len(trs) >= 14 else 1.5
-
-        # VWAP
-        cum_pv = sum((highs[i]+lows[i]+closes[i])/3 * vols[i] for i in range(len(closes)))
-        cum_v  = sum(vols)
-        vwap   = cum_pv / cum_v if cum_v > 0 else closes[-1]
-
-        # Market Structure (MSS / CHoCH)
-        last_close  = closes[-1]
-        recent_high = max(highs[-10:-1])
-        recent_low  = min(lows[-10:-1])
-        avg_vol     = sum(vols[-20:]) / 20 if len(vols) >= 20 else 1
-        last_vol    = vols[-1]
-
-        choch_bull = last_close > recent_high
-        choch_bear = last_close < recent_low
-        mss_bull   = choch_bull and last_vol > avg_vol * 1.5
-        mss_bear   = choch_bear and last_vol > avg_vol * 1.5
-
-        # FVG (Fair Value Gap)
-        fvg = "NONE"
-        if len(candles) >= 3:
-            c1h = highs[-3]
-            c3l = lows[-1]
-            c1l = lows[-3]
-            c3h = highs[-1]
-            if c1h < c3l: fvg = "BULLISH_FVG"
-            elif c1l > c3h: fvg = "BEARISH_FVG"
-
-        # Liquidity Sweep
-        liq_sweep = (lows[-1] < lows[-2] and closes[-1] > lows[-2]) or \
-                    (highs[-1] > highs[-2] and closes[-1] < highs[-2])
-
-        # Trend
-        trend = "NEUTRAL"
-        if last_close > ema200: trend = "BULLISH"
-        elif last_close < ema200: trend = "BEARISH"
-
-        vwap_dist = ((last_close - vwap) / vwap * 100) if vwap > 0 else 0
-
-        return {
-            "rsi":              round(rsi, 2),
-            "ema200":           round(ema200, 3),
-            "atr":              round(atr, 3),
-            "vwap":             round(vwap, 3),
-            "vwap_dist":        round(vwap_dist, 4),
-            "trend":            trend,
-            "mss_bullish":      mss_bull,
-            "mss_bearish":      mss_bear,
-            "choch_bullish":    choch_bull,
-            "choch_bearish":    choch_bear,
-            "fvg":              fvg,
-            "is_liquidity_sweep": liq_sweep,
-            "last_close":       last_close,
-        }
-
     # --- MOMENTUM SCORING ---
 
     def _score_setup(self, ind, side, spread_points):
@@ -478,6 +423,8 @@ class ForexExecutor:
         # ── Spread penalty ────────────────────────────────────────────────────
         if spread_points > 100: score -= 10
         if spread_points > 150: score -= 20
+
+        return max(0, min(100, score))
 
         return max(0, min(100, score))
 
