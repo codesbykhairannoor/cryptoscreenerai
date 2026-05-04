@@ -714,8 +714,8 @@ class ForexExecutor:
             direction = "BUY" if is_buy else "SELL"
             print(f"[TRAIL DEBUG] {sym} {direction} open={open_price} current={current_price} profit=${profit} profit_pt={round(profit_pt,2)} sl={current_sl}")
 
-            # AUTO-CLOSE: rugi > 
-            if profit < -8.0 and pos_id not in self._close_attempted:
+            # AUTO-CLOSE: rugi > $7 (safety net kalau SL tidak terpasang)
+            if profit < -7.0 and pos_id not in self._close_attempted:
                 self._close_attempted.add(pos_id)
                 print(f"[FOREX AUTO-CLOSE] {pos_id} loss . Closing.")
                 try:
