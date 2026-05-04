@@ -1,17 +1,23 @@
 """
-CRYPTO SCALPER ENGINE v5.0 — ONE TRADE ALL-IN DAILY SCALPER
+CRYPTO ENGINE v6.0 — SPREAD-AWARE HIGH CONVICTION STRATEGY
 ============================================================
-Filosofi: 1 trade terbaik per hari, pakai semua modal, scalp cepat.
+Strategi setelah memahami spread Bitget:
 
-- MAX_POSITIONS: 1  (fokus total, satu koin terbaik)
-- SCAN_INTERVAL: 8s
-- COOLDOWN: 30s setelah trade tutup
-- LEVERAGE: 10x
-- MIN_SCORE: 45 (berani tapi tidak asal)
-- TP: 1.5% price (15% PnL di 10x) — scalp cepat
-- SL: 0.8% price (8% PnL di 10x) — cut loss cepat
-- Skip BTC/ETH, fokus altcoin volatile mid-cap
-- Pakai 95% modal untuk satu trade
+MATEMATIKA SPREAD:
+- Fee taker Bitget: 0.06% per side = 0.12% round trip
+- Di 10x leverage: 0.12% fee = 1.2% PnL biaya
+- Minimum TP yang worth it: 50% PnL (fee hanya 2.4% dari profit)
+- SL harus cukup jauh dari noise tapi tidak terlalu jauh
+
+STRATEGI:
+1. HIGH CONVICTION ONLY — MIN SCORE 62 (bukan 45)
+   Lebih sedikit trade tapi win rate lebih tinggi
+2. PILIH KOIN VOLATILE — yang biasa gerak 5-15%/hari
+   Koin micro-cap seperti XVG/OPG/ACH terlalu random
+3. TP 80% PnL (8% price) — worth it setelah fee
+   SL 15% PnL (1.5% price) — cukup jauh dari noise
+4. TRAILING AGRESIF — setiap +20% PnL, SL naik +10%
+5. COOLDOWN 5 MENIT — jangan overtrading, pilih momen terbaik
 """
 
 import time
@@ -25,25 +31,24 @@ from ai_model import analyze_and_sort
 from database import log_trade
 from bitget_executor import BitgetExecutor
 
-# ─── KONFIGURASI: ONE TRADE ALL-IN ────────────────────────────────────────────
-MAX_POSITIONS        = 1      # SATU trade terbaik, semua modal
-SCAN_INTERVAL        = 8      # Scan setiap 8 detik
-COOLDOWN_AFTER_TRADE = 30     # Cooldown 30 detik setelah trade selesai
+# ─── KONFIGURASI: SPREAD-AWARE ────────────────────────────────────────────────
+MAX_POSITIONS        = 1      # Satu trade terbaik, semua modal
+SCAN_INTERVAL        = 10     # Scan setiap 10 detik
+COOLDOWN_AFTER_TRADE = 300    # 5 menit cooldown — pilih momen terbaik, tidak overtrading
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 LEVERAGE             = 10     # 10x leverage
-MIN_MOMENTUM_SCORE   = 45     # Threshold — berani tapi tidak asal
+MIN_MOMENTUM_SCORE   = 62     # HIGH CONVICTION — hanya masuk kalau setup sangat kuat
 DAILY_LOSS_LIMIT_PCT = -40    # Circuit breaker
 
-# Scalp target — TP 50% PnL, SL 12% PnL di 10x leverage
-# 10x leverage: 1% price move = 10% PnL
-# TP 50% PnL = 5% price move
-# SL 12% PnL = 1.2% price move
-SCALP_TP_PCT         = 0.05   # TP 5% price move  (= 50% PnL di 10x) ✅
-SCALP_SL_PCT         = 0.012  # SL 1.2% price move (= 12% PnL di 10x) ✅
-# ATR multiplier kalau ATR tersedia
-SCALP_TP_ATR         = 4.0    # TP = 4x ATR
-SCALP_SL_ATR         = 1.0    # SL = 1x ATR (tight)
+# TP/SL spread-aware:
+# Fee round trip ~1.2% PnL di 10x
+# TP 80% PnL = 8% price move — profit bersih ~78% setelah fee
+# SL 15% PnL = 1.5% price move — cukup jauh dari noise harga
+SCALP_TP_PCT         = 0.08   # TP 8% price move  (= 80% PnL di 10x)
+SCALP_SL_PCT         = 0.015  # SL 1.5% price move (= 15% PnL di 10x)
+SCALP_TP_ATR         = 5.0    # TP = 5x ATR
+SCALP_SL_ATR         = 1.2    # SL = 1.2x ATR
 
 # ─── HELPER: HITUNG VWAP ──────────────────────────────────────────────────────
 def _calc_vwap_dist(mark_price: float, symbol: str) -> float:
