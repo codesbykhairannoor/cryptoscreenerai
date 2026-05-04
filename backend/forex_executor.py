@@ -1,16 +1,17 @@
 """
-FOREX SCALPER v4.0 - SMALL CAPITAL AGGRESSIVE EDITION (MetaAPI Native)
-=======================================================================
-Optimized untuk modal kecil (cent account / micro account).
+FOREX SCALPER v5.0 - SMART TP/SL EDITION
+=========================================
+Strategi TP/SL yang masuk akal untuk XAUUSD:
 
-Perubahan dari v3.0:
-- COOLDOWN_AFTER_TRADE: 60s → 30s  (lebih sering entry)
-- MIN_MOMENTUM_SCORE: 50 → 40  (lebih berani)
-- MAX_SPREAD_POINTS: 200 → 300  (toleransi spread lebih longgar)
-- TP/SL: Scalp ratio 1:1.5 (TP 1.5 poin, SL 1 poin = 15 pip TP, 10 pip SL)
-- Lot sizing: 2% risk per trade (lebih agresif dari 1%)
-- Session: Tambah Asia session untuk XAUUSD (02:00-06:00 UTC)
-- Trailing: Breakeven lebih cepat di +5 pip (bukan +10 pip)
+MASALAH SEBELUMNYA:
+- SL 1.5-3 poin terlalu dekat → kena noise + spread 2.8 pts
+- TP 3 poin terlalu kecil → tidak worth it setelah fee
+
+STRATEGI BARU:
+- SL: 7-10 poin (70-100 pip) — cukup jauh dari noise dan spread
+- TP: 20 poin (200 pip) — 1:2.5 RR minimum
+- Trailing: SL naik setiap +5 poin profit, lock profit agresif
+- Lot: 0.01 per trade (cent account, risk terkontrol)
 """
 
 import requests
@@ -21,20 +22,21 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-MAX_POSITIONS        = 10     # Max 10 posisi XAUUSD sekaligus kalau sangat yakin
+MAX_POSITIONS        = 5      # Max 5 posisi sekaligus
 SCAN_INTERVAL        = 3      # Scan setiap 3 detik
 COOLDOWN_AFTER_TRADE = 60     # Cooldown 60 detik antar entry
 EQUITY_GUARD_PCT     = 0.92   # Halt kalau equity < 92%
 MAX_SPREAD_POINTS    = 300    # Toleransi spread
-MIN_MOMENTUM_SCORE   = 25     # Minimum score — harus ada sinyal, bukan pure neutral
+MIN_MOMENTUM_SCORE   = 25     # Minimum score untuk entry
 CANDLE_LIMIT         = 100
 
-# Scalp TP/SL untuk XAUUSD — disesuaikan dengan ATR aktual gold (~4-5 poin)
-# ATR gold 5m biasanya 1.5-3 poin. TP harus > ATR supaya tidak kena noise.
-SCALP_TP_POINTS      = 3.0    # TP 30 pip (3 poin) — cukup jauh dari noise
-SCALP_SL_POINTS      = 1.5    # SL 15 pip (1.5 poin) — 1:2 RR
-RISK_PCT_PER_TRADE   = 0.01   # 1% risk per trade (lebih konservatif)
-MAX_LOT_PER_TRADE    = 0.05   # Hard cap lot per trade — tidak boleh lebih dari ini
+# TP/SL yang masuk akal untuk XAUUSD cent account
+# Spread gold = 2.8 pts → SL harus jauh lebih besar dari spread
+# ATR gold 5m = 3-5 poin → SL harus > ATR supaya tidak kena noise
+SCALP_TP_POINTS      = 20.0   # TP 200 pip (20 poin) — target yang worth it
+SCALP_SL_POINTS      = 8.0    # SL 80 pip (8 poin) — cukup jauh dari noise
+RISK_PCT_PER_TRADE   = 0.01   # 1% risk per trade
+MAX_LOT_PER_TRADE    = 0.01   # Max 0.01 lot per trade (cent account, risk terkontrol)
 
 
 class ForexExecutor:
@@ -484,22 +486,32 @@ class ForexExecutor:
 
     def _calc_tp_sl(self, price, side, atr):
         """
-        TP/SL berbasis ATR dengan minimum yang masuk akal.
-        ATR gold 5m biasanya 1.5-3 poin.
-        TP = max(ATR × 1.5, SCALP_TP_POINTS) — cukup jauh dari noise
-        SL = max(ATR × 0.8, SCALP_SL_POINTS) — tight tapi tidak terlalu dekat
+        TP/SL yang masuk akal untuk XAUUSD.
+        
+        Logika:
+        - SL harus > spread (2.8 pts) + noise (ATR) → minimum 7 poin
+        - TP harus 2x SL minimum → 20 poin
+        - ATR dipakai untuk menyesuaikan, tapi tidak boleh kurang dari minimum
+        
+        Contoh dengan ATR=4.5:
+        - SL = max(4.5 × 1.5, 8.0) = max(6.75, 8.0) = 8.0 poin (80 pip)
+        - TP = max(4.5 × 4.0, 20.0) = max(18.0, 20.0) = 20.0 poin (200 pip)
+        - RR = 1:2.5
         """
-        # Gunakan ATR kalau tersedia dan masuk akal (0.5 - 10 poin)
-        if atr and 0.5 <= atr <= 10:
-            tp_dist = max(atr * 1.5, SCALP_TP_POINTS)
-            sl_dist = max(atr * 0.8, SCALP_SL_POINTS)
+        if atr and 1.0 <= atr <= 15:
+            sl_dist = max(atr * 1.5, SCALP_SL_POINTS)
+            tp_dist = max(atr * 4.0, SCALP_TP_POINTS)
         else:
-            tp_dist = SCALP_TP_POINTS
             sl_dist = SCALP_SL_POINTS
+            tp_dist = SCALP_TP_POINTS
 
-        # Cap maksimum supaya tidak terlalu jauh
-        tp_dist = min(tp_dist, 8.0)   # Max 80 pip TP
-        sl_dist = min(sl_dist, 3.0)   # Max 30 pip SL
+        # Hard minimum: SL tidak boleh kurang dari 7 poin (spread + noise)
+        sl_dist = max(sl_dist, 7.0)
+        # Hard minimum: TP tidak boleh kurang dari 15 poin
+        tp_dist = max(tp_dist, 15.0)
+        # Cap maksimum
+        sl_dist = min(sl_dist, 12.0)   # Max 120 pip SL
+        tp_dist = min(tp_dist, 30.0)   # Max 300 pip TP
 
         if side == "buy":
             return round(price + tp_dist, 3), round(price - sl_dist, 3)
@@ -508,26 +520,19 @@ class ForexExecutor:
 
     def _calc_lot_size(self, balance, risk_pct=RISK_PCT_PER_TRADE):
         """
-        Lot sizing yang benar untuk cent account.
+        Lot sizing untuk cent account dengan SL 8 poin.
         
-        Cent account: balance dalam cents (misal $779 = 77,900 cents)
-        1 lot cent = 0.01 lot standard = $0.01/pip
-        SL 15 pip × 0.01 lot = $0.15 risk per trade
+        Cent account: 1 lot = $1/pip, 0.01 lot = $0.01/pip
+        SL 8 poin = 80 pip
+        Risk per 0.01 lot = 80 × $0.01 = $0.80
         
-        Formula: risk_amount / (SL_pips × pip_value_per_lot)
-        Untuk cent account: pip_value = $0.01 per pip per 0.01 lot
-        SL = 15 pip → risk per 0.01 lot = $0.15
+        Dengan balance $515 dan risk 1%:
+        risk_amount = $5.15
+        lot = 5.15 / 0.80 = 0.06 → capped di MAX_LOT_PER_TRADE (0.01)
         
-        Dengan balance $779 dan risk 1%:
-        risk_amount = $7.79
-        lot = 7.79 / (15 × 0.01) = 7.79 / 0.15 = 0.05 lot → capped di MAX_LOT_PER_TRADE
+        Pakai MAX_LOT_PER_TRADE = 0.01 untuk kontrol ketat.
         """
-        risk_amount = balance * risk_pct
-        sl_pips     = SCALP_SL_POINTS * 10  # 1.5 poin = 15 pip
-        pip_value   = 0.01                   # $0.01 per pip per 0.01 lot (cent account)
-        
-        raw_lot = risk_amount / (sl_pips * pip_value * 100)  # × 100 karena per 0.01 lot
-        lot = round(max(0.01, min(raw_lot, MAX_LOT_PER_TRADE)), 2)
+        return MAX_LOT_PER_TRADE  # Fixed 0.01 lot per trade untuk cent account
         return lot
 
     def _is_trading_session(self):
@@ -666,21 +671,19 @@ class ForexExecutor:
                 continue
 
             # TRAILING STOP berdasarkan profit poin (price move)
-            # +1.5 pt (15 pip) -> breakeven
-            # +2.0 pt (20 pip) -> lock +1.0 pt
-            # +3.0 pt (30 pip) -> lock +2.0 pt
-            # +4.0 pt (40 pip) -> lock +3.0 pt
+            # SL naik setiap +5 poin profit, lock profit agresif
+            # Target TP 20 poin, trail dari +5 poin
             if profit_pt <= 0: continue
 
             new_sl = None
-            if profit_pt >= 4.0:
-                new_sl = (open_price + 3.0) if is_buy else (open_price - 3.0)
-            elif profit_pt >= 3.0:
+            if profit_pt >= 15.0:   # +15 poin → lock +10 poin
+                new_sl = (open_price + 10.0) if is_buy else (open_price - 10.0)
+            elif profit_pt >= 10.0: # +10 poin → lock +5 poin
+                new_sl = (open_price + 5.0) if is_buy else (open_price - 5.0)
+            elif profit_pt >= 7.0:  # +7 poin → lock +2 poin
                 new_sl = (open_price + 2.0) if is_buy else (open_price - 2.0)
-            elif profit_pt >= 2.0:
-                new_sl = (open_price + 1.0) if is_buy else (open_price - 1.0)
-            elif profit_pt >= 1.5:
-                new_sl = (open_price + 0.1) if is_buy else (open_price - 0.1)
+            elif profit_pt >= 5.0:  # +5 poin → breakeven
+                new_sl = (open_price + 0.5) if is_buy else (open_price - 0.5)
 
             if new_sl:
                 current_sl = float(p.get("stopLoss", 0))
