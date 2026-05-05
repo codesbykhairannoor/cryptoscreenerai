@@ -210,37 +210,50 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
     """
     ULTRA-FAST EXECUTION HANDLER
     =============================
-    Confidence 1-5 menentukan berapa lot yang dibuka.
-    Cek kondisi teknikal sebelum fire — kalau trend berlawanan, kurangi size.
+    Cek arah posisi aktif sebelum fire.
+    Kalau ada posisi aktif berlawanan arah, skip news execution.
     """
     execution_start = time.time()
     latency_ms      = (execution_start - ingestion_time) * 1000
 
-    # Lot sizing berdasarkan confidence
-    lot_map    = {2: (2, 0.01), 3: (3, 0.01), 4: (5, 0.01), 5: (8, 0.01)}
-    trades, lot = lot_map.get(confidence, (2, 0.01))
+    # Lot sizing berdasarkan confidence — max 2 trade (bukan 5/8)
+    lot_map    = {2: (1, 0.01), 3: (2, 0.01), 4: (2, 0.01), 5: (2, 0.01)}
+    trades, lot = lot_map.get(confidence, (1, 0.01))
+
+    sniper = get_sniper_instance()
+
+    # CEK POSISI AKTIF — jangan fire berlawanan arah posisi yang sedang running
+    try:
+        positions = sniper.fx._get_positions()
+        xau_positions = [p for p in positions if "XAU" in p.get("symbol", "").upper()]
+        if xau_positions:
+            active_types = set(p.get("type", "") for p in xau_positions)
+            has_buy  = "POSITION_TYPE_BUY"  in active_types
+            has_sell = "POSITION_TYPE_SELL" in active_types
+
+            if side == "buy" and has_sell and not has_buy:
+                print(f"[NEWS SKIP] Ada {len(xau_positions)} posisi SELL aktif. Skip BUY news.")
+                return
+            if side == "sell" and has_buy and not has_sell:
+                print(f"[NEWS SKIP] Ada {len(xau_positions)} posisi BUY aktif. Skip SELL news.")
+                return
+    except Exception:
+        pass  # Kalau gagal cek, tetap fire
 
     # Cek kondisi teknikal — kalau trend berlawanan, kurangi trades
-    sniper = get_sniper_instance()
     try:
-        ind = sniper.fx._calc_indicators()
+        ind   = sniper.fx._calc_indicators()
         trend = ind.get("trend", "NEUTRAL") if ind else "NEUTRAL"
         rsi   = ind.get("rsi", 50) if ind else 50
 
-        # Kalau trend berlawanan dengan news direction, kurangi agresivitas
-        if side == "buy" and trend == "BEARISH" and rsi < 35:
-            # RSI oversold + trend bearish = potential reversal, tetap entry tapi lebih kecil
-            trades = max(1, trades - 2)
-            print(f"[NEWS FILTER] Trend BEARISH tapi RSI oversold ({rsi}). Reduced to {trades} trades.")
-        elif side == "buy" and trend == "BEARISH" and rsi >= 35:
-            # Trend bearish + RSI tidak oversold = risky, kurangi lebih banyak
-            trades = max(1, trades - 3)
+        if side == "buy" and trend == "BEARISH" and rsi >= 35:
+            trades = max(1, trades - 1)
             print(f"[NEWS FILTER] Trend BEARISH RSI:{rsi}. Reduced to {trades} trades.")
-        elif side == "sell" and trend == "BULLISH":
-            trades = max(1, trades - 2)
-            print(f"[NEWS FILTER] Trend BULLISH. Reduced to {trades} trades.")
+        elif side == "sell" and trend == "BULLISH" and rsi <= 65:
+            trades = max(1, trades - 1)
+            print(f"[NEWS FILTER] Trend BULLISH RSI:{rsi}. Reduced to {trades} trades.")
     except Exception:
-        pass  # Kalau gagal cek, tetap fire dengan jumlah normal
+        pass
 
     print(f"\n{'='*60}")
     print(f"🎯 [NEWS EXECUTION] {side.upper()} XAUUSD")

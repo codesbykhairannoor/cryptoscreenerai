@@ -25,10 +25,15 @@ load_dotenv()
 MAX_POSITIONS        = 5      # Max 5 posisi sekaligus
 SCAN_INTERVAL        = 3      # Scan setiap 3 detik
 COOLDOWN_AFTER_TRADE = 60     # Cooldown 60 detik antar entry
+COOLDOWN_AFTER_CONFLICT = 600 # 10 menit cooldown setelah direction conflict
 EQUITY_GUARD_PCT     = 0.92   # Halt kalau equity < 92%
 MAX_SPREAD_POINTS    = 300    # Toleransi spread
-MIN_MOMENTUM_SCORE   = 35     # Naikkan threshold — score 28 terlalu rendah
+MIN_MOMENTUM_SCORE   = 35     # Minimum score untuk entry
 CANDLE_LIMIT         = 100
+
+# Max trade per signal — dikurangi untuk kontrol risk
+# 5 trade salah arah = loss besar. Max 2 lebih aman.
+MAX_TRADES_PER_SIGNAL = 2     # Max 2 trade per signal
 
 # TP/SL yang masuk akal untuk XAUUSD cent account
 SCALP_TP_POINTS      = 20.0   # TP 200 pip (20 poin)
@@ -473,10 +478,10 @@ class ForexExecutor:
         if rsi == 50.0 and trend == "NEUTRAL" and pump_sig == "NONE" and not choch_b and not choch_s:
             return None, 0, 0
 
-        # Jumlah trade berdasarkan confidence (max 5)
-        if best_score >= 80:   trades = 5
-        elif best_score >= 65: trades = 3
-        elif best_score >= 50: trades = 2
+        # Jumlah trade berdasarkan confidence (max MAX_TRADES_PER_SIGNAL)
+        if best_score >= 80:   trades = MAX_TRADES_PER_SIGNAL
+        elif best_score >= 65: trades = min(2, MAX_TRADES_PER_SIGNAL)
+        elif best_score >= 50: trades = min(2, MAX_TRADES_PER_SIGNAL)
         else:                  trades = 1
 
         return best_side, best_score, trades
@@ -662,6 +667,8 @@ class ForexExecutor:
         """
         if not hasattr(self, "_close_attempted"):
             self._close_attempted = set()
+        if not hasattr(self, "_conflict_cooldown"):
+            self._conflict_cooldown = 0
 
         # DIRECTION CONFLICT CHECK
         xau_buys  = [p for p in positions if "XAU" in p.get("symbol","").upper()
@@ -674,7 +681,7 @@ class ForexExecutor:
             sell_profit = sum(float(p.get("profit", 0)) for p in xau_sells)
             to_close = xau_sells if buy_profit >= sell_profit else xau_buys
             direction = "SELL" if buy_profit >= sell_profit else "BUY"
-            print(f"[FOREX CONFLICT] BUY= vs SELL=. Closing {direction}.")
+            print(f"[FOREX CONFLICT] BUY=${buy_profit:.2f} vs SELL=${sell_profit:.2f}. Closing {direction}.")
             for p in to_close:
                 pos_id = p.get("id")
                 if pos_id not in self._close_attempted:
@@ -690,6 +697,9 @@ class ForexExecutor:
                             self._close_attempted.discard(pos_id)
                     except Exception as e:
                         self._close_attempted.discard(pos_id)
+            # Cooldown 10 menit setelah conflict — jangan langsung buka arah baru
+            self._conflict_cooldown = time.time()
+            print(f"[FOREX CONFLICT] Cooldown {COOLDOWN_AFTER_CONFLICT}s. Tidak entry baru dulu.")
 
         # TRAILING SL
         for p in positions:
@@ -846,9 +856,16 @@ class ForexExecutor:
                 now = time.time()
                 cooldown_remaining = COOLDOWN_AFTER_TRADE - (now - last_auto_trade)
                 if cooldown_remaining > 0:
-                    # Hanya print setiap 30 detik supaya tidak spam
                     if int(now) % 30 < 3:
                         print(f"[FOREX COOLDOWN] {round(cooldown_remaining)}s remaining")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+
+                # CONFLICT COOLDOWN — tunggu 10 menit setelah direction conflict
+                conflict_remaining = COOLDOWN_AFTER_CONFLICT - (now - getattr(self, '_conflict_cooldown', 0))
+                if conflict_remaining > 0:
+                    if int(now) % 60 < 3:
+                        print(f"[FOREX CONFLICT COOLDOWN] {round(conflict_remaining)}s remaining after conflict")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
