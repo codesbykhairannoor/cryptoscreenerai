@@ -670,60 +670,10 @@ class ForexExecutor:
         if not hasattr(self, "_conflict_cooldown"):
             self._conflict_cooldown = 0
 
-        # DIRECTION CONFLICT CHECK
-        xau_buys  = [p for p in positions if "XAU" in p.get("symbol","").upper()
-                     and p.get("type") == "POSITION_TYPE_BUY"]
-        xau_sells = [p for p in positions if "XAU" in p.get("symbol","").upper()
-                     and p.get("type") == "POSITION_TYPE_SELL"]
-
-        if xau_buys and xau_sells:
-            buy_profit  = sum(float(p.get("profit", 0)) for p in xau_buys)
-            sell_profit = sum(float(p.get("profit", 0)) for p in xau_sells)
-            to_close = xau_sells if buy_profit >= sell_profit else xau_buys
-            direction = "SELL" if buy_profit >= sell_profit else "BUY"
-
-            # CEK MINIMUM HOLDING TIME — jangan close posisi yang baru dibuka < 30 menit
-            # Ini mencegah FOMO flip-flop
-            now_ts = time.time()
-            too_young = []
-            for p in to_close:
-                open_time_str = p.get("time", p.get("openTime", ""))
-                if open_time_str:
-                    try:
-                        import datetime
-                        # MetaAPI time format: "2026-05-05T10:54:28.000Z"
-                        open_dt = datetime.datetime.fromisoformat(open_time_str.replace("Z", "+00:00"))
-                        age_minutes = (datetime.datetime.now(datetime.timezone.utc) - open_dt).total_seconds() / 60
-                        if age_minutes < MIN_HOLDING_MINUTES:
-                            too_young.append(p)
-                    except Exception:
-                        pass
-
-            if too_young:
-                print(f"[CONFLICT SKIP] {len(too_young)} posisi baru dibuka < {MIN_HOLDING_MINUTES} menit. "
-                      f"Tidak close dulu — hindari FOMO flip-flop.")
-                # Tidak close, tidak buka baru
-                return  # Skip trailing juga untuk posisi ini
-
-            print(f"[FOREX CONFLICT] BUY=${buy_profit:.2f} vs SELL=${sell_profit:.2f}. Closing {direction}.")
-            for p in to_close:
-                pos_id = p.get("id")
-                if pos_id not in self._close_attempted:
-                    self._close_attempted.add(pos_id)
-                    try:
-                        url = f"{self.base_url}/users/current/accounts/{self.account_id}/trade"
-                        headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
-                        res = requests.post(url, headers=headers,
-                            json={"actionType": "POSITION_CLOSE_ID", "positionId": pos_id}, timeout=8)
-                        if res.status_code == 200:
-                            print(f"[FOREX CONFLICT CLOSE] {pos_id} closed")
-                        else:
-                            self._close_attempted.discard(pos_id)
-                    except Exception as e:
-                        self._close_attempted.discard(pos_id)
-            # Cooldown 10 menit setelah conflict — jangan langsung buka arah baru
-            self._conflict_cooldown = time.time()
-            print(f"[FOREX CONFLICT] Cooldown {COOLDOWN_AFTER_CONFLICT}s. Tidak entry baru dulu.")
+        # DIRECTION CONFLICT — DIHAPUS
+        # Bot commit ke satu arah sampai TP atau SL kena.
+        # Tidak ada flip-flop. SL yang handle exit, bukan conflict detection.
+        # Satu-satunya exception: news confidence 5 (NFP/FOMC) via news_sniper.py
 
         # TRAILING SL
         for p in positions:
@@ -885,17 +835,10 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # CONFLICT COOLDOWN — tunggu 10 menit setelah direction conflict
-                conflict_remaining = COOLDOWN_AFTER_CONFLICT - (now - getattr(self, '_conflict_cooldown', 0))
-                if conflict_remaining > 0:
-                    if int(now) % 60 < 3:
-                        print(f"[FOREX CONFLICT COOLDOWN] {round(conflict_remaining)}s remaining after conflict")
-                    time.sleep(SCAN_INTERVAL)
-                    continue
-
                 # POSITION QUALITY CHECK
                 # 1. Jangan buka trade baru kalau ada posisi yang masih rugi
                 # 2. Hard cap: max 3 posisi XAU aktif sekaligus
+                # 3. COMMIT TO DIRECTION: kalau ada posisi aktif, hanya boleh buka arah yang sama
                 xau_positions = [p for p in positions if "XAU" in p.get("symbol", "").upper()]
                 if xau_positions:
                     # Hard cap 3 posisi
@@ -904,6 +847,22 @@ class ForexExecutor:
                             print(f"[FOREX QUALITY] Sudah {len(xau_positions)} posisi aktif (max 3). Skip.")
                         time.sleep(SCAN_INTERVAL)
                         continue
+
+                    # COMMIT TO DIRECTION — hanya boleh tambah posisi searah
+                    active_types = set(p.get("type", "") for p in xau_positions)
+                    has_buy  = "POSITION_TYPE_BUY"  in active_types
+                    has_sell = "POSITION_TYPE_SELL" in active_types
+                    if has_buy and side == "sell":
+                        if int(now) % 60 < 3:
+                            print(f"[FOREX COMMIT] Ada posisi BUY aktif. Tidak buka SELL. Tunggu SL/TP.")
+                        time.sleep(SCAN_INTERVAL)
+                        continue
+                    if has_sell and side == "buy":
+                        if int(now) % 60 < 3:
+                            print(f"[FOREX COMMIT] Ada posisi SELL aktif. Tidak buka BUY. Tunggu SL/TP.")
+                        time.sleep(SCAN_INTERVAL)
+                        continue
+
                     # Jangan tambah kalau ada yang rugi
                     losing = [p for p in xau_positions if float(p.get("profit", 0)) < -0.5]
                     if losing:
