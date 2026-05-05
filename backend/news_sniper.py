@@ -222,10 +222,17 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
 
     sniper = get_sniper_instance()
 
-    # CEK POSISI AKTIF — jangan fire berlawanan arah posisi yang sedang running
+    # CEK POSISI AKTIF
     try:
         positions = sniper.fx._get_positions()
         xau_positions = [p for p in positions if "XAU" in p.get("symbol", "").upper()]
+
+        # Hard cap: max 3 posisi XAU aktif (sama dengan main engine)
+        if len(xau_positions) >= 3:
+            print(f"[NEWS SKIP] Sudah {len(xau_positions)} posisi aktif (max 3). Skip news.")
+            return
+
+        # Jangan fire berlawanan arah
         if xau_positions:
             active_types = set(p.get("type", "") for p in xau_positions)
             has_buy  = "POSITION_TYPE_BUY"  in active_types
@@ -237,6 +244,19 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
             if side == "sell" and has_buy and not has_sell:
                 print(f"[NEWS SKIP] Ada {len(xau_positions)} posisi BUY aktif. Skip SELL news.")
                 return
+
+            # Jangan tambah kalau ada yang rugi > $0.5
+            losing = [p for p in xau_positions if float(p.get("profit", 0)) < -0.5]
+            if losing:
+                print(f"[NEWS SKIP] {len(losing)} posisi rugi. Skip news.")
+                return
+
+        # Sesuaikan jumlah trade dengan slot yang tersedia
+        slots = max(0, 3 - len(xau_positions))
+        trades = min(trades, slots)
+        if trades <= 0:
+            return
+
     except Exception:
         pass  # Kalau gagal cek, tetap fire
 
