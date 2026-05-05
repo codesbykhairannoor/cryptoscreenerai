@@ -240,6 +240,26 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
             if news_conflicts:
                 # News berlawanan arah posisi aktif
                 if confidence >= 4:
+                    # Cek minimum holding time — jangan close posisi yang baru dibuka < 30 menit
+                    import datetime
+                    now_utc = datetime.datetime.now(datetime.timezone.utc)
+                    too_young = []
+                    for p in xau_positions:
+                        open_time_str = p.get("time", p.get("openTime", ""))
+                        if open_time_str:
+                            try:
+                                open_dt = datetime.datetime.fromisoformat(open_time_str.replace("Z", "+00:00"))
+                                age_min = (now_utc - open_dt).total_seconds() / 60
+                                if age_min < 30:
+                                    too_young.append(p)
+                            except Exception:
+                                pass
+
+                    if too_young:
+                        print(f"[NEWS SKIP] {len(too_young)} posisi baru dibuka < 30 menit. "
+                              f"Tidak override — hindari FOMO.")
+                        return
+
                     # News kuat (geopolitical/NFP/FOMC) → close semua posisi, lalu masuk arah baru
                     print(f"[NEWS OVERRIDE] Confidence {confidence}/5. Closing all {len(xau_positions)} "
                           f"{'BUY' if has_buy else 'SELL'} positions, then entering {side.upper()}.")

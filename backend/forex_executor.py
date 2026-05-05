@@ -25,14 +25,13 @@ load_dotenv()
 MAX_POSITIONS        = 5      # Max 5 posisi sekaligus
 SCAN_INTERVAL        = 3      # Scan setiap 3 detik
 COOLDOWN_AFTER_TRADE = 60     # Cooldown 60 detik antar entry
-COOLDOWN_AFTER_CONFLICT = 600 # 10 menit cooldown setelah direction conflict
+COOLDOWN_AFTER_CONFLICT = 1800  # 30 MENIT cooldown setelah direction conflict (naik dari 10 menit)
+MIN_HOLDING_MINUTES  = 30     # Minimum 30 menit hold sebelum boleh pindah arah
 EQUITY_GUARD_PCT     = 0.92   # Halt kalau equity < 92%
 MAX_SPREAD_POINTS    = 300    # Toleransi spread
-MIN_MOMENTUM_SCORE   = 35     # Minimum score untuk entry
+MIN_MOMENTUM_SCORE   = 40     # Naikkan threshold — 35 terlalu mudah trigger
 CANDLE_LIMIT         = 100
 
-# Max trade per signal — dikurangi untuk kontrol risk
-# 5 trade salah arah = loss besar. Max 2 lebih aman.
 MAX_TRADES_PER_SIGNAL = 3     # Max 3 trade per signal
 
 # TP/SL yang masuk akal untuk XAUUSD cent account
@@ -682,6 +681,30 @@ class ForexExecutor:
             sell_profit = sum(float(p.get("profit", 0)) for p in xau_sells)
             to_close = xau_sells if buy_profit >= sell_profit else xau_buys
             direction = "SELL" if buy_profit >= sell_profit else "BUY"
+
+            # CEK MINIMUM HOLDING TIME — jangan close posisi yang baru dibuka < 30 menit
+            # Ini mencegah FOMO flip-flop
+            now_ts = time.time()
+            too_young = []
+            for p in to_close:
+                open_time_str = p.get("time", p.get("openTime", ""))
+                if open_time_str:
+                    try:
+                        import datetime
+                        # MetaAPI time format: "2026-05-05T10:54:28.000Z"
+                        open_dt = datetime.datetime.fromisoformat(open_time_str.replace("Z", "+00:00"))
+                        age_minutes = (datetime.datetime.now(datetime.timezone.utc) - open_dt).total_seconds() / 60
+                        if age_minutes < MIN_HOLDING_MINUTES:
+                            too_young.append(p)
+                    except Exception:
+                        pass
+
+            if too_young:
+                print(f"[CONFLICT SKIP] {len(too_young)} posisi baru dibuka < {MIN_HOLDING_MINUTES} menit. "
+                      f"Tidak close dulu — hindari FOMO flip-flop.")
+                # Tidak close, tidak buka baru
+                return  # Skip trailing juga untuk posisi ini
+
             print(f"[FOREX CONFLICT] BUY=${buy_profit:.2f} vs SELL=${sell_profit:.2f}. Closing {direction}.")
             for p in to_close:
                 pos_id = p.get("id")
