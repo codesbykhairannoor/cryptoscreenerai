@@ -227,38 +227,70 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
         positions = sniper.fx._get_positions()
         xau_positions = [p for p in positions if "XAU" in p.get("symbol", "").upper()]
 
-        # Hard cap: max 3 posisi XAU aktif (sama dengan main engine)
-        if len(xau_positions) >= 3:
-            print(f"[NEWS SKIP] Sudah {len(xau_positions)} posisi aktif (max 3). Skip news.")
-            return
-
-        # Jangan fire berlawanan arah
         if xau_positions:
             active_types = set(p.get("type", "") for p in xau_positions)
             has_buy  = "POSITION_TYPE_BUY"  in active_types
             has_sell = "POSITION_TYPE_SELL" in active_types
 
-            if side == "buy" and has_sell and not has_buy:
-                print(f"[NEWS SKIP] Ada {len(xau_positions)} posisi SELL aktif. Skip BUY news.")
-                return
-            if side == "sell" and has_buy and not has_sell:
-                print(f"[NEWS SKIP] Ada {len(xau_positions)} posisi BUY aktif. Skip SELL news.")
-                return
+            # Cek apakah news berlawanan arah dengan posisi aktif
+            news_conflicts = (side == "buy" and has_sell and not has_buy) or \
+                             (side == "sell" and has_buy and not has_sell)
+            news_same_dir  = (side == "buy" and has_buy) or (side == "sell" and has_sell)
 
-            # Jangan tambah kalau ada yang rugi > $0.5
-            losing = [p for p in xau_positions if float(p.get("profit", 0)) < -0.5]
-            if losing:
-                print(f"[NEWS SKIP] {len(losing)} posisi rugi. Skip news.")
-                return
+            if news_conflicts:
+                # News berlawanan arah posisi aktif
+                if confidence >= 4:
+                    # News kuat (geopolitical/NFP/FOMC) → close semua posisi, lalu masuk arah baru
+                    print(f"[NEWS OVERRIDE] Confidence {confidence}/5. Closing all {len(xau_positions)} "
+                          f"{'BUY' if has_buy else 'SELL'} positions, then entering {side.upper()}.")
+                    closed = 0
+                    for p in xau_positions:
+                        pos_id = p.get("id")
+                        try:
+                            url = f"{sniper.fx.base_url}/users/current/accounts/{sniper.fx.account_id}/trade"
+                            headers = {"auth-token": sniper.fx.api_token, "Content-Type": "application/json"}
+                            res = requests.post(url, headers=headers,
+                                json={"actionType": "POSITION_CLOSE_ID", "positionId": pos_id}, timeout=8)
+                            if res.status_code == 200:
+                                closed += 1
+                        except Exception:
+                            pass
+                    print(f"[NEWS OVERRIDE] Closed {closed}/{len(xau_positions)} positions.")
+                    time.sleep(0.5)  # Tunggu sebentar sebelum buka posisi baru
+                    # Reset trades ke max 3
+                    trades = min(trades, 3)
+                else:
+                    # News lemah (confidence 2-3) → skip, tidak worth it close semua
+                    print(f"[NEWS SKIP] Confidence {confidence}/5 terlalu rendah untuk override "
+                          f"{len(xau_positions)} posisi aktif. Skip.")
+                    return
 
-        # Sesuaikan jumlah trade dengan slot yang tersedia
-        slots = max(0, 3 - len(xau_positions))
-        trades = min(trades, slots)
+            elif news_same_dir:
+                # News searah dengan posisi aktif
+                # Cek slot tersedia
+                slots = max(0, 3 - len(xau_positions))
+                if slots <= 0:
+                    print(f"[NEWS SKIP] Sudah {len(xau_positions)} posisi aktif (max 3). Skip.")
+                    return
+                trades = min(trades, slots)
+
+                # Jangan tambah kalau ada yang rugi > $0.5
+                losing = [p for p in xau_positions if float(p.get("profit", 0)) < -0.5]
+                if losing:
+                    print(f"[NEWS SKIP] {len(losing)} posisi rugi. Skip news.")
+                    return
+            else:
+                # Tidak ada posisi aktif — cek slot
+                slots = max(0, 3 - len(xau_positions))
+                trades = min(trades, slots)
+                if trades <= 0:
+                    return
+
         if trades <= 0:
             return
 
     except Exception:
-        pass  # Kalau gagal cek, tetap fire
+        pass  # Kalau gagal cek, tetap fire dengan jumlah original
 
     # Cek kondisi teknikal — kalau trend berlawanan, kurangi trades
     try:
