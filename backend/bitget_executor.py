@@ -444,6 +444,10 @@ class BitgetExecutor:
                     self.exchange.create_order(symbol, 'market', 'sell' if side in ['long','buy'] else 'buy', size)
                     if symbol in state.pos_start_time: del state.pos_start_time[symbol]
                     if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                    # Track koin ini di shared_state supaya engine tidak masuk lagi 30 menit
+                    clean = self._clean_symbol(symbol)
+                    if not hasattr(state, 'recently_exited'): state.recently_exited = {}
+                    state.recently_exited[clean] = time.time()
                     continue
 
                 if now - self._last_sl_check.get(symbol, 0) < 10: continue
@@ -499,22 +503,27 @@ class BitgetExecutor:
                         self._last_sl_set[symbol] = now
 
                 # ── TRAILING SL BERBASIS PEAK PnL ─────────────────────────────
-                # SL dihitung dari PEAK PnL, bukan PnL saat ini
-                # Gap = 15% → kalau peak 50%, SL di 35%
-                # Ini berarti kalau PnL turun dari 50% ke 30%, SL tetap di 35%
+                # Gap = 10% antara peak PnL dan SL (bukan 15%)
+                # SL TIDAK naik ke breakeven — hanya naik saat profit sudah 20%+
+                # Ini lebih toleran terhadap noise dan spread
+                #
+                # Contoh: entry $100
+                # peak 20% → SL di $110 (lock 10%)
+                # peak 30% → SL di $120 (lock 20%)
+                # peak 40% → SL di $130 (lock 30%)
+                # peak 50% → SL di $140 (lock 40%)
                 new_sl = 0
                 if side in ['long', 'buy']:
-                    if peak_pnl >= 50: new_sl = entry * 1.35   # peak 50% → SL lock 35%
-                    elif peak_pnl >= 40: new_sl = entry * 1.25  # peak 40% → SL lock 25%
-                    elif peak_pnl >= 30: new_sl = entry * 1.15  # peak 30% → SL lock 15%
-                    elif peak_pnl >= 20: new_sl = entry * 1.05  # peak 20% → SL lock 5%
-                    elif peak_pnl >= 10: new_sl = entry * 1.002 # peak 10% → breakeven
+                    if peak_pnl >= 50: new_sl = entry * 1.40   # peak 50% → lock 40%
+                    elif peak_pnl >= 40: new_sl = entry * 1.30  # peak 40% → lock 30%
+                    elif peak_pnl >= 30: new_sl = entry * 1.20  # peak 30% → lock 20%
+                    elif peak_pnl >= 20: new_sl = entry * 1.10  # peak 20% → lock 10%
+                    # Tidak ada breakeven — SL hanya naik kalau sudah profit 20%+
                 else:
-                    if peak_pnl >= 50: new_sl = entry * 0.65
-                    elif peak_pnl >= 40: new_sl = entry * 0.75
-                    elif peak_pnl >= 30: new_sl = entry * 0.85
-                    elif peak_pnl >= 20: new_sl = entry * 0.95
-                    elif peak_pnl >= 10: new_sl = entry * 0.998
+                    if peak_pnl >= 50: new_sl = entry * 0.60
+                    elif peak_pnl >= 40: new_sl = entry * 0.70
+                    elif peak_pnl >= 30: new_sl = entry * 0.80
+                    elif peak_pnl >= 20: new_sl = entry * 0.90
 
                 if new_sl > 0:
                     # SL hanya boleh naik (long) atau turun (short) — tidak pernah mundur

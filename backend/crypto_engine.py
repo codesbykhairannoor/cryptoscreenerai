@@ -384,6 +384,9 @@ def run_crypto_engine():
     last_news_report  = 0
     last_global_report = 0
     _dxy_cache        = {"trend": "NEUTRAL", "ts": 0}
+    # Track koin yang baru di-exit — cooldown 30 menit sebelum masuk lagi
+    # Ini mencegah flip-flop (masuk BSB, exit, masuk BSB lagi)
+    _recently_exited  = {}  # {clean_base: exit_timestamp}
 
     while True:
         try:
@@ -455,6 +458,21 @@ def run_crypto_engine():
             dxy_change = _dxy_cache.get("change", 0)
 
             # ── 9. SCAN LOOP ──────────────────────────────────────────────────
+            # Bersihkan recently_exited yang sudah > 30 menit
+            _recently_exited = {k: v for k, v in _recently_exited.items()
+                                 if now - v < 1800}
+            # Merge dengan shared_state.recently_exited (dari sideways exit)
+            try:
+                from shared_state import state as _state
+                if hasattr(_state, 'recently_exited'):
+                    for k, v in list(_state.recently_exited.items()):
+                        if now - v < 1800:
+                            _recently_exited[k] = v
+                        else:
+                            del _state.recently_exited[k]
+            except Exception:
+                pass
+
             traded_this_cycle = False
             for coin in candidates[:20]:
                 if traded_this_cycle:
@@ -464,6 +482,11 @@ def run_crypto_engine():
 
                 symbol     = coin.get('symbol', '')
                 clean_base = executor._clean_symbol(symbol)
+
+                # Skip koin yang baru di-exit dalam 30 menit terakhir (anti flip-flop)
+                if clean_base in _recently_exited:
+                    mins_ago = round((now - _recently_exited[clean_base]) / 60, 1)
+                    continue
 
                 # Skip kalau sudah ada posisi di coin ini
                 if clean_base in open_bases:
@@ -551,6 +574,8 @@ def run_crypto_engine():
                     traded_this_cycle = True
                     open_count       += 1
                     open_bases.append(clean_base)
+                    # Track koin ini — tidak boleh masuk lagi dalam 30 menit
+                    _recently_exited.pop(clean_base, None)
                     print(f"[TRADE LOGGED] {clean_base} {side.upper()} @ {mark_price}")
                 else:
                     print(f"[ORDER FAILED] {clean_base}: {order}")
