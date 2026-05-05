@@ -547,13 +547,15 @@ class BitgetExecutor:
                     elif peak_pnl >= 30: new_sl = entry * 1.20  # peak 30% → lock 20%
                     elif peak_pnl >= 20: new_sl = entry * 1.10  # peak 20% → lock 10%
                     elif peak_pnl >= 15: new_sl = entry * 1.05  # peak 15% → lock 5%
-                    # Di bawah 15%: SL tidak naik — hindari keluar di breakeven kemakan fee
+                    elif peak_pnl >= 10: new_sl = entry * 0.992 # peak 10% → perketat SL ke -8%
+                    # Di bawah 10%: SL tidak berubah dari -15% awal
                 else:
                     if peak_pnl >= 50: new_sl = entry * 0.60
                     elif peak_pnl >= 40: new_sl = entry * 0.70
                     elif peak_pnl >= 30: new_sl = entry * 0.80
                     elif peak_pnl >= 20: new_sl = entry * 0.90
                     elif peak_pnl >= 15: new_sl = entry * 0.95  # peak 15% → lock 5%
+                    elif peak_pnl >= 10: new_sl = entry * 1.008 # peak 10% → perketat SL ke -8%
 
                 if new_sl > 0:
                     # SL hanya boleh naik (long) atau turun (short) — tidak pernah mundur
