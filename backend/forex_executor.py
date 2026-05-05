@@ -212,11 +212,11 @@ class ForexExecutor:
         3. Price momentum dari harga live MetaAPI (fallback)
         Tidak pakai proxy atau data dari exchange lain.
         """
-        candles = self.get_candles(timeframe="5m", limit=100)
+        candles = self.get_candles(timeframe="15m", limit=100)
 
-        # Level 2: Coba candle 1m kalau 5m gagal
+        # Level 2: Coba candle 5m kalau 15m gagal
         if len(candles) < 20:
-            candles = self.get_candles(timeframe="1m", limit=50)
+            candles = self.get_candles(timeframe="5m", limit=100)
 
         # Level 3: Fallback — tidak ada candle tersedia
         # Gunakan price momentum dari harga live MetaAPI
