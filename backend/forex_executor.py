@@ -869,6 +869,17 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
+                # POSITION QUALITY CHECK — jangan buka trade baru kalau ada posisi yang masih rugi
+                # Tunggu sampai semua posisi aktif profit atau kena SL
+                xau_positions = [p for p in positions if "XAU" in p.get("symbol", "").upper()]
+                if xau_positions:
+                    losing_positions = [p for p in xau_positions if float(p.get("profit", 0)) < -0.5]
+                    if losing_positions:
+                        if int(now) % 30 < 3:
+                            print(f"[FOREX QUALITY] {len(losing_positions)} posisi masih rugi. Tunggu dulu.")
+                        time.sleep(SCAN_INTERVAL)
+                        continue
+
                 # CALCULATE INDICATORS (with fallback if candles unavailable)
                 print(f"[FOREX SCAN] Calculating indicators for {self._working_symbol}...")
                 ind = self._calc_indicators()
