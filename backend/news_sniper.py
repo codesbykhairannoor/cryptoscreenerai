@@ -216,8 +216,8 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
     execution_start = time.time()
     latency_ms      = (execution_start - ingestion_time) * 1000
 
-    # Lot sizing berdasarkan confidence — max 2 trade (bukan 5/8)
-    lot_map    = {2: (1, 0.01), 3: (2, 0.01), 4: (2, 0.01), 5: (2, 0.01)}
+    # Lot sizing berdasarkan confidence — max 3 trade
+    lot_map    = {2: (1, 0.01), 3: (2, 0.01), 4: (3, 0.01), 5: (3, 0.01)}
     trades, lot = lot_map.get(confidence, (1, 0.01))
 
     sniper = get_sniper_instance()

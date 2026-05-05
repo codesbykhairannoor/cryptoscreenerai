@@ -33,7 +33,7 @@ CANDLE_LIMIT         = 100
 
 # Max trade per signal — dikurangi untuk kontrol risk
 # 5 trade salah arah = loss besar. Max 2 lebih aman.
-MAX_TRADES_PER_SIGNAL = 2     # Max 2 trade per signal
+MAX_TRADES_PER_SIGNAL = 3     # Max 3 trade per signal
 
 # TP/SL yang masuk akal untuk XAUUSD cent account
 SCALP_TP_POINTS      = 20.0   # TP 200 pip (20 poin)
