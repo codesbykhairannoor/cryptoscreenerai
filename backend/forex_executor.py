@@ -479,6 +479,7 @@ class ForexExecutor:
             return None, 0, 0
 
         # Jumlah trade berdasarkan confidence (max MAX_TRADES_PER_SIGNAL)
+        # Tapi tidak boleh melebihi slot yang tersedia
         if best_score >= 80:   trades = MAX_TRADES_PER_SIGNAL
         elif best_score >= 65: trades = min(2, MAX_TRADES_PER_SIGNAL)
         elif best_score >= 50: trades = min(2, MAX_TRADES_PER_SIGNAL)
@@ -869,14 +870,22 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # POSITION QUALITY CHECK — jangan buka trade baru kalau ada posisi yang masih rugi
-                # Tunggu sampai semua posisi aktif profit atau kena SL
+                # POSITION QUALITY CHECK
+                # 1. Jangan buka trade baru kalau ada posisi yang masih rugi
+                # 2. Hard cap: max 3 posisi XAU aktif sekaligus
                 xau_positions = [p for p in positions if "XAU" in p.get("symbol", "").upper()]
                 if xau_positions:
-                    losing_positions = [p for p in xau_positions if float(p.get("profit", 0)) < -0.5]
-                    if losing_positions:
+                    # Hard cap 3 posisi
+                    if len(xau_positions) >= 3:
+                        if int(now) % 60 < 3:
+                            print(f"[FOREX QUALITY] Sudah {len(xau_positions)} posisi aktif (max 3). Skip.")
+                        time.sleep(SCAN_INTERVAL)
+                        continue
+                    # Jangan tambah kalau ada yang rugi
+                    losing = [p for p in xau_positions if float(p.get("profit", 0)) < -0.5]
+                    if losing:
                         if int(now) % 30 < 3:
-                            print(f"[FOREX QUALITY] {len(losing_positions)} posisi masih rugi. Tunggu dulu.")
+                            print(f"[FOREX QUALITY] {len(losing)} posisi rugi. Tunggu dulu.")
                         time.sleep(SCAN_INTERVAL)
                         continue
 
@@ -902,8 +911,9 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # POSITION LIMIT — jangan melebihi MAX_POSITIONS
-                slots_available = MAX_POSITIONS - active_count
+                # POSITION LIMIT — hard cap 3 posisi XAU aktif
+                xau_active = len([p for p in positions if "XAU" in p.get("symbol", "").upper()])
+                slots_available = max(0, 3 - xau_active)  # Max 3 posisi XAU
                 trades_to_open  = min(trades_to_open, slots_available)
                 if trades_to_open <= 0:
                     time.sleep(SCAN_INTERVAL)
