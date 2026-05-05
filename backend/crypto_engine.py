@@ -569,13 +569,12 @@ def run_crypto_engine():
 
                 success, order = executor.place_order(symbol, side, amount, tp=tp, sl=sl, leverage=LEVERAGE)
                 if success:
-                    log_trade(symbol, mark_price, tp, sl)
+                    log_trade(symbol, mark_price, tp, sl,
+                              side=side, score=combined_score, reason=reason)
                     last_exec_time    = time.time()
                     traded_this_cycle = True
                     open_count       += 1
                     open_bases.append(clean_base)
-                    # Track koin ini — tidak boleh masuk lagi dalam 30 menit
-                    _recently_exited.pop(clean_base, None)
                     print(f"[TRADE LOGGED] {clean_base} {side.upper()} @ {mark_price}")
                 else:
                     print(f"[ORDER FAILED] {clean_base}: {order}")
