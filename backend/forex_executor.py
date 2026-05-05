@@ -565,7 +565,6 @@ class ForexExecutor:
         Pakai MAX_LOT_PER_TRADE = 0.01 untuk kontrol ketat.
         """
         return MAX_LOT_PER_TRADE  # Fixed 0.01 lot per trade untuk cent account
-        return lot
 
     def _is_trading_session(self):
         """
@@ -583,6 +582,11 @@ class ForexExecutor:
     # --- POSITIONS ---
 
     def _get_positions(self):
+        """
+        Ambil posisi aktif dari MetaAPI.
+        Kalau timeout/error, pakai cache terakhir yang valid.
+        Ini mencegah bot pikir tidak ada posisi saat MetaAPI timeout.
+        """
         if not self.is_active: return []
         try:
             url = f"{self.base_url}/users/current/accounts/{self.account_id}/positions"
@@ -590,9 +594,21 @@ class ForexExecutor:
             res = requests.get(url, headers=headers, timeout=10)
             if res.status_code == 200:
                 data = res.json()
-                return data if isinstance(data, list) else []
+                if isinstance(data, list):
+                    # Simpan cache kalau berhasil
+                    self._positions_cache = data
+                    self._positions_cache_ts = time.time()
+                    return data
         except Exception:
             pass
+
+        # Fallback ke cache kalau timeout (max 60 detik)
+        cache = getattr(self, '_positions_cache', [])
+        cache_ts = getattr(self, '_positions_cache_ts', 0)
+        if cache and time.time() - cache_ts < 60:
+            print(f"[FOREX POSITIONS] MetaAPI timeout, pakai cache ({len(cache)} posisi)")
+            return cache
+
         return []
 
     # --- ORDER EXECUTION ---

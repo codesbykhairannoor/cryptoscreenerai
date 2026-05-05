@@ -8,7 +8,7 @@ from data_fetcher import (
     get_retail_sentiment, detect_institutional_flow
 )
 from ai_model import analyze_and_sort
-from database import log_trade, get_performance_stats
+from database import log_trade, get_performance_stats, init_db
 from bitget_executor import BitgetExecutor
 from crypto_engine import run_crypto_engine, detect_volatility_spike
 from forex_executor import ForexExecutor
@@ -29,7 +29,14 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
-    # 0. Sync State Memory (Anti-Amnesia Pillar)
+    # 0. Database migration — tambah kolom baru kalau belum ada
+    try:
+        init_db()
+        print("[DB] Database migration selesai.")
+    except Exception as e:
+        print(f"[DB] Migration error: {e}")
+
+    # 1. Sync State Memory (Anti-Amnesia Pillar)
     try:
         executor = BitgetExecutor()
         executor.sync_state_with_exchange()
