@@ -29,7 +29,7 @@ COOLDOWN_AFTER_CONFLICT = 1800  # 30 MENIT cooldown setelah direction conflict (
 MIN_HOLDING_MINUTES  = 30     # Minimum 30 menit hold sebelum boleh pindah arah
 EQUITY_GUARD_PCT     = 0.92   # Halt kalau equity < 92%
 MAX_SPREAD_POINTS    = 300    # Toleransi spread
-MIN_MOMENTUM_SCORE   = 40     # Naikkan threshold — 35 terlalu mudah trigger
+MIN_MOMENTUM_SCORE   = 45     # Threshold lebih selektif
 CANDLE_LIMIT         = 100
 
 MAX_TRADES_PER_SIGNAL = 3     # Max 3 trade per signal
@@ -184,6 +184,24 @@ class ForexExecutor:
         return []
 
     # --- TECHNICAL INDICATORS FROM METAAPI CANDLES ---
+
+    def _get_1h_trend(self):
+        """Ambil trend 1h dari candle MetaAPI. Return BULLISH/BEARISH/NEUTRAL."""
+        try:
+            candles_1h = self.get_candles(timeframe="1h", limit=50)
+            if len(candles_1h) < 20:
+                return "NEUTRAL"
+            closes = [float(c.get("close", 0)) for c in candles_1h]
+            ema200 = closes[0]
+            k = 2 / (200 + 1)
+            for c in closes:
+                ema200 = c * k + ema200 * (1 - k)
+            last = closes[-1]
+            if last > ema200 * 1.001: return "BULLISH"
+            if last < ema200 * 0.999: return "BEARISH"
+            return "NEUTRAL"
+        except Exception:
+            return "NEUTRAL"
 
     def _calc_indicators(self):
         """
@@ -362,6 +380,7 @@ class ForexExecutor:
             "vwap":             round(vwap, 3),
             "vwap_dist":        round(vwap_dist, 4),
             "trend":            trend,
+            "trend_1h":         self._get_1h_trend(),  # Konfirmasi trend 1h
             "mss_bullish":      mss_bull,
             "mss_bearish":      mss_bear,
             "choch_bullish":    choch_bull,
@@ -430,10 +449,19 @@ class ForexExecutor:
         if liq: score += 5
 
         # ── Trend alignment (max 5 poin) ──────────────────────────────────────
+        trend_1h = ind.get("trend_1h", "NEUTRAL")
         if side == "buy"  and trend == "BULLISH": score += 5
         if side == "sell" and trend == "BEARISH": score += 5
-        if side == "buy"  and trend == "BEARISH": score -= 8   # Lebih besar penaltinya
+        if side == "buy"  and trend == "BEARISH": score -= 8
         if side == "sell" and trend == "BULLISH": score -= 8
+
+        # ── Konfirmasi 1h trend (max 10 poin, penalti -12) ───────────────────
+        # 5m dan 1h searah = konfirmasi kuat
+        # 5m dan 1h berlawanan = sinyal lemah, kurangi score
+        if side == "buy"  and trend_1h == "BULLISH": score += 10
+        if side == "sell" and trend_1h == "BEARISH": score += 10
+        if side == "buy"  and trend_1h == "BEARISH": score -= 12  # Melawan trend besar
+        if side == "sell" and trend_1h == "BULLISH": score -= 12  # Melawan trend besar
 
         # ── Spread penalty ────────────────────────────────────────────────────
         if spread_points > 100: score -= 10
@@ -541,18 +569,16 @@ class ForexExecutor:
 
     def _is_trading_session(self):
         """
-        XAUUSD aktif hampir 24 jam kecuali Jumat malam - Minggu malam.
-        Buka semua session: Asia + London + NY.
-        Tutup hanya saat weekend (Sabtu-Minggu UTC).
+        Hanya trade di London (07-16 UTC) dan NY (12-21 UTC).
+        Ini jam paling volatile untuk gold — sinyal lebih reliable.
+        Asia session (02-06 UTC) dihapus karena terlalu banyak noise.
         """
         now_utc = datetime.datetime.utcnow()
-        weekday = now_utc.weekday()  # 0=Senin, 5=Sabtu, 6=Minggu
-        # Tutup saat weekend
-        if weekday == 6:  # Minggu
-            return False
-        if weekday == 5 and now_utc.hour >= 21:  # Sabtu malam
-            return False
-        return True  # Semua jam lain = buka
+        weekday = now_utc.weekday()
+        if weekday == 6: return False
+        if weekday == 5 and now_utc.hour >= 21: return False
+        hour = now_utc.hour
+        return (7 <= hour < 16) or (12 <= hour < 21)
 
     # --- POSITIONS ---
 
@@ -881,8 +907,9 @@ class ForexExecutor:
 
                 rsi_val  = ind.get("rsi", 0)
                 trend    = ind.get("trend", "NEUTRAL")
+                trend_1h = ind.get("trend_1h", "NEUTRAL")
                 pump_sig = ind.get("pump_signal", "NONE")
-                print(f"[FOREX SCAN] RSI:{rsi_val} Trend:{trend} Pump:{pump_sig} | Slots:{MAX_POSITIONS - active_count}")
+                print(f"[FOREX SCAN] RSI:{rsi_val} 5m:{trend} 1h:{trend_1h} Pump:{pump_sig} | Slots:{MAX_POSITIONS - active_count}")
 
                 # DETERMINE SIDE + CONFIDENCE
                 side, score, trades_to_open = self._determine_side(ind, spread_pts)
