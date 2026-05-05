@@ -320,13 +320,12 @@ class BitgetExecutor:
             self._set_tp_ccxt(symbol, side, size, tp_price)
 
     def _set_sl_ccxt(self, symbol, side, size, sl_price):
-        """Set SL via ccxt dengan validasi harga."""
+        """Set SL via ccxt — cancel SL lama dulu, lalu buat yang baru."""
         try:
             tp_side = 'sell' if side in ['long', 'buy'] else 'buy'
-            # Ambil mark price untuk validasi
-            ticker = self.exchange.fetch_ticker(symbol)
-            mark   = float(ticker.get('last', 0))
-            hold   = 'long' if side in ['long', 'buy'] else 'short'
+            ticker  = self.exchange.fetch_ticker(symbol)
+            mark    = float(ticker.get('last', 0))
+            hold    = 'long' if side in ['long', 'buy'] else 'short'
 
             if mark > 0:
                 if hold == 'long' and sl_price >= mark:
@@ -334,10 +333,37 @@ class BitgetExecutor:
                 elif hold == 'short' and sl_price <= mark:
                     sl_price = mark * 1.015
 
+            # Cancel semua SL order yang ada untuk symbol ini dulu
+            # Ini mencegah duplikat SL order
+            try:
+                clean_sym = symbol.replace("/", "").split(":")[0]
+                if not clean_sym.endswith('USDT'): clean_sym += 'USDT'
+                existing = self.exchange.private_get_v2_mix_order_plan_current_orders({
+                    'symbol': clean_sym, 'productType': 'USDT-FUTURES'
+                })
+                if existing.get('code') == '00000' and existing.get('data'):
+                    for order in existing['data']:
+                        plan_type = order.get('planType', '').lower()
+                        if any(x in plan_type for x in ['loss', 'sl', 'stop', 'psl']):
+                            order_id = order.get('orderId', order.get('planId'))
+                            if order_id:
+                                self._v3_request("POST", "/api/v2/mix/order/plan/cancelPlan", body={
+                                    "symbol": clean_sym,
+                                    "productType": "USDT-FUTURES",
+                                    "marginCoin": "USDT",
+                                    "orderId": str(order_id)
+                                })
+            except Exception:
+                pass  # Kalau cancel gagal, tetap lanjut buat SL baru
+
+            # Buat SL baru
             self.exchange.create_order(
                 symbol, 'market', tp_side, size, None,
                 params={'productType': 'USDT-FUTURES', 'reduceOnly': True, 'stopLossPrice': sl_price}
             )
+            print(f"[SL CCXT] {symbol} SL@{round(sl_price,6)} ✓")
+        except Exception as e:
+            print(f"[SL CCXT FAIL] {symbol}: {e}")
             print(f"[SL CCXT] {symbol} SL@{round(sl_price,6)} ✓")
         except Exception as e:
             print(f"[SL CCXT FAIL] {symbol}: {e}")
