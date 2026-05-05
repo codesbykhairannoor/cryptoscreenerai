@@ -432,23 +432,47 @@ class BitgetExecutor:
                         print(f"[SCRUBBER ERROR] {symbol}: {e}")
 
                 # ── SIDEWAYS DETECTION ────────────────────────────────────────
-                # Kalau koin tidak bergerak 2 jam, exit dan cari koin lain
-                # Threshold longgar: price_move < 1% DAN PnL -3% sampai +3%
+                # Mode normal (0-2 jam): biarkan trade jalan
+                # Warning mode (2-2:40 jam): close hanya kalau PnL >= +5%
+                # Timeout (>2:40 jam): close apapun kondisinya
                 if symbol not in state.pos_start_time:
                     state.pos_start_time[symbol] = now
                 duration_hours = (now - state.pos_start_time[symbol]) / 3600
                 price_move_pct = abs((mark_price - entry) / entry * 100) if entry > 0 else 0
-                if duration_hours > 2.0 and -3.0 < pnl < 3.0 and price_move_pct < 1.0:
-                    print(f"[SIDEWAYS EXIT] {symbol} flat {round(duration_hours,1)}h "
-                          f"(PnL:{pnl}% Move:{round(price_move_pct,2)}%). Finding better coin.")
-                    self.exchange.create_order(symbol, 'market', 'sell' if side in ['long','buy'] else 'buy', size)
-                    if symbol in state.pos_start_time: del state.pos_start_time[symbol]
-                    if symbol in self._peak_pnl: del self._peak_pnl[symbol]
-                    # Track koin ini di shared_state supaya engine tidak masuk lagi 30 menit
-                    clean = self._clean_symbol(symbol)
-                    if not hasattr(state, 'recently_exited'): state.recently_exited = {}
-                    state.recently_exited[clean] = time.time()
-                    continue
+
+                SIDEWAYS_WARN_HOURS    = 2.0    # Mulai warning mode
+                SIDEWAYS_TIMEOUT_HOURS = 2.667  # 2 jam 40 menit = timeout
+
+                if duration_hours > SIDEWAYS_WARN_HOURS and price_move_pct < 1.0:
+                    if duration_hours > SIDEWAYS_TIMEOUT_HOURS:
+                        # Timeout — close apapun kondisinya
+                        print(f"[SIDEWAYS TIMEOUT] {symbol} {round(duration_hours,1)}h. Force close.")
+                        self.exchange.create_order(symbol, 'market',
+                            'sell' if side in ['long','buy'] else 'buy', size)
+                        if symbol in state.pos_start_time: del state.pos_start_time[symbol]
+                        if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                        clean = self._clean_symbol(symbol)
+                        if not hasattr(state, 'recently_exited'): state.recently_exited = {}
+                        state.recently_exited[clean] = time.time()
+                        continue
+                    elif pnl >= 5.0:
+                        # Warning mode — ada momen profit, close sekarang
+                        print(f"[SIDEWAYS EXIT] {symbol} {round(duration_hours,1)}h WARNING MODE. "
+                              f"PnL {pnl}% >= 5%. Closing at profit.")
+                        self.exchange.create_order(symbol, 'market',
+                            'sell' if side in ['long','buy'] else 'buy', size)
+                        if symbol in state.pos_start_time: del state.pos_start_time[symbol]
+                        if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                        clean = self._clean_symbol(symbol)
+                        if not hasattr(state, 'recently_exited'): state.recently_exited = {}
+                        state.recently_exited[clean] = time.time()
+                        continue
+                    else:
+                        # Warning mode — belum ada momen, tunggu
+                        if int(now) % 60 < 2:
+                            remaining_min = round((SIDEWAYS_TIMEOUT_HOURS - duration_hours) * 60)
+                            print(f"[SIDEWAYS WARNING] {symbol} {round(duration_hours,1)}h sideways. "
+                                  f"PnL:{pnl}% (need 5%+). Timeout in {remaining_min}min.")
 
                 if now - self._last_sl_check.get(symbol, 0) < 10: continue
                 self._last_sl_check[symbol] = now
