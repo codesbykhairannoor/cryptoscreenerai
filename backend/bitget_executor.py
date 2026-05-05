@@ -557,31 +557,29 @@ class BitgetExecutor:
                         self._last_sl_set[symbol] = now
 
                 # ── TRAILING SL BERBASIS PEAK PnL ─────────────────────────────
-                # Gap = 10% antara peak PnL dan SL (bukan 15%)
-                # SL TIDAK naik ke breakeven — hanya naik saat profit sudah 20%+
-                # Ini lebih toleran terhadap noise dan spread
-                #
-                # Contoh: entry $100
-                # peak 20% → SL di $110 (lock 10%)
-                # peak 30% → SL di $120 (lock 20%)
-                # peak 40% → SL di $130 (lock 30%)
-                # peak 50% → SL di $140 (lock 40%)
+                # Rumus: lock X% PnL di 10x = harga naik X%/10 dari entry
+                # Contoh entry 417.64:
+                #   lock 5%  PnL = entry × 1.005 = 419.73
+                #   lock 10% PnL = entry × 1.010 = 421.82
+                #   lock 20% PnL = entry × 1.020 = 426.00
+                #   lock 30% PnL = entry × 1.030 = 430.17
+                #   lock 40% PnL = entry × 1.040 = 434.35
+                LEVERAGE_FACTOR = 10.0
                 new_sl = 0
                 if side in ['long', 'buy']:
-                    if peak_pnl >= 50: new_sl = entry * 1.40   # peak 50% → lock 40%
-                    elif peak_pnl >= 40: new_sl = entry * 1.30  # peak 40% → lock 30%
-                    elif peak_pnl >= 30: new_sl = entry * 1.20  # peak 30% → lock 20%
-                    elif peak_pnl >= 20: new_sl = entry * 1.10  # peak 20% → lock 10%
-                    elif peak_pnl >= 15: new_sl = entry * 1.05  # peak 15% → lock 5%
-                    elif peak_pnl >= 10: new_sl = entry * 0.992 # peak 10% → perketat SL ke -8%
-                    # Di bawah 10%: SL tidak berubah dari -15% awal
+                    if peak_pnl >= 50:   new_sl = entry * (1 + 0.40/LEVERAGE_FACTOR)  # lock 40%
+                    elif peak_pnl >= 40: new_sl = entry * (1 + 0.30/LEVERAGE_FACTOR)  # lock 30%
+                    elif peak_pnl >= 30: new_sl = entry * (1 + 0.20/LEVERAGE_FACTOR)  # lock 20%
+                    elif peak_pnl >= 20: new_sl = entry * (1 + 0.10/LEVERAGE_FACTOR)  # lock 10%
+                    elif peak_pnl >= 15: new_sl = entry * (1 + 0.05/LEVERAGE_FACTOR)  # lock 5%
+                    elif peak_pnl >= 10: new_sl = entry * (1 - 0.08/LEVERAGE_FACTOR)  # perketat ke -8%
                 else:
-                    if peak_pnl >= 50: new_sl = entry * 0.60
-                    elif peak_pnl >= 40: new_sl = entry * 0.70
-                    elif peak_pnl >= 30: new_sl = entry * 0.80
-                    elif peak_pnl >= 20: new_sl = entry * 0.90
-                    elif peak_pnl >= 15: new_sl = entry * 0.95  # peak 15% → lock 5%
-                    elif peak_pnl >= 10: new_sl = entry * 1.008 # peak 10% → perketat SL ke -8%
+                    if peak_pnl >= 50:   new_sl = entry * (1 - 0.40/LEVERAGE_FACTOR)
+                    elif peak_pnl >= 40: new_sl = entry * (1 - 0.30/LEVERAGE_FACTOR)
+                    elif peak_pnl >= 30: new_sl = entry * (1 - 0.20/LEVERAGE_FACTOR)
+                    elif peak_pnl >= 20: new_sl = entry * (1 - 0.10/LEVERAGE_FACTOR)
+                    elif peak_pnl >= 15: new_sl = entry * (1 - 0.05/LEVERAGE_FACTOR)
+                    elif peak_pnl >= 10: new_sl = entry * (1 + 0.08/LEVERAGE_FACTOR)
 
                 if new_sl > 0:
                     # SL hanya boleh naik (long) atau turun (short) — tidak pernah mundur
