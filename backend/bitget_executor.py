@@ -443,7 +443,11 @@ class BitgetExecutor:
                 SIDEWAYS_WARN_HOURS    = 2.0    # Mulai warning mode
                 SIDEWAYS_TIMEOUT_HOURS = 2.667  # 2 jam 40 menit = timeout
 
-                if duration_hours > SIDEWAYS_WARN_HOURS and price_move_pct < 1.0:
+                # Sideways = koin tidak bergerak signifikan dalam 2 jam
+                # Kondisi sideways: PnL antara -5% dan +5% DAN price move < 3%
+                is_sideways = (-5.0 < pnl < 5.0) and (price_move_pct < 3.0)
+
+                if duration_hours > SIDEWAYS_WARN_HOURS and is_sideways:
                     if duration_hours > SIDEWAYS_TIMEOUT_HOURS:
                         # Timeout — close apapun kondisinya
                         print(f"[SIDEWAYS TIMEOUT] {symbol} {round(duration_hours,1)}h. Force close.")
