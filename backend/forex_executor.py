@@ -959,7 +959,9 @@ class ForexExecutor:
                     success, _ = self.place_forex_order(sym, side, lot, tp=tp, sl=sl)
                     if success:
                         from database import log_trade
-                        log_trade(sym, entry_price, tp, sl, market="forex")
+                        log_trade(sym, entry_price, tp, sl, market="forex",
+                                  side=side, lot_size=lot, score=score,
+                                  reason=f"Pump:{pump_sig} RSI:{rsi_val} 5m:{trend} 1h:{ind.get('trend_1h','?')}")
                         opened += 1
                     time.sleep(0.15)
 
