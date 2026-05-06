@@ -64,7 +64,8 @@ def log_trade(symbol, entry, tp, sl, market='crypto', side='buy',
               lot_size=0, score=0, reason='', session=''):
     """
     Log trade baru ke database.
-    Menyimpan semua info yang dibutuhkan untuk analisis nanti.
+    Setiap trade SELALU disimpan — tidak ada cek duplikat yang memblok.
+    Duplikat diizinkan karena bot bisa punya multiple posisi untuk symbol yang sama.
     """
     entry = float(entry) if entry is not None else 0.0
     tp    = float(tp)    if tp    is not None else 0.0
@@ -74,37 +75,31 @@ def log_trade(symbol, entry, tp, sl, market='crypto', side='buy',
     if not session:
         import datetime
         hour = datetime.datetime.utcnow().hour
-        if 7 <= hour < 12:   session = "London"
-        elif 12 <= hour < 17: session = "London+NY"
-        elif 17 <= hour < 21: session = "NY"
-        elif 2 <= hour < 6:   session = "Asia"
-        else:                  session = "Off"
+        wib  = (hour + 7) % 24
+        if 7 <= hour < 12:    session = f"London({wib:02d}WIB)"
+        elif 12 <= hour < 17: session = f"London+NY({wib:02d}WIB)"
+        elif 17 <= hour < 21: session = f"NY({wib:02d}WIB)"
+        elif 2 <= hour < 6:   session = f"Asia({wib:02d}WIB)"
+        else:                  session = f"Off({wib:02d}WIB)"
 
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    # Cek duplikat
-    cursor.execute(
-        "SELECT id FROM trades WHERE symbol = %s AND status = 'PENDING' AND market = %s",
-        (symbol, market)
-    )
-    if cursor.fetchone():
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO trades
+                (symbol, entry_price, tp_price, sl_price, status, market, side,
+                 lot_size, score, reason, session, timestamp)
+            VALUES (%s, %s, %s, %s, 'PENDING', %s, %s, %s, %s, %s, %s, %s)
+        ''', (symbol, entry, tp, sl, market, side,
+              float(lot_size), int(score), str(reason)[:200], session,
+              int(time.time() * 1000)))
+        conn.commit()
         cursor.close()
         conn.close()
+        return True
+    except Exception as e:
+        print(f"[DB LOG ERROR] {symbol}: {e}")
         return False
-
-    cursor.execute('''
-        INSERT INTO trades
-            (symbol, entry_price, tp_price, sl_price, status, market, side,
-             lot_size, score, reason, session, timestamp)
-        VALUES (%s, %s, %s, %s, 'PENDING', %s, %s, %s, %s, %s, %s, %s)
-    ''', (symbol, entry, tp, sl, market, side,
-          float(lot_size), int(score), str(reason), session,
-          int(time.time() * 1000)))
-    conn.commit()
-    cursor.close()
-    conn.close()
-    return True
 
 def close_trade(symbol, exit_price, pnl_usd=0, market='crypto'):
     """

@@ -30,11 +30,13 @@ from bitget_executor import BitgetExecutor
 # ─── KONFIGURASI ──────────────────────────────────────────────────────────────
 MAX_POSITIONS        = 1      # FOKUS: 1 trade saja
 SCAN_INTERVAL        = 10     # Scan setiap 10 detik
-COOLDOWN_AFTER_TRADE = 120    # 2 menit cooldown setelah trade selesai
+COOLDOWN_AFTER_TRADE = 300    # 5 menit cooldown — beri waktu posisi settle
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 40     # Naikkan dari 30 — lebih selektif, kurangi false signal
+MIN_MOMENTUM_SCORE   = 40     # Combined score minimum
+MIN_TECH_SCORE       = 15     # Tech score minimum (ada sinyal SMC/RSI)
+MIN_PUMP_SCORE       = 25     # Pump score minimum (ada momentum pasar)
 
 # TP/SL spread-aware (10x leverage):
 SCALP_TP_PCT  = 0.08
@@ -517,7 +519,7 @@ def run_crypto_engine():
 
                 # ── PRE-FILTER: Pakai pump_score dari analyze_and_sort ────────
                 pump_sc = float(coin.get('pump_score', 0))
-                if pump_sc < MIN_MOMENTUM_SCORE:
+                if pump_sc < MIN_PUMP_SCORE:
                     continue  # Skip koin dengan pump score rendah
 
                 # ── 9a. AMBIL INDIKATOR TEKNIKAL ─────────────────────────────
@@ -551,8 +553,8 @@ def run_crypto_engine():
                 # Ini mencegah masuk hanya karena koin volatile tanpa sinyal SMC
                 if side is None or combined_score < MIN_MOMENTUM_SCORE:
                     continue
-                if tech_score < 15:
-                    print(f"[SKIP] {clean_base} tech_score {tech_score} < 15. Tidak ada sinyal teknikal.")
+                if tech_score < MIN_TECH_SCORE:
+                    print(f"[SKIP] {clean_base} tech_score {tech_score} < {MIN_TECH_SCORE}. Tidak ada sinyal teknikal.")
                     continue
 
                 # ── 9d. DXY OVERRIDE ──────────────────────────────────────────
