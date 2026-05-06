@@ -35,7 +35,7 @@ NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 LEVERAGE             = 10
 MIN_MOMENTUM_SCORE   = 40     # Combined score minimum
-MIN_TECH_SCORE       = 15     # Tech score minimum (ada sinyal SMC/RSI)
+MIN_TECH_SCORE       = 30     # Tech score minimum — blok koin tanpa sinyal nyata (RSI neutral = 35, diblok)
 MIN_PUMP_SCORE       = 25     # Pump score minimum (ada momentum pasar)
 
 # TP/SL spread-aware (10x leverage):
