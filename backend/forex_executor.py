@@ -625,13 +625,25 @@ class ForexExecutor:
             time.sleep(0.1)
         return any_success
 
-    def update_forex_sl(self, position_id, new_sl, new_tp=None):
-        """Update SL posisi. TP tidak diubah."""
+    def update_forex_sl(self, position_id, new_sl, current_tp=None):
+        """
+        Update SL posisi via POSITION_MODIFY.
+        WAJIB kirim takeProfit bersamaan — kalau tidak, beberapa broker MT5
+        akan reset TP ke 0 (hilang) saat SL diupdate.
+        current_tp harus diambil dari data posisi sebelum memanggil fungsi ini.
+        """
         if not self.is_active: return False
         try:
             url = self.base_url + "/users/current/accounts/" + self.account_id + "/trade"
             headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
-            payload = {"actionType": "POSITION_MODIFY", "positionId": str(position_id), "stopLoss": new_sl}
+            payload = {
+                "actionType": "POSITION_MODIFY",
+                "positionId": str(position_id),
+                "stopLoss":   new_sl,
+            }
+            # Selalu sertakan TP kalau ada — mencegah broker reset TP ke 0
+            if current_tp and float(current_tp) > 0:
+                payload["takeProfit"] = float(current_tp)
             res = requests.post(url, headers=headers, json=payload, timeout=10)
             if res.status_code == 200:
                 return True
@@ -649,11 +661,8 @@ class ForexExecutor:
 
     def _trail_positions(self, positions):
         """
-        Trailing SL v6.0  lebih agresif.
-        - Aktif dari profit 3 poin (bukan 5)
-        - Buffer 3 poin (bukan 5)
-        - Auto-close kalau rugi > $7
-        - SL hanya bergerak ke arah profit, tidak pernah mundur
+        Trailing SL — 2 momen kritis untuk XAUUSD.
+        Selalu kirim TP bersamaan saat update SL agar TP tidak hilang.
         """
         for p in positions:
             if "XAU" not in p.get("symbol", "").upper(): continue
@@ -662,6 +671,7 @@ class ForexExecutor:
             pos_type    = p.get("type", "")
             profit      = float(p.get("profit", 0))
             current_sl  = float(p.get("stopLoss", 0))
+            current_tp  = float(p.get("takeProfit", 0))   # ambil TP dari posisi
             sym         = p.get("symbol", self._working_symbol or "XAUUSDc")
             if open_price == 0: continue
 
@@ -704,25 +714,26 @@ class ForexExecutor:
             if is_buy:
                 if profit_pt >= 12.0:
                     target_sl = round(open_price + 7.0, 3)
-                    stage = chr(76)+chr(79)+chr(67)+chr(75)+chr(45)+chr(55)
+                    stage     = "LOCK-7"
                 else:
                     target_sl = round(open_price + 0.2, 3)
-                    stage = chr(66)+chr(82)+chr(69)+chr(65)+chr(75)+chr(69)+chr(86)+chr(69)+chr(78)
+                    stage     = "BREAKEVEN"
             else:
                 if profit_pt >= 12.0:
                     target_sl = round(open_price - 7.0, 3)
-                    stage = chr(76)+chr(79)+chr(67)+chr(75)+chr(45)+chr(55)
+                    stage     = "LOCK-7"
                 else:
                     target_sl = round(open_price - 0.2, 3)
-                    stage = chr(66)+chr(82)+chr(69)+chr(65)+chr(75)+chr(69)+chr(86)+chr(69)+chr(78)
+                    stage     = "BREAKEVEN"
 
             should_update = (current_sl == 0 or target_sl > current_sl) if is_buy else (current_sl == 0 or target_sl < current_sl)
             if should_update:
-                ok = self.update_forex_sl(pos_id, target_sl)
+                # Pass current_tp agar TP tidak hilang saat SL diupdate
+                ok = self.update_forex_sl(pos_id, target_sl, current_tp=current_tp)
                 if ok:
-                    print(chr(79)+chr(75)+chr(32)+chr(91)+stage+chr(93)+chr(32)+sym+chr(32)+str(current_sl)+chr(32)+chr(45)+chr(62)+chr(32)+str(target_sl)+chr(32)+str(round(profit_pt,1))+chr(112)+chr(116))
+                    print("OK [" + stage + "] " + sym + " SL " + str(current_sl) + " -> " + str(target_sl) + " TP=" + str(current_tp) + " profit_pt=" + str(round(profit_pt,1)) + "pt")
                 else:
-                    print(chr(70)+chr(65)+chr(73)+chr(76)+chr(32)+chr(91)+stage+chr(93)+chr(32)+sym+chr(32)+str(target_sl))
+                    print("FAIL [" + stage + "] " + sym + " -> " + str(target_sl))
 
     #  MAIN ENGINE LOOP 
 
