@@ -691,51 +691,71 @@ class ForexExecutor:
                     self._close_attempted.discard(pos_id)
                 continue
 
-            # TRAILING BERTAHAP untuk XAUUSD:
-            # Tahap 1 — Profit 5-7 poin : naikkan SL ke breakeven (entry)
-            #           Pastikan tidak rugi kalau harga balik tiba-tiba
-            # Tahap 2 — Profit >= 8 poin: trailing aktif, SL = entry + (profit_pt - 3)
-            #           Lock profit, SL ikut naik setiap harga naik
-            # Kenapa 5 poin untuk breakeven? Noise XAUUSD ~2-3 poin + spread 2.8 = ~5 poin
-            # Kenapa 8 poin untuk trail? Pastikan profit solid sebelum trail aktif
+            # ── TRAILING SL BERTAHAP UNTUK XAUUSD ────────────────────────
+            # XAUUSD bergerak dalam gelombang 5-8 poin per wave.
+            # SL mengikuti setiap wave, bukan setiap pip.
+            # SL hanya naik (buy) / turun (sell) — tidak pernah mundur.
+            #
+            # Tabel trailing:
+            # Profit 0-4 pt  → diam          (masih dalam noise + spread 2.8)
+            # Profit 5-7 pt  → breakeven     (entry + 0.2, posisi tidak bisa rugi)
+            # Profit 8-11 pt → lock 3 poin   (entry + 3)
+            # Profit 12-15pt → lock 6 poin   (entry + 6)
+            # Profit 16-19pt → lock 10 poin  (entry + 10)
+            # Profit >= 20pt → lock 14 poin  (entry + 14, lock 70% dari TP 20)
+            # ─────────────────────────────────────────────────────────────────
+
             if profit_pt < 5.0:
                 if profit_pt > 0:
-                    print("[TRAIL] " + sym + " profit_pt=" + str(round(profit_pt,2)) + " < 5.0, waiting for solid profit...")
+                    print("[TRAIL] " + sym + " profit_pt=" + str(round(profit_pt,2)) + " < 5.0, waiting...")
                 continue
 
-            new_sl = 0
+            # Tentukan target SL berdasarkan profit_pt saat ini
             if is_buy:
-                if profit_pt >= TRAIL_ACTIVATION_POINTS:
-                    # Tahap 2: trailing aktif
-                    new_sl = round(open_price + (profit_pt - TRAIL_BUFFER_POINTS), 3)
-                else:
-                    # Tahap 1: breakeven saja
-                    new_sl = round(open_price + 0.2, 3)
+                if profit_pt >= 20.0:
+                    target_sl = round(open_price + 14.0, 3)
+                elif profit_pt >= 16.0:
+                    target_sl = round(open_price + 10.0, 3)
+                elif profit_pt >= 12.0:
+                    target_sl = round(open_price + 6.0, 3)
+                elif profit_pt >= 8.0:
+                    target_sl = round(open_price + 3.0, 3)
+                else:  # 5-7 poin: breakeven
+                    target_sl = round(open_price + 0.2, 3)
             else:
-                if profit_pt >= TRAIL_ACTIVATION_POINTS:
-                    new_sl = round(open_price - (profit_pt - TRAIL_BUFFER_POINTS), 3)
-                else:
-                    new_sl = round(open_price - 0.2, 3)
+                if profit_pt >= 20.0:
+                    target_sl = round(open_price - 14.0, 3)
+                elif profit_pt >= 16.0:
+                    target_sl = round(open_price - 10.0, 3)
+                elif profit_pt >= 12.0:
+                    target_sl = round(open_price - 6.0, 3)
+                elif profit_pt >= 8.0:
+                    target_sl = round(open_price - 3.0, 3)
+                else:  # 5-7 poin: breakeven
+                    target_sl = round(open_price - 0.2, 3)
 
-            if new_sl == 0:
-                continue
+            # Tentukan label stage untuk logging
+            if profit_pt >= 20.0:   stage = "LOCK-14"
+            elif profit_pt >= 16.0: stage = "LOCK-10"
+            elif profit_pt >= 12.0: stage = "LOCK-6"
+            elif profit_pt >= 8.0:  stage = "LOCK-3"
+            else:                   stage = "BREAKEVEN"
 
-            stage = "TRAIL" if profit_pt >= TRAIL_ACTIVATION_POINTS else "BREAKEVEN"
-
+            # Update SL hanya kalau target lebih baik dari SL sekarang
+            should_update = False
             if is_buy:
-                if current_sl == 0 or new_sl > current_sl:
-                    ok = self.update_forex_sl(pos_id, new_sl)
-                    if ok:
-                        print("OK [" + stage + "] " + sym + " SL " + str(current_sl) + " -> " + str(new_sl) + " (profit_pt=" + str(round(profit_pt,1)) + ")")
-                    else:
-                        print("FAIL [" + stage + "] " + sym + " -> " + str(new_sl))
+                should_update = (current_sl == 0 or target_sl > current_sl)
             else:
-                if current_sl == 0 or new_sl < current_sl:
-                    ok = self.update_forex_sl(pos_id, new_sl)
-                    if ok:
-                        print("OK [" + stage + "] " + sym + " SL " + str(current_sl) + " -> " + str(new_sl) + " (profit_pt=" + str(round(profit_pt,1)) + ")")
-                    else:
-                        print("FAIL [" + stage + "] " + sym + " -> " + str(new_sl))
+                should_update = (current_sl == 0 or target_sl < current_sl)
+
+            if should_update:
+                ok = self.update_forex_sl(pos_id, target_sl)
+                if ok:
+                    print("OK [" + stage + "] " + sym +
+                          " SL " + str(current_sl) + " -> " + str(target_sl) +
+                          " | profit_pt=" + str(round(profit_pt, 1)) + "pt")
+                else:
+                    print("FAIL [" + stage + "] " + sym + " -> " + str(target_sl))
 
     #  MAIN ENGINE LOOP 
 
