@@ -545,7 +545,14 @@ def run_crypto_engine():
 
                 print(f"[EVAL] {clean_base} | Pump:{pump_sc:.0f} Tech:{tech_score} Combined:{combined_score} | RSI:{rsi} VWAP:{vwap_dist}%")
 
+                # Syarat entry:
+                # 1. Combined score >= 40
+                # 2. Tech score >= 15 (harus ada sinyal teknikal, bukan hanya pump score)
+                # Ini mencegah masuk hanya karena koin volatile tanpa sinyal SMC
                 if side is None or combined_score < MIN_MOMENTUM_SCORE:
+                    continue
+                if tech_score < 15:
+                    print(f"[SKIP] {clean_base} tech_score {tech_score} < 15. Tidak ada sinyal teknikal.")
                     continue
 
                 # ── 9d. DXY OVERRIDE ──────────────────────────────────────────
