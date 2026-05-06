@@ -569,29 +569,33 @@ class BitgetExecutor:
                         self._last_sl_set[symbol] = now
 
                 # ── TRAILING SL BERBASIS PEAK PnL ─────────────────────────────
-                # Rumus: lock X% PnL di 10x = harga naik X%/10 dari entry
-                # Contoh entry 417.64:
-                #   lock 5%  PnL = entry × 1.005 = 419.73
-                #   lock 10% PnL = entry × 1.010 = 421.82
-                #   lock 20% PnL = entry × 1.020 = 426.00
-                #   lock 30% PnL = entry × 1.030 = 430.17
-                #   lock 40% PnL = entry × 1.040 = 434.35
+                # Filosofi: biarkan trade jalan sampai TP, jangan potong terlalu cepat.
+                # Altcoin sering koreksi 10-15% sebelum lanjut naik — jangan kena SL.
+                # SL hanya dipindah kalau profit sudah SOLID (peak >= 20%).
+                #
+                # Tabel trailing:
+                # peak < 20%  : DIAM — biarkan SL awal di -15%, jangan ganggu
+                # peak 20-29% : breakeven (entry) — tidak rugi
+                # peak 30-39% : lock 10% PnL
+                # peak 40-49% : lock 20% PnL
+                # peak 50-59% : lock 30% PnL
+                # peak >= 60% : lock 40% PnL
                 LEVERAGE_FACTOR = 10.0
                 new_sl = 0
                 if side in ['long', 'buy']:
-                    if peak_pnl >= 50:   new_sl = entry * (1 + 0.40/LEVERAGE_FACTOR)  # lock 40%
-                    elif peak_pnl >= 40: new_sl = entry * (1 + 0.30/LEVERAGE_FACTOR)  # lock 30%
-                    elif peak_pnl >= 30: new_sl = entry * (1 + 0.20/LEVERAGE_FACTOR)  # lock 20%
-                    elif peak_pnl >= 20: new_sl = entry * (1 + 0.10/LEVERAGE_FACTOR)  # lock 10%
-                    elif peak_pnl >= 15: new_sl = entry * (1 + 0.05/LEVERAGE_FACTOR)  # lock 5%
-                    elif peak_pnl >= 10: new_sl = entry * (1 - 0.08/LEVERAGE_FACTOR)  # perketat ke -8%
+                    if peak_pnl >= 60:   new_sl = entry * (1 + 0.40/LEVERAGE_FACTOR)  # lock 40%
+                    elif peak_pnl >= 50: new_sl = entry * (1 + 0.30/LEVERAGE_FACTOR)  # lock 30%
+                    elif peak_pnl >= 40: new_sl = entry * (1 + 0.20/LEVERAGE_FACTOR)  # lock 20%
+                    elif peak_pnl >= 30: new_sl = entry * (1 + 0.10/LEVERAGE_FACTOR)  # lock 10%
+                    elif peak_pnl >= 20: new_sl = entry * 1.0001                       # breakeven
+                    # peak < 20%: DIAM — SL awal di -15% sudah cukup
                 else:
-                    if peak_pnl >= 50:   new_sl = entry * (1 - 0.40/LEVERAGE_FACTOR)
-                    elif peak_pnl >= 40: new_sl = entry * (1 - 0.30/LEVERAGE_FACTOR)
-                    elif peak_pnl >= 30: new_sl = entry * (1 - 0.20/LEVERAGE_FACTOR)
-                    elif peak_pnl >= 20: new_sl = entry * (1 - 0.10/LEVERAGE_FACTOR)
-                    elif peak_pnl >= 15: new_sl = entry * (1 - 0.05/LEVERAGE_FACTOR)
-                    elif peak_pnl >= 10: new_sl = entry * (1 + 0.08/LEVERAGE_FACTOR)
+                    if peak_pnl >= 60:   new_sl = entry * (1 - 0.40/LEVERAGE_FACTOR)
+                    elif peak_pnl >= 50: new_sl = entry * (1 - 0.30/LEVERAGE_FACTOR)
+                    elif peak_pnl >= 40: new_sl = entry * (1 - 0.20/LEVERAGE_FACTOR)
+                    elif peak_pnl >= 30: new_sl = entry * (1 - 0.10/LEVERAGE_FACTOR)
+                    elif peak_pnl >= 20: new_sl = entry * 0.9999                       # breakeven
+                    # peak < 20%: DIAM
 
                 if new_sl > 0:
                     # SL hanya boleh naik (long) atau turun (short) — tidak pernah mundur
