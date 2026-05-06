@@ -141,8 +141,6 @@ class ForexExecutor:
             return self._dxy_cache
 
         try:
-            # Pakai PAXG (gold token) sebagai proxy DXY inverse
-            # Kalau PAXG naik = gold naik = DXY lemah
             url = "https://api.bitget.com/api/v2/mix/market/ticker?symbol=PAXGUSDT&productType=USDT-FUTURES"
             res = requests.get(url, timeout=5, verify=False)
             if res.status_code == 200:
@@ -150,12 +148,11 @@ class ForexExecutor:
                 if isinstance(data, list): data = data[0] if data else {}
                 change = float(data.get("change24h", data.get("chgPct", 0)))
                 if abs(change) < 1.0:
-                    change = change * 100  # convert decimal to percent
-                # PAXG naik = gold naik = DXY lemah (inverse)
+                    change = change * 100
                 dxy_change = -change
                 trend = "NEUTRAL"
-                if dxy_change > DXY_STRONG_THRESHOLD:   trend = "BULLISH"   # DXY kuat
-                elif dxy_change < DXY_WEAK_THRESHOLD:   trend = "BEARISH"   # DXY lemah
+                if dxy_change > DXY_STRONG_THRESHOLD:   trend = "BULLISH"
+                elif dxy_change < DXY_WEAK_THRESHOLD:   trend = "BEARISH"
                 self._dxy_cache = {"change": round(dxy_change, 3), "trend": trend, "ts": now}
                 return self._dxy_cache
         except Exception:
@@ -163,6 +160,104 @@ class ForexExecutor:
 
         self._dxy_cache["ts"] = now
         return self._dxy_cache
+
+    # ── ORDER BOOK & WHALE DETECTION (via PAXG proxy) ────────────────────────
+
+    def _get_gold_orderbook(self):
+        """
+        Baca order book PAXGUSDT di Bitget sebagai proxy untuk XAUUSD.
+        PAXG = tokenized gold, pergerakannya sangat korelasi dengan spot gold.
+
+        Return:
+          obi   : Order Book Imbalance (-1 to +1)
+                  > 0.15  = buyer dominance (bullish signal)
+                  < -0.15 = seller dominance (bearish signal)
+          whale : WHALE_BUY / WHALE_SELL / NORMAL
+                  Deteksi order besar > $50k di satu sisi
+        """
+        try:
+            url = "https://api.bitget.com/api/v2/mix/market/depth?symbol=PAXGUSDT&limit=50&productType=USDT-FUTURES"
+            res = requests.get(url, timeout=5, verify=False)
+            if res.status_code != 200:
+                return {"obi": 0.0, "whale": "NORMAL"}
+
+            data  = res.json().get("data", {})
+            bids  = data.get("bids", [])
+            asks  = data.get("asks", [])
+
+            if not bids or not asks:
+                return {"obi": 0.0, "whale": "NORMAL"}
+
+            # Hitung total bid/ask volume
+            bid_vol = sum(float(b[1]) for b in bids)
+            ask_vol = sum(float(a[1]) for a in asks)
+            total   = bid_vol + ask_vol
+
+            obi = round((bid_vol - ask_vol) / total, 4) if total > 0 else 0.0
+
+            # Whale detection: cari single order > $50k
+            # PAXG harga ~$3000, jadi 17 unit = $50k
+            whale = "NORMAL"
+            max_bid = max((float(b[1]) for b in bids), default=0)
+            max_ask = max((float(a[1]) for a in asks), default=0)
+
+            # Ambil harga PAXG untuk konversi ke USD
+            try:
+                price_url = "https://api.bitget.com/api/v2/mix/market/ticker?symbol=PAXGUSDT&productType=USDT-FUTURES"
+                pr = requests.get(price_url, timeout=3, verify=False).json()
+                paxg_price = float(pr.get("data", [{}])[0].get("lastPr", 3000)) if isinstance(pr.get("data"), list) else 3000
+            except Exception:
+                paxg_price = 3000
+
+            whale_threshold_units = 50000 / paxg_price  # $50k dalam unit PAXG
+
+            if max_bid > whale_threshold_units and max_bid > max_ask * 2:
+                whale = "WHALE_BUY"
+            elif max_ask > whale_threshold_units and max_ask > max_bid * 2:
+                whale = "WHALE_SELL"
+
+            return {"obi": obi, "whale": whale}
+
+        except Exception:
+            return {"obi": 0.0, "whale": "NORMAL"}
+
+    def _get_gold_whale_trades(self):
+        """
+        Scan recent trades PAXGUSDT untuk deteksi whale fills.
+        Trade besar > $30k = institutional activity.
+        Return: WHALE_BUY / WHALE_SELL / NORMAL
+        """
+        try:
+            url = "https://api.bitget.com/api/v2/mix/market/fills?symbol=PAXGUSDT&limit=50&productType=USDT-FUTURES"
+            res = requests.get(url, timeout=5, verify=False)
+            if res.status_code != 200:
+                return "NORMAL"
+
+            trades = res.json().get("data", [])
+            whale_buys  = 0.0
+            whale_sells = 0.0
+
+            for t in trades:
+                try:
+                    size  = float(t.get("size", 0))
+                    price = float(t.get("price", 0))
+                    usd   = size * price
+                    if usd > 30000:
+                        if t.get("side", "").lower() == "buy":
+                            whale_buys  += usd
+                        else:
+                            whale_sells += usd
+                except Exception:
+                    continue
+
+            if whale_buys > whale_sells and whale_buys > 60000:
+                return "WHALE_BUY"
+            if whale_sells > whale_buys and whale_sells > 60000:
+                return "WHALE_SELL"
+            return "NORMAL"
+
+        except Exception:
+            return "NORMAL"
 
     #  TECHNICAL INDICATORS 
 
@@ -345,6 +440,19 @@ class ForexExecutor:
         trend_1h = self._get_htf_trend("1h")
         trend_4h = self._get_htf_trend("4h")
 
+        # Order Book & Whale (via PAXG proxy)
+        ob_data      = self._get_gold_orderbook()
+        whale_trades = self._get_gold_whale_trades()
+        obi          = ob_data.get("obi", 0.0)
+        whale_ob     = ob_data.get("whale", "NORMAL")
+        # Gabungkan sinyal whale dari order book dan recent trades
+        if whale_ob == "WHALE_BUY" or whale_trades == "WHALE_BUY":
+            whale_signal = "WHALE_BUY"
+        elif whale_ob == "WHALE_SELL" or whale_trades == "WHALE_SELL":
+            whale_signal = "WHALE_SELL"
+        else:
+            whale_signal = "NORMAL"
+
         return {
             "rsi":              round(rsi, 2),
             "ema200":           round(ema200, 3),
@@ -365,6 +473,8 @@ class ForexExecutor:
             "vol_spike":        vol_spike,
             "rsi_divergence":   rsi_divergence,
             "pump_signal":      pump_signal,
+            "obi":              round(obi, 4),
+            "whale_signal":     whale_signal,
         }
 
     #  MOMENTUM SCORING 
@@ -429,6 +539,23 @@ class ForexExecutor:
 
         #  7. Liquidity Sweep (max 5 poin) 
         if liq: score += 5
+
+        #  8. Whale Signal via PAXG Order Book (max 15 poin) 
+        # Ini sinyal paling kuat — whale di gold market = institutional money
+        whale = ind.get("whale_signal", "NORMAL")
+        obi   = ind.get("obi", 0.0)
+        if side == "buy":
+            if whale == "WHALE_BUY":   score += 15
+            elif whale == "WHALE_SELL": score -= 12  # Whale jual = jangan beli
+            if obi > 0.20:             score += 10  # Buyer dominance kuat
+            elif obi > 0.10:           score += 5
+            elif obi < -0.15:          score -= 8   # Seller dominance
+        else:
+            if whale == "WHALE_SELL":  score += 15
+            elif whale == "WHALE_BUY": score -= 12
+            if obi < -0.20:            score += 10
+            elif obi < -0.10:          score += 5
+            elif obi > 0.15:           score -= 8
 
         #  8. Trend 15m alignment (max 5 poin, penalti -8) 
         if side == "buy"  and trend == "BULLISH": score += 5
@@ -716,37 +843,56 @@ class ForexExecutor:
                     self._close_attempted.discard(pos_id)
                 continue
 
-            # TRAILING SL - 2 MOMEN KRITIS
-            # Profit >= 5 poin  : breakeven (entry + 0.2)
-            # Profit >= 12 poin : lock 7 poin (entry + 7)
-            # SL hanya bergerak maju.
+            # TRAILING SL - LOGIKA BARU (jarak konsisten 8 poin dari harga)
+            # Tidak ada breakeven +0.2 yang terlalu sempit.
+            # SL hanya naik kalau profit sudah solid.
+            # Jarak SL ke harga selalu ~8 poin = cukup untuk noise XAUUSD.
+            #
+            # profit < 12 poin  : DIAM, SL awal di entry-8 tetap
+            # profit >= 12 poin : SL ke entry+4  (jarak ke harga = profit-4, min 8)
+            # profit >= 18 poin : SL ke entry+10 (jarak ke harga = profit-10, min 8)
+            # TP kena di 20 poin: selesai, profit $2+ per trade
+            #
+            # Contoh: entry 4711, profit 12 poin (harga 4723)
+            #   SL naik ke 4715 (entry+4), jarak ke harga = 8 poin ✓
+            # Contoh: entry 4711, profit 18 poin (harga 4729)
+            #   SL naik ke 4721 (entry+10), jarak ke harga = 8 poin ✓
 
-            if profit_pt < 5.0:
+            if profit_pt < 12.0:
+                # Belum 12 poin — diam, biarkan SL awal bekerja
                 if profit_pt > 0:
-                    print(chr(91)+chr(84)+chr(82)+chr(65)+chr(73)+chr(76)+chr(93)+chr(32)+sym+chr(32)+str(round(profit_pt,2))+chr(32)+chr(119)+chr(97)+chr(105)+chr(116)+chr(105)+chr(110)+chr(103))
+                    print("[TRAIL] " + sym + " profit_pt=" + str(round(profit_pt,2)) + " < 12.0, waiting...")
                 continue
 
             if is_buy:
-                if profit_pt >= 12.0:
-                    target_sl = round(open_price + 7.0, 3)
-                    stage     = "LOCK-7"
+                if profit_pt >= 18.0:
+                    target_sl = round(open_price + 10.0, 3)
+                    stage     = "LOCK-10"
                 else:
-                    target_sl = round(open_price + 0.2, 3)
-                    stage     = "BREAKEVEN"
+                    target_sl = round(open_price + 4.0, 3)
+                    stage     = "LOCK-4"
             else:
-                if profit_pt >= 12.0:
-                    target_sl = round(open_price - 7.0, 3)
-                    stage     = "LOCK-7"
+                if profit_pt >= 18.0:
+                    target_sl = round(open_price - 10.0, 3)
+                    stage     = "LOCK-10"
                 else:
-                    target_sl = round(open_price - 0.2, 3)
-                    stage     = "BREAKEVEN"
+                    target_sl = round(open_price - 4.0, 3)
+                    stage     = "LOCK-4"
 
-            should_update = (current_sl == 0 or target_sl > current_sl) if is_buy else (current_sl == 0 or target_sl < current_sl)
+            # SL hanya bergerak ke arah profit, tidak pernah mundur
+            if is_buy:
+                should_update = (current_sl == 0 or target_sl > current_sl)
+            else:
+                should_update = (current_sl == 0 or target_sl < current_sl)
+
             if should_update:
-                # Pass current_tp agar TP tidak hilang saat SL diupdate
+                # Selalu kirim current_tp agar TP tidak hilang saat SL diupdate
                 ok = self.update_forex_sl(pos_id, target_sl, current_tp=current_tp)
                 if ok:
-                    print("OK [" + stage + "] " + sym + " SL " + str(current_sl) + " -> " + str(target_sl) + " TP=" + str(current_tp) + " profit_pt=" + str(round(profit_pt,1)) + "pt")
+                    print("OK [" + stage + "] " + sym +
+                          " SL " + str(current_sl) + " -> " + str(target_sl) +
+                          " | TP=" + str(current_tp) +
+                          " | profit_pt=" + str(round(profit_pt, 1)) + "pt")
                 else:
                     print("FAIL [" + stage + "] " + sym + " -> " + str(target_sl))
 
@@ -924,6 +1070,7 @@ class ForexExecutor:
                 print("  RSI: " + str(rsi_val) + " | VWAP: " + str(ind.get("vwap_dist",0)) + "%")
                 print("  15m: " + trend + " | 1h: " + trend_1h + " | 4h: " + trend_4h)
                 print("  DXY: " + dxy_ctx.get("trend","NEUTRAL") + " (" + str(dxy_ctx.get("change",0)) + "%)")
+                print("  Whale: " + str(ind.get("whale_signal","NORMAL")) + " | OBI: " + str(ind.get("obi",0)))
                 print("  TP: " + str(tp) + " | SL: " + str(sl))
                 print("=" * 65)
 
