@@ -535,20 +535,10 @@ class ForexExecutor:
 
     def _calc_lot_size(self, balance):
         """
-        Lot sizing DINAMIS v6.0: naik seiring balance tumbuh.
-        Formula: 0.01 lot per $100 balance, min 0.01, max 0.05.
-        Contoh:
-          $100 balance -> 0.01 lot
-          $300 balance -> 0.03 lot
-          $500 balance -> 0.05 lot (capped)
+        Lot sizing FIXED: selalu 0.01 lot per trade.
+        Cent account — kontrol risiko ketat, tidak berubah apapun balance-nya.
         """
-        if balance <= 0:
-            return MIN_LOT_PER_TRADE
-        lot = round(balance / 100 * BASE_LOT_PER_100, 2)
-        lot = max(MIN_LOT_PER_TRADE, min(MAX_LOT_PER_TRADE, lot))
-        # Round ke 0.01
-        lot = round(lot / 0.01) * 0.01
-        return lot
+        return MIN_LOT_PER_TRADE  # Fixed 0.01
 
     def _is_trading_session(self):
         """
