@@ -842,9 +842,16 @@ def run_crypto_engine():
             best = observer.get_best_candidate(open_bases, _recently_exited)
 
             if best is None:
-                # Tidak ada kandidat dari observasi — coba langsung dari scan terakhir
-                print(f"[ENGINE] Tidak ada kandidat dari observasi. Scan ulang...")
-                observer.reset()
+                # Tidak ada kandidat yang cukup kuat dari observasi
+                # JANGAN reset — biarkan observer terus akumulasi data
+                # Hanya reset kalau cooldown sudah habis dan masih tidak ada kandidat
+                obs_duration = time.time() - observer._obs_start
+                if obs_duration > COOLDOWN_AFTER_TRADE * 1.5:
+                    # Sudah 1.5x cooldown masih tidak ada kandidat — reset dan mulai ulang
+                    print(f"[ENGINE] Observasi {round(obs_duration/60,1)} menit, tidak ada kandidat kuat. Reset.")
+                    observer.reset()
+                else:
+                    print(f"[ENGINE] Belum ada kandidat kuat. Lanjut observasi ({round(obs_duration/60,1)}/{COOLDOWN_AFTER_TRADE//60} menit).")
                 time.sleep(SCAN_INTERVAL)
                 continue
 
@@ -870,7 +877,7 @@ def run_crypto_engine():
             mark_price = tech.get('mark_price', 0)
             if mark_price == 0:
                 print(f"[SKIP] {clean_base} tidak bisa ambil harga terbaru.")
-                observer.reset()
+                # Jangan reset observer — coba kandidat lain di cycle berikutnya
                 time.sleep(SCAN_INTERVAL)
                 continue
 
@@ -889,7 +896,7 @@ def run_crypto_engine():
                 side = fresh_side
                 if side is None:
                     print(f"[SKIP] {clean_base} sinyal hilang saat revalidasi.")
-                    observer.reset()
+                    # Jangan reset observer — sinyal bisa kembali di cycle berikutnya
                     time.sleep(SCAN_INTERVAL)
                     continue
 
@@ -902,7 +909,7 @@ def run_crypto_engine():
             amount = executor.get_max_available(symbol, leverage=LEVERAGE)
             if amount <= 0:
                 print(f"[MARGIN GUARD] Insufficient margin for {clean_base}.")
-                observer.reset()
+                # Jangan reset — margin issue bukan alasan buang data observasi
                 time.sleep(SCAN_INTERVAL)
                 continue
 
