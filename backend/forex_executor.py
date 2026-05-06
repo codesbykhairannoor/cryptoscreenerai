@@ -583,6 +583,21 @@ class ForexExecutor:
         try:
             url = self.base_url + "/users/current/accounts/" + self.account_id + "/trade"
             headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
+
+            # Validasi SL sebelum kirim — SL BUY harus < harga saat ini
+            # Ini mencegah SL yang salah arah (misal breakeven dari posisi lain)
+            if sl and sl > 0:
+                live = self.get_live_price(symbol)
+                mid  = live.get("mid", 0)
+                if mid > 0:
+                    if side.lower() == "buy" and sl >= mid:
+                        # SL di atas harga — salah arah, recalculate
+                        sl = round(mid - SCALP_SL_POINTS, 3)
+                        print("[SL GUARD] BUY SL salah arah, reset ke " + str(sl))
+                    elif side.lower() == "sell" and sl <= mid:
+                        sl = round(mid + SCALP_SL_POINTS, 3)
+                        print("[SL GUARD] SELL SL salah arah, reset ke " + str(sl))
+
             payload = {
                 "symbol":     symbol,
                 "actionType": "ORDER_TYPE_BUY" if side.lower() == "buy" else "ORDER_TYPE_SELL",
@@ -913,15 +928,32 @@ class ForexExecutor:
                 print("=" * 65)
 
                 opened = 0
-                for _ in range(trades_to_open):
-                    success, _ = self.place_forex_order(sym, side, lot, tp=tp, sl=sl)
+                for i in range(trades_to_open):
+                    # Refresh harga untuk setiap trade — harga bisa bergerak antar trade
+                    fresh_price = self.get_live_price()
+                    fresh_entry = fresh_price["ask"] if side == "buy" else fresh_price["bid"]
+                    if fresh_entry == 0:
+                        fresh_entry = entry_price  # fallback ke harga awal
+
+                    # Recalculate TP/SL dari harga fresh
+                    fresh_tp, fresh_sl = self._calc_tp_sl(fresh_entry, side, atr)
+
+                    # Validasi ketat: SL BUY harus < entry, SL SELL harus > entry
+                    if side == "buy" and fresh_sl >= fresh_entry:
+                        print("[SL GUARD] BUY SL " + str(fresh_sl) + " >= entry " + str(fresh_entry) + " — skip trade")
+                        continue
+                    if side == "sell" and fresh_sl <= fresh_entry:
+                        print("[SL GUARD] SELL SL " + str(fresh_sl) + " <= entry " + str(fresh_entry) + " — skip trade")
+                        continue
+
+                    success, _ = self.place_forex_order(sym, side, lot, tp=fresh_tp, sl=fresh_sl)
                     if success:
                         from database import log_trade
-                        log_trade(sym, entry_price, tp, sl, market="forex",
+                        log_trade(sym, fresh_entry, fresh_tp, fresh_sl, market="forex",
                                   side=side, lot_size=lot, score=score,
                                   reason="Pump:" + str(pump_sig) + " RSI:" + str(rsi_val) + " 15m:" + trend + " 1h:" + trend_1h + " 4h:" + trend_4h)
                         opened += 1
-                    time.sleep(0.15)
+                    time.sleep(0.2)  # sedikit lebih lama agar harga stabil
 
                 if opened > 0:
                     print("[FOREX] Opened " + str(opened) + "/" + str(trades_to_open) + " trades OK")
