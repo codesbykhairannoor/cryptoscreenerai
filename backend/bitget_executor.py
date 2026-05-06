@@ -264,22 +264,36 @@ class BitgetExecutor:
                 raw_price = ticker['last']
             price = float(raw_price)
 
-            # 4. HITUNG SL/TP DARI HARGA FILL AKTUAL
-            # Penting: pakai `price` (harga fill), bukan mark_price sebelum order
-            # TP 80% PnL = 8% price move di 10x
-            # SL 15% PnL = 1.5% price move di 10x
+            # 4. VALIDASI SL/TP DARI HARGA FILL AKTUAL
+            # Pakai SL/TP yang dikirim dari crypto_engine (sudah dihitung dengan benar).
+            # Hanya override kalau SL arahnya salah (long SL di atas price, dll).
+            # JANGAN recalculate dengan price * 0.985 karena itu bisa lebih kecil
+            # dari SL yang sudah dihitung dengan benar di _calc_tp_sl.
             if side.lower() in ['long', 'buy']:
-                final_sl = sl if (sl and sl > 0 and sl < price) else price * 0.985
-                final_tp = tp if (tp and tp > 0 and tp > price) else price * 1.08
+                # SL long harus di bawah fill price
+                if sl and sl > 0 and sl < price:
+                    final_sl = sl   # Pakai SL dari crypto_engine — sudah benar
+                else:
+                    final_sl = price * 0.985  # Fallback: 1.5% = 15% PnL
+                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 1.5%: {round(final_sl,6)}")
+                # TP long harus di atas fill price
+                if tp and tp > 0 and tp > price:
+                    final_tp = tp
+                else:
+                    final_tp = price * 1.08   # Fallback: 8% = 80% PnL
+                    print(f"[TP FALLBACK] {symbol} TP invalid ({tp}), pakai 8%: {round(final_tp,6)}")
             else:
-                final_sl = sl if (sl and sl > 0 and sl > price) else price * 1.015
-                final_tp = tp if (tp and tp > 0 and tp < price) else price * 0.92
-
-            # Double-check: SL long harus < price, SL short harus > price
-            if side.lower() in ['long', 'buy'] and final_sl >= price:
-                final_sl = price * 0.985
-            if side.lower() in ['short', 'sell'] and final_sl <= price:
-                final_sl = price * 1.015
+                # SL short harus di atas fill price
+                if sl and sl > 0 and sl > price:
+                    final_sl = sl
+                else:
+                    final_sl = price * 1.015
+                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 1.5%: {round(final_sl,6)}")
+                if tp and tp > 0 and tp < price:
+                    final_tp = tp
+                else:
+                    final_tp = price * 0.92
+                    print(f"[TP FALLBACK] {symbol} TP invalid ({tp}), pakai 8%: {round(final_tp,6)}")
 
             # 5. SET SL/TP via Plan Order API (cara yang benar untuk Bitget Classic)
             self._set_sl_tp_bitget(symbol, side, amount, sl_price=final_sl, tp_price=final_tp)

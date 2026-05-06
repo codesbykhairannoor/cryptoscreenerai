@@ -637,24 +637,33 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]
     """
     TP/SL berbasis PnL target di 10x leverage.
     
-    Target:
-    - SL = -15% PnL = -1.5% price move
+    Target FIXED:
+    - SL = -15% PnL = -1.5% price move (SELALU, tidak bisa lebih kecil)
     - TP = +80% PnL = +8% price move
     
-    ATR dipakai sebagai minimum noise buffer — SL tidak boleh lebih kecil
-    dari ATR×1.5 (kalau ATR lebih besar dari 1.5% price).
-    Ini mencegah SL terlalu dekat untuk koin murah seperti CFX (harga 0.06).
+    ATR hanya dipakai kalau LEBIH BESAR dari minimum % — untuk koin
+    volatile yang butuh SL lebih lebar. Tidak pernah lebih kecil dari 1.5%.
+    
+    Contoh DOGS (harga $0.001, ATR $0.000003):
+    - ATR × 1.5 = $0.0000045 = 0.45% → TERLALU KECIL
+    - min_sl = $0.001 × 0.015 = $0.000015 = 1.5% → PAKAI INI
+    
+    Contoh BTC (harga $60000, ATR $800):
+    - ATR × 1.5 = $1200 = 2% → LEBIH BESAR dari 1.5%
+    - Pakai ATR-based = $1200
     """
     atr = tech.get('atr', 0)
 
-    # Minimum SL = 1.5% price (= 15% PnL di 10x) — TIDAK BOLEH LEBIH KECIL
-    min_sl_dist = mark_price * SCALP_SL_PCT   # 1.5%
+    # HARD MINIMUM: SL tidak boleh lebih kecil dari 1.5% price (= 15% PnL di 10x)
+    min_sl_dist = mark_price * SCALP_SL_PCT   # 1.5% — TIDAK BOLEH LEBIH KECIL
     min_tp_dist = mark_price * SCALP_TP_PCT   # 8%
 
     if atr and atr > 0:
-        # Pakai ATR kalau lebih besar dari minimum % — ambil yang lebih besar
-        sl_dist = max(atr * SCALP_SL_ATR, min_sl_dist)
-        tp_dist = max(atr * SCALP_TP_ATR, min_tp_dist)
+        atr_sl = atr * SCALP_SL_ATR  # ATR × 1.5
+        atr_tp = atr * SCALP_TP_ATR  # ATR × 5.0
+        # Ambil yang LEBIH BESAR — ATR atau minimum %
+        sl_dist = max(atr_sl, min_sl_dist)
+        tp_dist = max(atr_tp, min_tp_dist)
     else:
         sl_dist = min_sl_dist
         tp_dist = min_tp_dist
