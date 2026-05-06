@@ -1038,8 +1038,16 @@ def run_crypto_engine():
                 observer.reset()
 
             # ── 9a. SCAN SEMUA KANDIDAT & CATAT KE OBSERVER ──────────────────
-            scan_count = 0
-            for coin in candidates[:20]:
+            # Log ringkas: berapa koin yang di-scan dan berapa yang lolos
+            top_candidates = candidates[:20]
+            print(f"[CRYPTO ENGINE] Scan {len(top_candidates)} koin | "
+                  f"Watchlist: {len(observer._watchlist)} | "
+                  f"Obs: {round((now - observer._obs_start)/60, 1)}m | "
+                  f"Sentiment: {market_sentiment} | DXY: {dxy_trend}")
+
+            scan_count   = 0
+            skip_reasons = {}  # track kenapa koin di-skip
+            for coin in top_candidates:
                 symbol     = coin.get('symbol', '')
                 clean_base = executor._clean_symbol(symbol)
 
@@ -1048,15 +1056,18 @@ def run_crypto_engine():
                 if clean_base in ('BTC', 'ETH'):                      continue
                 if any(x in clean_base for x in ('USD','DAI','BUSD','TUSD','WBTC','WETH')): continue
                 if clean_base in _recently_exited:                    continue
-                # Skip koin yang sudah sering kena SL
                 if clean_base in _repeat_losers:                      continue
 
                 pump_sc = float(coin.get('pump_score', 0))
-                if pump_sc < MIN_PUMP_SCORE:                          continue
+                if pump_sc < MIN_PUMP_SCORE:
+                    skip_reasons['low_pump'] = skip_reasons.get('low_pump', 0) + 1
+                    continue
 
                 # Ambil indikator teknikal
                 tech = get_technical_indicators(symbol)
-                if not tech:                                           continue
+                if not tech:
+                    skip_reasons['no_tech'] = skip_reasons.get('no_tech', 0) + 1
+                    continue
 
                 mark_price = tech.get('mark_price', 0) or float(coin.get('lastPrice', 0))
                 if mark_price == 0:                                    continue
@@ -1070,30 +1081,31 @@ def run_crypto_engine():
 
                 combined_score = round((pump_sc * 0.5) + (tech_score * 0.5))
 
+                if side is None or combined_score < MIN_MOMENTUM_SCORE or tech_score < MIN_TECH_SCORE:
+                    skip_reasons['low_score'] = skip_reasons.get('low_score', 0) + 1
+
                 # ── MARKET REGIME FILTER (ADX) ────────────────────────────────
-                # Hanya trade di trending market. Ranging market = sinyal SMC palsu.
                 adx = _calc_adx(symbol)
                 if adx < ADX_RANGING_THRESHOLD:
-                    print(f"[REGIME] {clean_base} ADX={adx} < {ADX_RANGING_THRESHOLD} (RANGING). Skip.")
+                    skip_reasons['ranging'] = skip_reasons.get('ranging', 0) + 1
                     continue
                 regime_label = "TRENDING" if adx >= ADX_TRENDING_THRESHOLD else "WEAK_TREND"
 
                 # ── VOLATILITY REGIME FILTER ──────────────────────────────────
-                # Skip kalau terlalu volatile (SL kena noise) atau terlalu sepi (spread makan profit)
                 vol_data = _calc_volatility_regime(symbol)
                 vol_regime = vol_data.get("regime", "NORMAL")
                 if vol_regime == "HIGH_VOL":
-                    print(f"[VOL] {clean_base} ATR ratio={vol_data['atr_ratio']} HIGH_VOL. Skip.")
+                    skip_reasons['high_vol'] = skip_reasons.get('high_vol', 0) + 1
                     continue
                 if vol_regime == "LOW_VOL":
-                    print(f"[VOL] {clean_base} ATR ratio={vol_data['atr_ratio']} LOW_VOL. Skip.")
+                    skip_reasons['low_vol'] = skip_reasons.get('low_vol', 0) + 1
                     continue
 
                 # ── EXPECTED VALUE CHECK ──────────────────────────────────────
                 # Hitung EV sebelum entry. Kalau EV terlalu kecil, tidak worth it.
                 ev = _calc_expected_value(side, tech, combined_score) if side else 0
                 if ev < MIN_EXPECTED_VALUE:
-                    print(f"[EV] {clean_base} EV={ev:.4f} < {MIN_EXPECTED_VALUE}. Skip.")
+                    skip_reasons['low_ev'] = skip_reasons.get('low_ev', 0) + 1
                     continue
 
                 # DXY override
@@ -1120,7 +1132,9 @@ def run_crypto_engine():
                           f"OI:{tech.get('open_interest',0):.0f} "
                           f"Fund:{tech.get('funding_rate',0):.4f}")
 
-            print(f"[SCAN] {scan_count} kandidat lolos filter | "
+            # Summary scan cycle
+            skip_str = " | ".join(f"{k}:{v}" for k, v in skip_reasons.items()) if skip_reasons else "none"
+            print(f"[SCAN] {scan_count} masuk watchlist | Skip: {skip_str} | "
                   f"Cooldown: {'YA ' + str(round(cooldown_remaining))+'s' if in_cooldown else 'TIDAK - SIAP ENTRY'}")
 
             # ── 10. KEPUTUSAN ENTRY ───────────────────────────────────────────
