@@ -970,18 +970,18 @@ class ForexExecutor:
 
             if is_buy:
                 if profit_pt >= 18.0:
-                    target_sl = round(open_price + 10.0, 3)
-                    stage     = "LOCK-10"
+                    target_sl = round(open_price + 12.0, 3)
+                    stage     = "LOCK-12"
                 else:
-                    target_sl = round(open_price + 4.0, 3)
-                    stage     = "LOCK-4"
+                    target_sl = round(open_price + 5.0, 3)
+                    stage     = "LOCK-5"
             else:
                 if profit_pt >= 18.0:
-                    target_sl = round(open_price - 10.0, 3)
-                    stage     = "LOCK-10"
+                    target_sl = round(open_price - 12.0, 3)
+                    stage     = "LOCK-12"
                 else:
-                    target_sl = round(open_price - 4.0, 3)
-                    stage     = "LOCK-4"
+                    target_sl = round(open_price - 5.0, 3)
+                    stage     = "LOCK-5"
 
             # SL hanya bergerak ke arah profit, tidak pernah mundur
             if is_buy:

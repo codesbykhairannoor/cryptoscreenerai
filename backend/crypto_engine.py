@@ -1160,18 +1160,16 @@ def run_crypto_engine():
                 continue
 
             # Kalau kandidat terbaik tidak punya sinyal prediktif sama sekali,
-            # lanjut observasi kecuali sudah > 30 menit (2x cooldown)
+            # JANGAN masuk paksa — reset dan tunggu siklus baru yang lebih baik.
+            # Lebih baik tidak trade daripada masuk dengan sinyal lemah.
             if not best.get('has_predictive_signal', True):
                 obs_duration = time.time() - observer._obs_start
-                if obs_duration < COOLDOWN_AFTER_TRADE * 2:
-                    print(f"[ENGINE] {best['clean_base']} tidak ada sinyal prediktif "
-                          f"(Future:0, Rising:False, Whale:NORMAL). "
-                          f"Lanjut observasi {round(obs_duration/60,1)}/{COOLDOWN_AFTER_TRADE*2//60} menit.")
-                    time.sleep(SCAN_INTERVAL)
-                    continue
-                else:
-                    print(f"[ENGINE] Sudah {round(obs_duration/60,1)} menit. "
-                          f"Masuk {best['clean_base']} meski sinyal prediktif lemah.")
+                print(f"[ENGINE] {best['clean_base']} tidak ada sinyal prediktif "
+                      f"(Future:0, Rising:False, Whale:NORMAL) setelah {round(obs_duration/60,1)} menit. "
+                      f"Reset dan cari kandidat baru.")
+                observer.reset()
+                time.sleep(SCAN_INTERVAL)
+                continue
 
             # ── 11. EKSEKUSI KANDIDAT TERBAIK ────────────────────────────────
             clean_base = best['clean_base']
