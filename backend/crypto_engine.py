@@ -290,6 +290,11 @@ def _calc_expected_value(side: str, tech: dict, combined_score: int) -> float:
     ev = (p_win * tp_pct) - (p_loss * sl_pct)
     return round(ev, 4)
 
+
+# WHALE OBSERVER
+class WhaleObserver:
+    """Akumulasi dan evaluasi kandidat selama 15 menit cooldown."""
+
     def __init__(self):
         # {clean_base: [(timestamp, combined_score, tech_score, side, tech_dict), ...]}
         self._watchlist: dict = defaultdict(list)
@@ -307,10 +312,16 @@ def _calc_expected_value(side: str, tech: dict, combined_score: int) -> float:
               f"Akan pilih kandidat terbaik dalam {COOLDOWN_AFTER_TRADE//60} menit.")
 
     def record(self, clean_base: str, combined_score: int, tech_score: int,
-               side: str, tech: dict):
-        """Catat satu observasi untuk koin ini."""
+               side: str, tech: dict, adx: float = 25.0, ev: float = 0.01,
+               vol_regime: str = "NORMAL"):
+        """
+        Catat satu observasi untuk koin ini.
+        Setiap 10 detik selama 15 menit, data terbaru disimpan.
+        Di akhir cooldown, semua data ini dianalisis untuk pilih yang terbaik.
+        """
         now = time.time()
-        self._watchlist[clean_base].append((now, combined_score, tech_score, side, tech))
+        entry = (now, combined_score, tech_score, side, tech, adx, ev, vol_regime)
+        self._watchlist[clean_base].append(entry)
 
         # Simpan OI baseline pertama kali
         if clean_base not in self._oi_baseline:
@@ -335,6 +346,24 @@ def _calc_expected_value(side: str, tech: dict, combined_score: int) -> float:
         latest_tech  = entries[-1][4]  # tech dict dari observasi terakhir
         side         = entries[-1][3]
 
+        # ── 0. ADX TREND STRENGTH BONUS (max 15 poin) ─────────────────────────
+        # Koin yang konsisten di trending market = sinyal lebih reliable
+        adx_values = [e[5] for e in entries if len(e) > 5]
+        if adx_values:
+            avg_adx = sum(adx_values) / len(adx_values)
+            if avg_adx >= 30:   future_score += 15  # Trend kuat konsisten
+            elif avg_adx >= 25: future_score += 10
+            elif avg_adx >= 22: future_score += 5
+            # ADX < 22 = tidak ada bonus, tapi sudah lolos filter minimum
+
+        # ── 0b. EV TREND BONUS (max 10 poin) ──────────────────────────────────
+        # EV yang naik dari scan ke scan = kondisi membaik
+        ev_values = [e[6] for e in entries if len(e) > 6]
+        if len(ev_values) >= 3:
+            ev_slope = ev_values[-1] - ev_values[0]
+            if ev_slope > 0.005:   future_score += 10  # EV naik signifikan
+            elif ev_slope > 0.002: future_score += 5
+            elif ev_slope < -0.005: future_score -= 8  # EV turun = kondisi memburuk
         # ── 1. OI SURGE (max 25 poin) ─────────────────────────────────────────
         # OI naik dari baseline = posisi baru dibuka = akumulasi
         oi_now      = latest_tech.get('open_interest', 0)
@@ -480,7 +509,7 @@ def _calc_expected_value(side: str, tech: dict, combined_score: int) -> float:
                   f"AvgScore:{avg_score:.1f} | Future:{future_sc:.1f} | Final:{final:.1f} "
                   f"{'📈' if is_rising else '  '} "
                   f"{'🐋' if latest_tech.get('whale_signal')=='WHALE_BUY' else '  '}"
-                  f"{'⚠️ NO_SIGNAL' if not has_predictive_signal else ''}")
+                  f"{'NO_SIGNAL' if not has_predictive_signal else ''}")
 
             if final > best_final:
                 best_final = final
@@ -1081,7 +1110,8 @@ def run_crypto_engine():
 
                 # Lolos semua filter - catat ke observer
                 if side is not None and combined_score >= MIN_MOMENTUM_SCORE and tech_score >= MIN_TECH_SCORE:
-                    observer.record(clean_base, combined_score, tech_score, side, tech)
+                    observer.record(clean_base, combined_score, tech_score, side, tech,
+                                    adx=adx, ev=ev, vol_regime=vol_regime)
                     scan_count += 1
                     print(f"[OBS] {clean_base:8s} {side:4s} | Pump:{pump_sc:.0f} "
                           f"Tech:{tech_score} Combined:{combined_score} | "
