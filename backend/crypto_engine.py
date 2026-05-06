@@ -72,11 +72,14 @@ OI_SURGE_THRESHOLD   = 0.05   # OI naik 5%+ dari baseline = akumulasi diam-diam
 FUNDING_SQUEEZE_THR  = -0.001 # Funding negatif = short squeeze candidate
 VOLUME_SPIKE_RATIO   = 2.5    # Volume 2.5x rata-rata = early institutional signal
 
-# TP/SL spread-aware (10x leverage):
-SCALP_TP_PCT  = 0.08
-SCALP_SL_PCT  = 0.015
-SCALP_TP_ATR  = 5.0
-SCALP_SL_ATR  = 1.2
+# TP/SL berbasis PnL target (10x leverage):
+# SL target = -15% PnL = -1.5% price move di 10x
+# TP target = +80% PnL = +8% price move di 10x
+# ATR dipakai sebagai minimum distance (jangan lebih kecil dari noise)
+SCALP_TP_PCT  = 0.08    # 8% price = 80% PnL di 10x
+SCALP_SL_PCT  = 0.015   # 1.5% price = 15% PnL di 10x
+SCALP_TP_ATR  = 5.0     # TP = max(ATR×5, 8% price)
+SCALP_SL_ATR  = 1.5     # SL = max(ATR×1.5, 1.5% price) — ATR sebagai minimum noise buffer
 
 # Session filter: hanya trade jam aktif
 # Altcoin paling volatile jam 08:00-22:00 WIB = 01:00-15:00 UTC
@@ -291,26 +294,36 @@ class WhaleObserver:
             # Final score
             final = (avg_score * consistency * momentum) + future_sc
 
+            # GUARD: jangan pilih koin yang tidak punya sinyal prediktif sama sekali
+            # Future=0 + Rising=False = tidak ada bukti whale/momentum — terlalu spekulatif
+            # Kecuali tidak ada kandidat lain (akan di-handle di bawah dengan flag)
+            has_predictive_signal = future_sc > 0 or is_rising or \
+                                    latest_tech.get('whale_signal') == 'WHALE_BUY' or \
+                                    latest_tech.get('whale_signal') == 'WHALE_SELL'
+
             # Ambil tech dari observasi terakhir
             latest_tech = side_entries[-1][4]
             avg_tech_score = sum(e[2] for e in side_entries) / len(side_entries)
 
             print(f"  {clean_base:10s} | Side:{side:4s} | Appear:{appearances:2d}x | "
                   f"AvgScore:{avg_score:.1f} | Future:{future_sc:.1f} | Final:{final:.1f} "
-                  f"{'📈' if is_rising else '  '} {'🐋' if latest_tech.get('whale_signal')=='WHALE_BUY' else '  '}")
+                  f"{'📈' if is_rising else '  '} "
+                  f"{'🐋' if latest_tech.get('whale_signal')=='WHALE_BUY' else '  '}"
+                  f"{'⚠️ NO_SIGNAL' if not has_predictive_signal else ''}")
 
             if final > best_final:
                 best_final = final
                 best = {
-                    'clean_base':   clean_base,
-                    'side':         side,
-                    'avg_score':    round(avg_score, 1),
-                    'final_score':  round(final, 1),
-                    'future_score': round(future_sc, 1),
-                    'appearances':  appearances,
-                    'is_rising':    is_rising,
-                    'tech':         latest_tech,
-                    'avg_tech_score': round(avg_tech_score, 1),
+                    'clean_base':          clean_base,
+                    'side':                side,
+                    'avg_score':           round(avg_score, 1),
+                    'final_score':         round(final, 1),
+                    'future_score':        round(future_sc, 1),
+                    'appearances':         appearances,
+                    'is_rising':           is_rising,
+                    'has_predictive_signal': has_predictive_signal,
+                    'tech':                latest_tech,
+                    'avg_tech_score':      round(avg_tech_score, 1),
                 }
 
         if best:
@@ -619,19 +632,32 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     return best_side, best_reason, best_score
 
 
-# ─── CORE: HITUNG TP/SL BERBASIS ATR ─────────────────────────────────────────
+# ─── CORE: HITUNG TP/SL BERBASIS PnL TARGET ──────────────────────────────────
 def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]:
     """
-    Scalp TP/SL: ambil profit cepat, cut loss cepat.
-    ATR-based kalau tersedia, fallback ke fixed %.
+    TP/SL berbasis PnL target di 10x leverage.
+    
+    Target:
+    - SL = -15% PnL = -1.5% price move
+    - TP = +80% PnL = +8% price move
+    
+    ATR dipakai sebagai minimum noise buffer — SL tidak boleh lebih kecil
+    dari ATR×1.5 (kalau ATR lebih besar dari 1.5% price).
+    Ini mencegah SL terlalu dekat untuk koin murah seperti CFX (harga 0.06).
     """
     atr = tech.get('atr', 0)
+
+    # Minimum SL = 1.5% price (= 15% PnL di 10x) — TIDAK BOLEH LEBIH KECIL
+    min_sl_dist = mark_price * SCALP_SL_PCT   # 1.5%
+    min_tp_dist = mark_price * SCALP_TP_PCT   # 8%
+
     if atr and atr > 0:
-        sl_dist = atr * SCALP_SL_ATR
-        tp_dist = atr * SCALP_TP_ATR
+        # Pakai ATR kalau lebih besar dari minimum % — ambil yang lebih besar
+        sl_dist = max(atr * SCALP_SL_ATR, min_sl_dist)
+        tp_dist = max(atr * SCALP_TP_ATR, min_tp_dist)
     else:
-        sl_dist = mark_price * SCALP_SL_PCT
-        tp_dist = mark_price * SCALP_TP_PCT
+        sl_dist = min_sl_dist
+        tp_dist = min_tp_dist
 
     if side == "buy":
         return round(mark_price + tp_dist, 6), round(mark_price - sl_dist, 6)
@@ -874,17 +900,28 @@ def run_crypto_engine():
 
             if best is None:
                 # Tidak ada kandidat yang cukup kuat dari observasi
-                # JANGAN reset — biarkan observer terus akumulasi data
-                # Hanya reset kalau cooldown sudah habis dan masih tidak ada kandidat
                 obs_duration = time.time() - observer._obs_start
                 if obs_duration > COOLDOWN_AFTER_TRADE * 1.5:
-                    # Sudah 1.5x cooldown masih tidak ada kandidat — reset dan mulai ulang
                     print(f"[ENGINE] Observasi {round(obs_duration/60,1)} menit, tidak ada kandidat kuat. Reset.")
                     observer.reset()
                 else:
                     print(f"[ENGINE] Belum ada kandidat kuat. Lanjut observasi ({round(obs_duration/60,1)}/{COOLDOWN_AFTER_TRADE//60} menit).")
                 time.sleep(SCAN_INTERVAL)
                 continue
+
+            # Kalau kandidat terbaik tidak punya sinyal prediktif sama sekali,
+            # lanjut observasi kecuali sudah > 30 menit (2x cooldown)
+            if not best.get('has_predictive_signal', True):
+                obs_duration = time.time() - observer._obs_start
+                if obs_duration < COOLDOWN_AFTER_TRADE * 2:
+                    print(f"[ENGINE] {best['clean_base']} tidak ada sinyal prediktif "
+                          f"(Future:0, Rising:False, Whale:NORMAL). "
+                          f"Lanjut observasi {round(obs_duration/60,1)}/{COOLDOWN_AFTER_TRADE*2//60} menit.")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+                else:
+                    print(f"[ENGINE] Sudah {round(obs_duration/60,1)} menit. "
+                          f"Masuk {best['clean_base']} meski sinyal prediktif lemah.")
 
             # ── 11. EKSEKUSI KANDIDAT TERBAIK ────────────────────────────────
             clean_base = best['clean_base']
