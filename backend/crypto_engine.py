@@ -34,21 +34,23 @@ COOLDOWN_AFTER_TRADE = 120    # 2 menit cooldown setelah trade selesai
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 30
+MIN_MOMENTUM_SCORE   = 40     # Naikkan dari 30 — lebih selektif, kurangi false signal
 
 # TP/SL spread-aware (10x leverage):
-# TP 80% PnL = 8% price move → bersih ~78.8% setelah fee
-# SL 15% PnL = 1.5% price move
 SCALP_TP_PCT  = 0.08
 SCALP_SL_PCT  = 0.015
 SCALP_TP_ATR  = 5.0
 SCALP_SL_ATR  = 1.2
 
-# Sideways detection: 1 jam (bukan 4 jam)
-# Kalau koin tidak bergerak 1 jam, exit dan cari koin lain
-SIDEWAYS_HOURS       = 1.0    # Exit kalau sideways > 1 jam
-SIDEWAYS_PNL_RANGE   = 2.0    # PnL range yang dianggap sideways (-2% sampai +2%)
-SIDEWAYS_PRICE_MOVE  = 0.5    # Price move < 0.5% = sideways
+# Session filter: hanya trade jam aktif
+# Altcoin paling volatile jam 08:00-22:00 WIB = 01:00-15:00 UTC
+# Jam 22:00-08:00 WIB = volume rendah, spread tinggi, sinyal palsu banyak
+CRYPTO_SESSION_START_UTC = 1   # 01:00 UTC = 08:00 WIB
+CRYPTO_SESSION_END_UTC   = 15  # 15:00 UTC = 22:00 WIB
+
+SIDEWAYS_HOURS       = 1.0
+SIDEWAYS_PNL_RANGE   = 2.0
+SIDEWAYS_PRICE_MOVE  = 0.5
 
 DAILY_LOSS_LIMIT_PCT = -40
 
@@ -415,6 +417,19 @@ def run_crypto_engine():
                 print(f"[CIRCUIT BREAKER] Daily loss limit {DAILY_LOSS_LIMIT_PCT}% reached. "
                       f"Standing down for 30 minutes.")
                 time.sleep(1800)
+                continue
+
+            # ── 4b. SESSION FILTER ────────────────────────────────────────────
+            # Hanya trade jam 08:00-22:00 WIB (01:00-15:00 UTC)
+            # Jam 22:00-08:00 WIB: volume rendah, spread tinggi, sinyal palsu
+            import datetime as _dt
+            utc_hour = _dt.datetime.utcnow().hour
+            if not (CRYPTO_SESSION_START_UTC <= utc_hour < CRYPTO_SESSION_END_UTC):
+                if int(now) % 300 < 10:
+                    wib_hour = (utc_hour + 7) % 24
+                    print(f"[CRYPTO SESSION] Off-hours ({wib_hour:02d}:xx WIB). "
+                          f"Aktif jam 08:00-22:00 WIB.")
+                time.sleep(60)
                 continue
 
             # ── 5. POSITION LIMIT CHECK ───────────────────────────────────────
