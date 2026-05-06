@@ -15,7 +15,8 @@ CANDLE_LIMIT         = 100
 MAX_TRADES_PER_SIGNAL = 3
 SCALP_TP_POINTS      = 20.0
 SCALP_SL_POINTS      = 8.0
-TRAIL_BUFFER_POINTS  = 3.0
+TRAIL_BUFFER_POINTS     = 3.0    # Buffer poin saat trailing (SL = entry + profit_pt - buffer)
+TRAIL_ACTIVATION_POINTS = 3.0    # Trailing mulai aktif setelah profit >= 3 poin
 BASE_LOT_PER_100     = 0.01
 MAX_LOT_PER_TRADE    = 0.05
 MIN_LOT_PER_TRADE    = 0.01
