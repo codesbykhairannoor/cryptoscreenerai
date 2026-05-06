@@ -58,9 +58,14 @@ MIN_PUMP_SCORE       = 25     # Pump score minimum
 # Selama 15 menit cooldown, bot scan setiap 10 detik dan akumulasi data
 # Koin yang KONSISTEN muncul dengan score tinggi = whale sedang akumulasi
 MIN_APPEARANCES      = 3      # Minimal muncul 3x dalam 15 menit untuk dianggap valid
-MIN_AVG_SCORE        = 42     # Rata-rata combined score minimum
+MIN_AVG_SCORE        = 45     # Naik dari 42 — lebih selektif, hindari sinyal lemah
 CONSISTENCY_BONUS    = 1.15   # Multiplier kalau muncul 6x+ (sangat konsisten)
 MOMENTUM_BONUS       = 1.10   # Multiplier kalau score-nya naik dari scan ke scan
+
+# Koin yang sudah kena SL 2x dalam 4 jam terakhir = blacklist sementara
+# Ini mencegah bot masuk koin yang sama berulang kali dan terus kalah
+REPEAT_LOSS_BLACKLIST_HOURS = 4   # Blacklist 4 jam setelah 2x SL
+REPEAT_LOSS_MAX_COUNT       = 2   # Maksimal 2x SL sebelum blacklist
 
 # OI & Funding thresholds untuk "baca masa depan"
 OI_SURGE_THRESHOLD   = 0.05   # OI naik 5%+ dari baseline = akumulasi diam-diam
@@ -667,6 +672,9 @@ def run_crypto_engine():
     last_global_report = 0
     _dxy_cache         = {"trend": "NEUTRAL", "ts": 0}
     _recently_exited   = {}  # {clean_base: exit_timestamp}
+    # Track koin yang sering kena SL — {clean_base: [timestamp_sl1, timestamp_sl2, ...]}
+    # Kalau kena SL 2x dalam 4 jam → blacklist sementara
+    _loss_tracker      = {}  # {clean_base: [timestamps]}
 
     # Mulai observasi langsung dari startup
     observer.reset()
@@ -728,7 +736,7 @@ def run_crypto_engine():
             cooldown_remaining  = COOLDOWN_AFTER_TRADE - elapsed_since_trade
             in_cooldown         = cooldown_remaining > 0
 
-            # ── 7. BERSIHKAN recently_exited ──────────────────────────────────
+            # ── 7. BERSIHKAN recently_exited + TRACK LOSSES ──────────────────
             _recently_exited = {k: v for k, v in _recently_exited.items()
                                  if now - v < 1800}
             try:
@@ -736,6 +744,17 @@ def run_crypto_engine():
                 if hasattr(_state, 'recently_exited'):
                     for k, v in list(_state.recently_exited.items()):
                         if now - v < 1800:
+                            # Koin baru di-exit — catat ke loss tracker
+                            if k not in _recently_exited:
+                                # Ini exit baru, tambah ke loss tracker
+                                if k not in _loss_tracker:
+                                    _loss_tracker[k] = []
+                                _loss_tracker[k].append(v)
+                                loss_count = len([t for t in _loss_tracker[k]
+                                                  if t > now - REPEAT_LOSS_BLACKLIST_HOURS * 3600])
+                                if loss_count >= REPEAT_LOSS_MAX_COUNT:
+                                    print(f"[LOSS TRACKER] {k} kena SL {loss_count}x dalam "
+                                          f"{REPEAT_LOSS_BLACKLIST_HOURS}h. Blacklist sementara.")
                             _recently_exited[k] = v
                         else:
                             del _state.recently_exited[k]
@@ -766,14 +785,24 @@ def run_crypto_engine():
                 time.sleep(SCAN_INTERVAL)
                 continue
 
+            # Bersihkan loss tracker yang sudah expired
+            cutoff = now - (REPEAT_LOSS_BLACKLIST_HOURS * 3600)
+            for base in list(_loss_tracker.keys()):
+                _loss_tracker[base] = [t for t in _loss_tracker[base] if t > cutoff]
+                if not _loss_tracker[base]:
+                    del _loss_tracker[base]
+
+            # Koin yang kena SL 2x+ dalam 4 jam = blacklist sementara
+            _repeat_losers = {b for b, ts in _loss_tracker.items()
+                              if len(ts) >= REPEAT_LOSS_MAX_COUNT}
+            if _repeat_losers:
+                print(f"[BLACKLIST] Koin blacklist sementara: {_repeat_losers}")
+
             # Kalau baru mulai observasi (setelah trade atau startup), reset observer
             if last_exec_time > 0 and elapsed_since_trade < SCAN_INTERVAL + 5:
                 observer.reset()
 
             # ── 9a. SCAN SEMUA KANDIDAT & CATAT KE OBSERVER ──────────────────
-            # Ini jalan SELALU — baik saat cooldown maupun tidak
-            # Saat cooldown: akumulasi data untuk keputusan akhir
-            # Saat tidak cooldown: langsung eksekusi kalau ada yang bagus
             scan_count = 0
             for coin in candidates[:20]:
                 symbol     = coin.get('symbol', '')
@@ -784,6 +813,8 @@ def run_crypto_engine():
                 if clean_base in ('BTC', 'ETH'):                      continue
                 if any(x in clean_base for x in ('USD','DAI','BUSD','TUSD','WBTC','WETH')): continue
                 if clean_base in _recently_exited:                    continue
+                # Skip koin yang sudah sering kena SL
+                if clean_base in _repeat_losers:                      continue
 
                 pump_sc = float(coin.get('pump_score', 0))
                 if pump_sc < MIN_PUMP_SCORE:                          continue

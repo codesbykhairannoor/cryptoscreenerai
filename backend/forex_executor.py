@@ -761,7 +761,34 @@ class ForexExecutor:
                     time.sleep(60)
                     continue
 
-                # SESSION FILTER
+                # TRAILING STOP — jalan SELALU, tidak peduli session
+                # Harus sebelum session filter agar posisi tetap diproteksi
+                # bahkan saat outside trading hours
+                price_data   = self.get_live_price()
+                broker_price = price_data["mid"]
+                spread_pts   = price_data["spread_points"]
+
+                if broker_price > 0:
+                    self._last_known_price  = broker_price
+                    self._last_known_spread = spread_pts
+                else:
+                    broker_price = self._last_known_price
+                    spread_pts   = self._last_known_spread
+
+                positions    = self._get_positions()
+                active_count = len(positions)
+                total_lots   = sum(float(p.get("volume", 0)) for p in positions)
+
+                if broker_price > 0:
+                    print("[FOREX] Price: " + str(broker_price) + " | Trades: " + str(active_count) + " | Lots: " + str(round(total_lots,2)) + " | Spread: " + str(spread_pts) + "pts")
+
+                if broker_price > 0 and positions:
+                    for p in positions:
+                        if "XAU" in p.get("symbol", "").upper():
+                            p["currentPrice"] = broker_price
+                    self._trail_positions(positions)
+
+                # SESSION FILTER — hanya untuk entry baru, bukan trailing
                 if not self._is_trading_session():
                     print("[FOREX SESSION] Outside trading session. Waiting 5 min...")
                     time.sleep(300)
@@ -778,33 +805,6 @@ class ForexExecutor:
                     print("[EQUITY GUARD] Drawdown! Equity: $" + str(equity) + " / Balance: $" + str(balance) + ". Halting.")
                     time.sleep(60)
                     continue
-
-                # LIVE PRICE
-                price_data   = self.get_live_price()
-                broker_price = price_data["mid"]
-                spread_pts   = price_data["spread_points"]
-
-                if broker_price > 0:
-                    self._last_known_price  = broker_price
-                    self._last_known_spread = spread_pts
-                else:
-                    broker_price = self._last_known_price
-                    spread_pts   = self._last_known_spread
-
-                # POSITIONS
-                positions    = self._get_positions()
-                active_count = len(positions)
-                total_lots   = sum(float(p.get("volume", 0)) for p in positions)
-
-                if broker_price > 0:
-                    print("[FOREX] Price: " + str(broker_price) + " | Trades: " + str(active_count) + " | Lots: " + str(round(total_lots,2)) + " | Spread: " + str(spread_pts) + "pts")
-
-                # TRAILING STOP - selalu jalan
-                if broker_price > 0 and positions:
-                    for p in positions:
-                        if "XAU" in p.get("symbol", "").upper():
-                            p["currentPrice"] = broker_price
-                    self._trail_positions(positions)
 
                 if broker_price == 0:
                     time.sleep(5)
