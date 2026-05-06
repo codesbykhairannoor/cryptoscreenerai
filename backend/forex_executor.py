@@ -163,6 +163,110 @@ class ForexExecutor:
 
     # ── ORDER BOOK & WHALE DETECTION (via PAXG proxy) ────────────────────────
 
+    def _calc_adx_forex(self, period: int = 14) -> float:
+        """
+        Hitung ADX untuk XAUUSD dari candle MetaAPI.
+        ADX > 22 = trending, boleh entry.
+        ADX < 18 = ranging, skip.
+        """
+        try:
+            candles = self.get_candles(timeframe="15m", limit=period * 3)
+            if len(candles) < period + 2:
+                return 25.0
+
+            highs  = [float(c.get("high",  0)) for c in candles]
+            lows   = [float(c.get("low",   0)) for c in candles]
+            closes = [float(c.get("close", 0)) for c in candles]
+
+            trs, plus_dm, minus_dm = [], [], []
+            for i in range(1, len(closes)):
+                tr   = max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
+                up   = highs[i]  - highs[i-1]
+                down = lows[i-1] - lows[i]
+                trs.append(tr)
+                plus_dm.append(up   if up > down and up > 0   else 0)
+                minus_dm.append(down if down > up and down > 0 else 0)
+
+            def wilder(data, n):
+                r = [sum(data[:n]) / n]
+                for i in range(n, len(data)):
+                    r.append(r[-1] - r[-1]/n + data[i])
+                return r
+
+            atr_s  = wilder(trs,      period)
+            plus_s = wilder(plus_dm,  period)
+            minus_s= wilder(minus_dm, period)
+
+            di_p = [100 * p / a if a > 0 else 0 for p, a in zip(plus_s,  atr_s)]
+            di_m = [100 * m / a if a > 0 else 0 for m, a in zip(minus_s, atr_s)]
+
+            dx_list = [100 * abs(p - m) / (p + m) if (p + m) > 0 else 0 for p, m in zip(di_p, di_m)]
+            adx = sum(dx_list[-period:]) / period if len(dx_list) >= period else 25.0
+            return round(adx, 2)
+        except Exception:
+            return 25.0
+
+    def _calc_vol_regime_forex(self) -> dict:
+        """
+        Hitung volatility regime XAUUSD.
+        ATR candle terakhir vs ATR baseline 20 periode.
+        """
+        try:
+            candles = self.get_candles(timeframe="15m", limit=30)
+            if len(candles) < 22:
+                return {"regime": "NORMAL", "atr_ratio": 1.0}
+
+            highs  = [float(c.get("high",  0)) for c in candles]
+            lows   = [float(c.get("low",   0)) for c in candles]
+            closes = [float(c.get("close", 0)) for c in candles]
+
+            trs = [max(highs[i] - lows[i], abs(highs[i] - closes[i-1]), abs(lows[i] - closes[i-1]))
+                   for i in range(1, len(closes))]
+
+            atr_current  = trs[-1]
+            atr_baseline = sum(trs[-20:]) / 20
+            atr_ratio    = atr_current / atr_baseline if atr_baseline > 0 else 1.0
+
+            if atr_ratio > 3.0:   regime = "HIGH_VOL"
+            elif atr_ratio < 0.3: regime = "LOW_VOL"
+            else:                 regime = "NORMAL"
+
+            return {"regime": regime, "atr_ratio": round(atr_ratio, 2)}
+        except Exception:
+            return {"regime": "NORMAL", "atr_ratio": 1.0}
+
+    def _calc_ev_forex(self, side: str, ind: dict, score: int) -> float:
+        """
+        Expected Value untuk XAUUSD trade.
+        EV = (P_win x TP_pct) - (P_loss x SL_pct)
+        TP = 20 poin, SL = 8 poin, RR = 1:2.5
+        """
+        base_p_win = 0.30 + (score / 100) * 0.35
+
+        adj = 0.0
+        whale = ind.get("whale_signal", "NORMAL")
+        obi   = ind.get("obi", 0)
+        if side == "buy"  and whale == "WHALE_BUY":   adj += 0.08
+        if side == "sell" and whale == "WHALE_SELL":  adj += 0.08
+        if side == "buy"  and whale == "WHALE_SELL":  adj -= 0.10
+        if side == "sell" and whale == "WHALE_BUY":   adj -= 0.10
+        if side == "buy"  and obi > 0.15:  adj += 0.05
+        if side == "sell" and obi < -0.15: adj += 0.05
+
+        pump = ind.get("pump_signal", "NONE")
+        if side == "buy"  and pump in ("PUMP_IMMINENT", "BREAKOUT_UP"):   adj += 0.07
+        if side == "sell" and pump in ("DUMP_IMMINENT", "BREAKOUT_DOWN"): adj += 0.07
+
+        p_win  = min(0.75, max(0.20, base_p_win + adj))
+        p_loss = 1.0 - p_win
+
+        # XAUUSD: TP 20 poin / entry ~4700 = ~0.43%, SL 8 poin = ~0.17%
+        tp_pct = 20.0 / 4700
+        sl_pct = 8.0  / 4700
+
+        ev = (p_win * tp_pct) - (p_loss * sl_pct)
+        return round(ev, 5)
+
     def _get_gold_orderbook(self):
         """
         Baca order book PAXGUSDT di Bitget sebagai proxy untuk XAUUSD.
@@ -1009,6 +1113,35 @@ class ForexExecutor:
                     print("[FOREX SCAN] No setup. Buy:" + str(buy_sc) + " Sell:" + str(sell_sc) + " (need " + str(MIN_MOMENTUM_SCORE) + "+)")
                     time.sleep(SCAN_INTERVAL)
                     continue
+
+                # MARKET REGIME FILTER (ADX)
+                adx = self._calc_adx_forex()
+                if adx < 18:
+                    print("[REGIME] XAUUSD ADX=" + str(adx) + " RANGING. Skip entry.")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+                regime = "TRENDING" if adx >= 22 else "WEAK_TREND"
+
+                # VOLATILITY REGIME FILTER
+                vol_data   = self._calc_vol_regime_forex()
+                vol_regime = vol_data.get("regime", "NORMAL")
+                if vol_regime == "HIGH_VOL":
+                    print("[VOL] XAUUSD HIGH_VOL ratio=" + str(vol_data["atr_ratio"]) + ". Skip.")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+                if vol_regime == "LOW_VOL":
+                    print("[VOL] XAUUSD LOW_VOL ratio=" + str(vol_data["atr_ratio"]) + ". Skip.")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+
+                # EXPECTED VALUE CHECK
+                ev = self._calc_ev_forex(side, ind, score)
+                if ev < 0.0003:
+                    print("[EV] XAUUSD EV=" + str(ev) + " terlalu kecil. Skip.")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+
+                print("[INTEL] ADX:" + str(adx) + " " + regime + " | Vol:" + vol_regime + " | EV:" + str(ev) + " | Whale:" + str(ind.get("whale_signal","NORMAL")) + " OBI:" + str(ind.get("obi",0)))
 
                 # POSITION QUALITY CHECK
                 xau_positions = [p for p in positions if "XAU" in p.get("symbol", "").upper()]
