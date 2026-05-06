@@ -440,9 +440,8 @@ class WhaleObserver:
 
         return round(future_score, 2)
 
+    def get_best_candidate(self, open_bases: list, recently_exited: dict) -> dict | None:
         # Pilih kandidat terbaik dari observasi. Return dict atau None.
-        """
-        """
         now = time.time()
         best = None
         best_final = 0.0
