@@ -43,11 +43,12 @@ def startup_event():
     except Exception as e:
         print(f"[SYSTEM] Gagal sinkronisasi state: {e}")
 
-    # 1. Start Crypto Engine (Isolated)
+    # 2. Start Crypto Engine (Isolated)
     crypto_thread = threading.Thread(target=run_crypto_engine, daemon=True)
     crypto_thread.start()
+    print("[SYSTEM] Crypto Engine AKTIF!")
     
-    # 2. Start WebSocket Sniper (Isolated)
+    # 3. Start WebSocket Sniper (Isolated)
     try:
         from websocket_sniper import main as ws_main
         import asyncio
@@ -61,7 +62,7 @@ def startup_event():
     except Exception as e:
         print(f"[SYSTEM] Gagal memulai WebSocket: {e}")
 
-    # 3. Start Forex Engine (Isolated)
+    # 4. Start Forex Engine (Isolated)
     try:
         fx = ForexExecutor()
         fx_thread = threading.Thread(target=fx.monitor_forex_market, daemon=True)
