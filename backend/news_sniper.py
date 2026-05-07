@@ -22,8 +22,109 @@ import time
 import requests
 import xml.etree.ElementTree as ET
 from threading import Thread, Lock
-from datetime import datetime
+from datetime import datetime, timezone
 import re
+
+
+# ─── 8. NEWS CALENDAR — UPCOMING HIGH-IMPACT EVENTS ──────────────────────────
+
+def get_upcoming_high_impact_events() -> dict:
+    """
+    Cek apakah ada event high-impact yang akan terjadi dalam 2 jam ke depan.
+    Pakai ForexFactory RSS sebagai sumber kalender ekonomi.
+
+    Return:
+      has_upcoming : True kalau ada event dalam 2 jam
+      events       : list event yang akan datang
+      caution_level: "HIGH" / "MEDIUM" / "NONE"
+      recommendation: "AVOID_NEW_TRADES" / "REDUCE_SIZE" / "NORMAL"
+    """
+    result = {
+        "has_upcoming": False,
+        "events": [],
+        "caution_level": "NONE",
+        "recommendation": "NORMAL",
+    }
+
+    # Cache 15 menit agar tidak spam
+    if not hasattr(get_upcoming_high_impact_events, '_cache'):
+        get_upcoming_high_impact_events._cache = {"ts": 0, "result": result}
+
+    now = time.time()
+    if now - get_upcoming_high_impact_events._cache["ts"] < 900:
+        return get_upcoming_high_impact_events._cache["result"]
+
+    try:
+        # ForexFactory calendar RSS
+        url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+        res = requests.get(url, timeout=8)
+        if res.status_code != 200:
+            return result
+
+        events = res.json()
+        now_utc = datetime.now(timezone.utc)
+        upcoming = []
+
+        HIGH_IMPACT_TITLES = [
+            "Non-Farm", "NFP", "FOMC", "Fed Rate", "Interest Rate",
+            "CPI", "Inflation", "GDP", "Unemployment", "Payroll",
+            "Powell", "Lagarde", "ECB", "BOE", "BOJ",
+        ]
+
+        for event in events:
+            try:
+                impact = event.get("impact", "").lower()
+                if impact not in ("high", "red"):
+                    continue
+
+                title = event.get("title", "")
+                date_str = event.get("date", "")
+                time_str = event.get("time", "")
+
+                if not date_str or not time_str or time_str == "All Day":
+                    continue
+
+                # Parse event time
+                event_dt_str = f"{date_str} {time_str}"
+                try:
+                    event_dt = datetime.strptime(event_dt_str, "%Y-%m-%d %I:%M%p")
+                    event_dt = event_dt.replace(tzinfo=timezone.utc)
+                except Exception:
+                    continue
+
+                # Cek apakah dalam 2 jam ke depan
+                diff_hours = (event_dt - now_utc).total_seconds() / 3600
+                if -0.5 <= diff_hours <= 2.0:  # -30 menit sampai +2 jam
+                    upcoming.append({
+                        "title": title,
+                        "time": time_str,
+                        "hours_away": round(diff_hours, 1),
+                    })
+            except Exception:
+                continue
+
+        if upcoming:
+            result["has_upcoming"] = True
+            result["events"] = upcoming[:5]
+            # Kalau dalam 30 menit = HIGH caution
+            very_soon = [e for e in upcoming if e["hours_away"] <= 0.5]
+            if very_soon:
+                result["caution_level"]   = "HIGH"
+                result["recommendation"]  = "AVOID_NEW_TRADES"
+            else:
+                result["caution_level"]   = "MEDIUM"
+                result["recommendation"]  = "REDUCE_SIZE"
+
+            print(f"[NEWS CALENDAR] {len(upcoming)} event high-impact dalam 2 jam:")
+            for e in upcoming[:3]:
+                print(f"  {e['title']} | {e['time']} | {e['hours_away']:+.1f}h")
+
+        get_upcoming_high_impact_events._cache = {"ts": now, "result": result}
+        return result
+
+    except Exception:
+        get_upcoming_high_impact_events._cache = {"ts": now, "result": result}
+        return result
 
 # ─── NEWS SOURCES ─────────────────────────────────────────────────────────────
 SOURCES = [

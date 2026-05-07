@@ -768,6 +768,46 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
     if side == "sell" and in_supply:
         score += 15 + min(5, sz_strength)
 
+    # 3c. FIBONACCI RETRACEMENT (max 15 poin)
+    # Harga di level fib = institusi sering entry di sini
+    if side == "buy"  and tech.get('at_fib_support', False):
+        fib_lvl = tech.get('current_fib_level', 'NONE')
+        bonus = 15 if fib_lvl in ('0.618', '0.786') else 10  # 0.618 dan 0.786 lebih kuat
+        score += bonus
+    if side == "sell" and tech.get('at_fib_resistance', False):
+        fib_lvl = tech.get('current_fib_level', 'NONE')
+        bonus = 15 if fib_lvl in ('0.618', '0.786') else 10
+        score += bonus
+
+    # 3d. STOP HUNT SIGNAL (max 15 poin)
+    # Stop hunt = institusi sweep stop loss retail sebelum reversal
+    hunt_strength = tech.get('hunt_strength', 0)
+    if side == "buy"  and tech.get('bull_stop_hunt', False):
+        score += 10 + min(5, hunt_strength * 2)  # max 15 poin
+    if side == "sell" and tech.get('bear_stop_hunt', False):
+        score += 10 + min(5, hunt_strength * 2)
+
+    # 3e. VOLUME PROFILE / POC (max 10 poin, penalti -8)
+    # Harga di bawah POC = discount zone (bagus untuk BUY)
+    # Harga di atas POC = premium zone (bagus untuk SELL)
+    price_vs_poc = tech.get('price_vs_poc', 'UNKNOWN')
+    poc_dist = abs(tech.get('poc_distance_pct', 0))
+    if side == "buy"  and price_vs_poc == "BELOW": score += min(10, poc_dist * 3)
+    if side == "sell" and price_vs_poc == "ABOVE": score += min(10, poc_dist * 3)
+    if side == "buy"  and price_vs_poc == "ABOVE" and poc_dist > 2: score -= 8
+    if side == "sell" and price_vs_poc == "BELOW" and poc_dist > 2: score -= 8
+
+    # 3f. HTF KEY LEVELS (penalti -15 kalau melawan level kritis)
+    # Jangan LONG kalau harga dekat daily/weekly high (resistance kuat)
+    # Jangan SHORT kalau harga dekat daily/weekly low (support kuat)
+    htf_bias = tech.get('htf_level_bias', 'NEUTRAL')
+    near_daily  = tech.get('near_daily_level', False)
+    near_weekly = tech.get('near_weekly_level', False)
+    if side == "buy"  and htf_bias == "RESISTANCE":
+        score -= 15 if near_weekly else 8  # Weekly level lebih kuat
+    if side == "sell" and htf_bias == "SUPPORT":
+        score -= 15 if near_weekly else 8
+
     # 4. Market Structure (max 15 poin)
     if side == "buy":
         if tech.get('mss_bullish'):   score += 15
@@ -1054,6 +1094,21 @@ def run_crypto_engine():
                 time.sleep(SCAN_INTERVAL)
                 continue
 
+            # NEWS CALENDAR CHECK
+            _news_cal_block = False
+            try:
+                from news_sniper import get_upcoming_high_impact_events
+                cal = get_upcoming_high_impact_events()
+                if cal.get("recommendation") == "AVOID_NEW_TRADES":
+                    _news_cal_block = True
+                    if int(now) % 60 < 10:
+                        events = cal.get("events", [])
+                        ev_str = events[0]["title"] if events else "Unknown"
+                        print(f"[NEWS CALENDAR] '{ev_str}' dalam 30 menit! Observasi jalan, eksekusi di-block.")
+            except Exception:
+                pass
+
+
             # ── 4b. SESSION FILTER ────────────────────────────────────────────
             import datetime as _dt
             utc_hour = _dt.datetime.utcnow().hour
@@ -1078,8 +1133,32 @@ def run_crypto_engine():
 
             # ── 6. COOLDOWN CHECK ─────────────────────────────────────────────
             elapsed_since_trade = now - last_exec_time
-            cooldown_remaining  = COOLDOWN_AFTER_TRADE - elapsed_since_trade
+            # ADAPTIVE COOLDOWN: lebih pendek saat trending kuat, lebih panjang saat ranging
+            # ADX tinggi = trending = banyak setup bagus = cooldown lebih pendek
+            # ADX rendah = ranging = sedikit setup = cooldown lebih panjang
+            try:
+                from data_fetcher import fetch_all_tickers as _ft
+                # Pakai BTC ADX sebagai proxy market regime
+                btc_ctx_now = _get_btc_context()
+                btc_change  = abs(btc_ctx_now.get('change_1h', 0))
+                if btc_change > 3.0:
+                    # BTC bergerak kuat = trending = cooldown 10 menit
+                    adaptive_cooldown = 600
+                elif btc_change > 1.5:
+                    # BTC bergerak sedang = cooldown 12 menit
+                    adaptive_cooldown = 720
+                else:
+                    # BTC flat = ranging = cooldown penuh 15 menit
+                    adaptive_cooldown = COOLDOWN_AFTER_TRADE
+            except Exception:
+                adaptive_cooldown = COOLDOWN_AFTER_TRADE
+
+            cooldown_remaining  = adaptive_cooldown - elapsed_since_trade
             in_cooldown         = cooldown_remaining > 0
+
+            if in_cooldown and int(now) % 60 < 10:
+                print(f"[COOLDOWN] {round(cooldown_remaining/60,1)} menit lagi "
+                      f"(adaptive: {adaptive_cooldown//60} menit | BTC: {btc_ctx_now.get('change_1h',0):+.1f}%/1h)")
 
             # ── 7. BERSIHKAN recently_exited + TRACK LOSSES ──────────────────
             _recently_exited = {k: v for k, v in _recently_exited.items()
@@ -1284,6 +1363,13 @@ def run_crypto_engine():
                 continue
 
             # Cooldown selesai - pilih kandidat terbaik dari observasi
+            # Tapi kalau ada event high-impact dalam 30 menit, tunda eksekusi
+            if _news_cal_block:
+                print(f"[NEWS CALENDAR] Cooldown selesai tapi ada event high-impact. "
+                      f"Tunda eksekusi, lanjut observasi.")
+                time.sleep(SCAN_INTERVAL)
+                continue
+
             best = observer.get_best_candidate(open_bases, _recently_exited)
 
             if best is None:

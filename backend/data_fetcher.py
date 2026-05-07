@@ -7,6 +7,341 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+import requests
+import pandas as pd
+import numpy as np
+import time
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+# ─── 1. VOLUME PROFILE / POINT OF CONTROL ────────────────────────────────────
+
+def get_volume_profile(symbol: str, interval: str = "15m", limit: int = 96) -> dict:
+    """
+    Hitung Volume Profile dan Point of Control (POC) dari candle Bitget.
+
+    POC = harga dengan volume terbanyak diperdagangkan.
+    Harga selalu gravitasi ke POC — institusi tahu ini.
+
+    Return:
+      poc          : harga POC
+      value_area_high : batas atas Value Area (70% volume)
+      value_area_low  : batas bawah Value Area (70% volume)
+      price_vs_poc : "ABOVE" / "BELOW" / "AT" (posisi harga vs POC)
+      poc_distance_pct: jarak harga dari POC dalam %
+    """
+    try:
+        url = (f"https://api.bitget.com/api/v2/mix/market/history-candles"
+               f"?symbol={symbol}&granularity={interval}&limit={limit}&productType=USDT-FUTURES")
+        r = requests.get(url, timeout=5, verify=False)
+        if r.status_code != 200:
+            return {"poc": 0, "value_area_high": 0, "value_area_low": 0,
+                    "price_vs_poc": "UNKNOWN", "poc_distance_pct": 0}
+
+        data = r.json().get('data', [])
+        if len(data) < 10:
+            return {"poc": 0, "value_area_high": 0, "value_area_low": 0,
+                    "price_vs_poc": "UNKNOWN", "poc_distance_pct": 0}
+
+        highs  = [float(c[2]) for c in data]
+        lows   = [float(c[3]) for c in data]
+        closes = [float(c[4]) for c in data]
+        vols   = [float(c[5]) for c in data]
+
+        # Buat price buckets (50 level antara low dan high)
+        price_min = min(lows)
+        price_max = max(highs)
+        if price_max <= price_min:
+            return {"poc": closes[-1], "value_area_high": price_max,
+                    "value_area_low": price_min, "price_vs_poc": "AT", "poc_distance_pct": 0}
+
+        n_buckets = 50
+        bucket_size = (price_max - price_min) / n_buckets
+        buckets = [0.0] * n_buckets
+
+        # Distribusikan volume ke bucket berdasarkan typical price
+        for i in range(len(data)):
+            typical = (highs[i] + lows[i] + closes[i]) / 3
+            bucket_idx = min(int((typical - price_min) / bucket_size), n_buckets - 1)
+            buckets[bucket_idx] += vols[i]
+
+        # POC = bucket dengan volume terbanyak
+        poc_idx = buckets.index(max(buckets))
+        poc = round(price_min + (poc_idx + 0.5) * bucket_size, 6)
+
+        # Value Area = 70% total volume di sekitar POC
+        total_vol = sum(buckets)
+        target_vol = total_vol * 0.70
+        va_vol = buckets[poc_idx]
+        lo, hi = poc_idx, poc_idx
+
+        while va_vol < target_vol and (lo > 0 or hi < n_buckets - 1):
+            add_lo = buckets[lo - 1] if lo > 0 else 0
+            add_hi = buckets[hi + 1] if hi < n_buckets - 1 else 0
+            if add_hi >= add_lo:
+                hi = min(hi + 1, n_buckets - 1)
+                va_vol += add_hi
+            else:
+                lo = max(lo - 1, 0)
+                va_vol += add_lo
+
+        value_area_high = round(price_min + (hi + 1) * bucket_size, 6)
+        value_area_low  = round(price_min + lo * bucket_size, 6)
+        current_price   = closes[-1]
+
+        poc_dist = ((current_price - poc) / poc * 100) if poc > 0 else 0
+        if abs(poc_dist) < 0.1:
+            price_vs_poc = "AT"
+        elif current_price > poc:
+            price_vs_poc = "ABOVE"
+        else:
+            price_vs_poc = "BELOW"
+
+        return {
+            "poc":              round(poc, 6),
+            "value_area_high":  value_area_high,
+            "value_area_low":   value_area_low,
+            "price_vs_poc":     price_vs_poc,
+            "poc_distance_pct": round(poc_dist, 3),
+        }
+    except Exception:
+        return {"poc": 0, "value_area_high": 0, "value_area_low": 0,
+                "price_vs_poc": "UNKNOWN", "poc_distance_pct": 0}
+
+
+# ─── 2. HIGHER TIMEFRAME KEY LEVELS (Daily/Weekly) ───────────────────────────
+
+def get_htf_key_levels(symbol: str) -> dict:
+    """
+    Ambil level kritis dari Daily dan Weekly candle.
+    Institusi selalu tahu level ini — sering jadi reversal point.
+
+    Return:
+      daily_high, daily_low   : high/low candle hari ini
+      weekly_high, weekly_low : high/low candle minggu ini
+      near_daily_level        : True kalau harga dalam 0.5% dari daily high/low
+      near_weekly_level       : True kalau harga dalam 1% dari weekly high/low
+      level_bias              : "RESISTANCE" / "SUPPORT" / "NEUTRAL"
+    """
+    try:
+        result = {
+            "daily_high": 0, "daily_low": 0,
+            "weekly_high": 0, "weekly_low": 0,
+            "near_daily_level": False, "near_weekly_level": False,
+            "level_bias": "NEUTRAL",
+        }
+
+        # Daily candle (ambil 2 candle: hari ini + kemarin)
+        url_d = (f"https://api.bitget.com/api/v2/mix/market/history-candles"
+                 f"?symbol={symbol}&granularity=1D&limit=2&productType=USDT-FUTURES")
+        r_d = requests.get(url_d, timeout=5, verify=False)
+        if r_d.status_code == 200:
+            data_d = r_d.json().get('data', [])
+            if data_d:
+                result["daily_high"] = float(data_d[0][2])
+                result["daily_low"]  = float(data_d[0][3])
+
+        # Weekly candle
+        url_w = (f"https://api.bitget.com/api/v2/mix/market/history-candles"
+                 f"?symbol={symbol}&granularity=1W&limit=2&productType=USDT-FUTURES")
+        r_w = requests.get(url_w, timeout=5, verify=False)
+        if r_w.status_code == 200:
+            data_w = r_w.json().get('data', [])
+            if data_w:
+                result["weekly_high"] = float(data_w[0][2])
+                result["weekly_low"]  = float(data_w[0][3])
+
+        # Ambil harga sekarang
+        url_t = (f"https://api.bitget.com/api/v2/mix/market/tickers"
+                 f"?symbol={symbol}&productType=USDT-FUTURES")
+        r_t = requests.get(url_t, timeout=5, verify=False)
+        if r_t.status_code != 200:
+            return result
+
+        tickers = r_t.json().get('data', [])
+        current = float(tickers[0].get('lastPr', 0)) if tickers else 0
+        if current == 0:
+            return result
+
+        # Cek proximity ke level
+        dh, dl = result["daily_high"], result["daily_low"]
+        wh, wl = result["weekly_high"], result["weekly_low"]
+
+        near_dh = dh > 0 and abs(current - dh) / dh < 0.005  # dalam 0.5%
+        near_dl = dl > 0 and abs(current - dl) / dl < 0.005
+        near_wh = wh > 0 and abs(current - wh) / wh < 0.010  # dalam 1%
+        near_wl = wl > 0 and abs(current - wl) / wl < 0.010
+
+        result["near_daily_level"]  = near_dh or near_dl
+        result["near_weekly_level"] = near_wh or near_wl
+
+        # Bias: dekat high = resistance, dekat low = support
+        if near_dh or near_wh:
+            result["level_bias"] = "RESISTANCE"
+        elif near_dl or near_wl:
+            result["level_bias"] = "SUPPORT"
+
+        return result
+    except Exception:
+        return {"daily_high": 0, "daily_low": 0, "weekly_high": 0, "weekly_low": 0,
+                "near_daily_level": False, "near_weekly_level": False, "level_bias": "NEUTRAL"}
+
+
+# ─── 5. FIBONACCI RETRACEMENT LEVELS ─────────────────────────────────────────
+
+def get_fibonacci_levels(symbol: str, interval: str = "1h", limit: int = 50) -> dict:
+    """
+    Hitung Fibonacci Retracement dari swing high/low terbaru.
+    Level 0.382, 0.5, 0.618 adalah yang paling sering dipakai institusi.
+
+    Return:
+      swing_high, swing_low : titik referensi
+      fib_382, fib_500, fib_618 : level retracement
+      fib_786 : level retracement dalam (sering jadi demand zone)
+      current_fib_level : level fib terdekat dengan harga sekarang
+      at_fib_support : True kalau harga di level fib support (untuk BUY)
+      at_fib_resistance : True kalau harga di level fib resistance (untuk SELL)
+    """
+    try:
+        url = (f"https://api.bitget.com/api/v2/mix/market/history-candles"
+               f"?symbol={symbol}&granularity={interval}&limit={limit}&productType=USDT-FUTURES")
+        r = requests.get(url, timeout=5, verify=False)
+        if r.status_code != 200:
+            return {}
+
+        data = r.json().get('data', [])
+        if len(data) < 20:
+            return {}
+
+        highs  = [float(c[2]) for c in data]
+        lows   = [float(c[3]) for c in data]
+        closes = [float(c[4]) for c in data]
+
+        # Cari swing high dan swing low dari 50 candle terakhir
+        swing_high = max(highs)
+        swing_low  = min(lows)
+        current    = closes[-1]
+        diff       = swing_high - swing_low
+
+        if diff <= 0:
+            return {}
+
+        # Fibonacci retracement levels (dari swing high ke swing low)
+        fib_236 = round(swing_high - diff * 0.236, 6)
+        fib_382 = round(swing_high - diff * 0.382, 6)
+        fib_500 = round(swing_high - diff * 0.500, 6)
+        fib_618 = round(swing_high - diff * 0.618, 6)
+        fib_786 = round(swing_high - diff * 0.786, 6)
+
+        # Tolerance: dalam 0.3% dari level = "at level"
+        tolerance = current * 0.003
+        levels = {
+            "0.236": fib_236, "0.382": fib_382, "0.500": fib_500,
+            "0.618": fib_618, "0.786": fib_786,
+        }
+
+        # Cari level terdekat
+        closest_level = min(levels.items(), key=lambda x: abs(current - x[1]))
+        at_level = abs(current - closest_level[1]) < tolerance
+
+        # Support = harga di bawah swing high, mendekati fib level dari atas
+        # Resistance = harga di atas swing low, mendekati fib level dari bawah
+        at_fib_support    = at_level and current < swing_high * 0.99
+        at_fib_resistance = at_level and current > swing_low  * 1.01
+
+        return {
+            "swing_high":       round(swing_high, 6),
+            "swing_low":        round(swing_low, 6),
+            "fib_236":          fib_236,
+            "fib_382":          fib_382,
+            "fib_500":          fib_500,
+            "fib_618":          fib_618,
+            "fib_786":          fib_786,
+            "current_fib_level": closest_level[0] if at_level else "NONE",
+            "at_fib_support":    at_fib_support,
+            "at_fib_resistance": at_fib_resistance,
+        }
+    except Exception:
+        return {}
+
+
+# ─── 6. TICK DATA / STOP HUNT DETECTION ──────────────────────────────────────
+
+def detect_stop_hunt(symbol: str) -> dict:
+    """
+    Deteksi "stop hunt" — momen ketika institusi sengaja push harga
+    ke level stop loss retail sebelum reversal.
+
+    Ciri-ciri stop hunt:
+    1. Harga spike melewati level support/resistance dengan wick panjang
+    2. Langsung balik ke dalam range (close kembali di atas/bawah level)
+    3. Volume spike saat wick terjadi
+
+    Return:
+      bull_stop_hunt : True = stop hunt ke bawah (sweep low, lalu naik) → BUY signal
+      bear_stop_hunt : True = stop hunt ke atas (sweep high, lalu turun) → SELL signal
+      hunt_strength  : 0-3 (berapa banyak konfirmasi)
+    """
+    try:
+        # Ambil candle 1m untuk deteksi wick
+        url_1m = (f"https://api.bitget.com/api/v2/mix/market/history-candles"
+                  f"?symbol={symbol}&granularity=1m&limit=10&productType=USDT-FUTURES")
+        r = requests.get(url_1m, timeout=5, verify=False)
+        if r.status_code != 200:
+            return {"bull_stop_hunt": False, "bear_stop_hunt": False, "hunt_strength": 0}
+
+        data = r.json().get('data', [])
+        if len(data) < 5:
+            return {"bull_stop_hunt": False, "bear_stop_hunt": False, "hunt_strength": 0}
+
+        opens  = [float(c[1]) for c in data]
+        highs  = [float(c[2]) for c in data]
+        lows   = [float(c[3]) for c in data]
+        closes = [float(c[4]) for c in data]
+        vols   = [float(c[5]) for c in data]
+
+        avg_vol = sum(vols[:-1]) / len(vols[:-1]) if len(vols) > 1 else 1
+
+        bull_hunt = False
+        bear_hunt = False
+        strength  = 0
+
+        # Cek 3 candle terakhir untuk stop hunt pattern
+        for i in range(-3, 0):
+            body      = abs(closes[i] - opens[i])
+            wick_down = min(opens[i], closes[i]) - lows[i]
+            wick_up   = highs[i] - max(opens[i], closes[i])
+            candle_range = highs[i] - lows[i]
+
+            if candle_range == 0:
+                continue
+
+            # Bull stop hunt: wick bawah > 60% range + close di atas tengah + volume spike
+            if (wick_down > candle_range * 0.6 and
+                closes[i] > (highs[i] + lows[i]) / 2 and
+                vols[i] > avg_vol * 1.5):
+                bull_hunt = True
+                strength += 1
+
+            # Bear stop hunt: wick atas > 60% range + close di bawah tengah + volume spike
+            if (wick_up > candle_range * 0.6 and
+                closes[i] < (highs[i] + lows[i]) / 2 and
+                vols[i] > avg_vol * 1.5):
+                bear_hunt = True
+                strength += 1
+
+        return {
+            "bull_stop_hunt": bull_hunt,
+            "bear_stop_hunt": bear_hunt,
+            "hunt_strength":  min(strength, 3),
+        }
+    except Exception:
+        return {"bull_stop_hunt": False, "bear_stop_hunt": False, "hunt_strength": 0}
+
+
 def detect_candle_patterns(df):
     if len(df) < 5: return "NONE"
     last = df.iloc[-1]
@@ -288,6 +623,12 @@ def get_technical_indicators(symbol, interval="15m"):
         inst_flow = detect_institutional_flow(df_cur)
         dsz = detect_demand_supply_zones(df_cur)  # Demand/Supply Zones
 
+        # Volume Profile, HTF Key Levels, Fibonacci, Stop Hunt
+        vp   = get_volume_profile(symbol)
+        htf  = get_htf_key_levels(symbol)
+        fib  = get_fibonacci_levels(symbol)
+        hunt = detect_stop_hunt(symbol)
+
         # 7. ATR 14 (True Range)
         trs = []
         for i in range(1, len(df_cur)):
@@ -333,6 +674,31 @@ def get_technical_indicators(symbol, interval="15m"):
             "supply_zone":  dsz["supply_zone"],
             "in_demand":    dsz["in_demand"],
             "in_supply":    dsz["in_supply"],
+            # Volume Profile
+            "poc":              vp.get("poc", 0),
+            "value_area_high":  vp.get("value_area_high", 0),
+            "value_area_low":   vp.get("value_area_low", 0),
+            "price_vs_poc":     vp.get("price_vs_poc", "UNKNOWN"),
+            "poc_distance_pct": vp.get("poc_distance_pct", 0),
+            # HTF Key Levels
+            "daily_high":         htf.get("daily_high", 0),
+            "daily_low":          htf.get("daily_low", 0),
+            "weekly_high":        htf.get("weekly_high", 0),
+            "weekly_low":         htf.get("weekly_low", 0),
+            "near_daily_level":   htf.get("near_daily_level", False),
+            "near_weekly_level":  htf.get("near_weekly_level", False),
+            "htf_level_bias":     htf.get("level_bias", "NEUTRAL"),
+            # Fibonacci
+            "fib_382":            fib.get("fib_382", 0),
+            "fib_500":            fib.get("fib_500", 0),
+            "fib_618":            fib.get("fib_618", 0),
+            "at_fib_support":     fib.get("at_fib_support", False),
+            "at_fib_resistance":  fib.get("at_fib_resistance", False),
+            "current_fib_level":  fib.get("current_fib_level", "NONE"),
+            # Stop Hunt
+            "bull_stop_hunt":     hunt.get("bull_stop_hunt", False),
+            "bear_stop_hunt":     hunt.get("bear_stop_hunt", False),
+            "hunt_strength":      hunt.get("hunt_strength", 0),
             "ema_200": round(ema_200_cur.iloc[-1], 2) if len(ema_200_cur) > 0 else 0,
             "ema_200_htf": round(ema_200_htf_val, 2),
             "open_interest": get_open_interest(symbol),

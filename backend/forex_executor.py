@@ -23,6 +23,10 @@ MIN_LOT_PER_TRADE    = 0.01
 DXY_STRONG_THRESHOLD = 0.3
 DXY_WEAK_THRESHOLD   = -0.3
 
+# Session Loss Limit: max kerugian per sesi trading
+# Kalau rugi > $15 dalam satu sesi, stop trading sampai sesi berikutnya
+SESSION_MAX_LOSS_USD = 15.0
+
 class ForexExecutor:
     def __init__(self):
         self.api_token   = os.getenv("FOREX_META_API_TOKEN")
@@ -37,6 +41,10 @@ class ForexExecutor:
         self._last_known_spread = 999
         self._close_attempted   = set()
         self._dxy_cache         = {"change": 0.0, "trend": "NEUTRAL", "ts": 0}
+        # Session loss tracking
+        self._session_loss_usd  = 0.0   # total loss dalam sesi ini
+        self._session_start_ts  = time.time()
+        self._last_session_hour = -1    # track pergantian sesi
 
         if self.is_active:
             try:
@@ -592,6 +600,116 @@ class ForexExecutor:
                    "supply_zone": {"active": False, "top": 0, "bottom": 0, "strength": 0},
                    "in_demand": False, "in_supply": False}
 
+        # ── FIBONACCI, STOP HUNT, VOLUME PROFILE, HTF LEVELS ─────────────────
+        # Semua dihitung dari candle MetaAPI yang sudah ada
+        try:
+            import pandas as _pd
+            from data_fetcher import (
+                get_fibonacci_levels as _fib_func,
+                detect_stop_hunt as _hunt_func,
+            )
+            df_for_fib = _pd.DataFrame({
+                'open': [float(c.get("open", closes[i])) for i, c in enumerate(candles)],
+                'high': highs, 'low': lows, 'close': closes, 'vol': vols,
+            })
+
+            # Fibonacci dari candle 1h (lebih representatif untuk XAUUSD)
+            candles_1h_fib = self.get_candles(timeframe="1h", limit=50)
+            if len(candles_1h_fib) >= 20:
+                highs_1h  = [float(c.get("high",  0)) for c in candles_1h_fib]
+                lows_1h   = [float(c.get("low",   0)) for c in candles_1h_fib]
+                closes_1h = [float(c.get("close", 0)) for c in candles_1h_fib]
+                opens_1h  = [float(c.get("open",  closes_1h[i])) for i, c in enumerate(candles_1h_fib)]
+                vols_1h   = [float(c.get("tickVolume", 1)) for c in candles_1h_fib]
+                df_1h = _pd.DataFrame({'open': opens_1h, 'high': highs_1h,
+                                       'low': lows_1h, 'close': closes_1h, 'vol': vols_1h})
+                swing_high = max(highs_1h)
+                swing_low  = min(lows_1h)
+                diff = swing_high - swing_low
+                current = closes[-1]
+                if diff > 0:
+                    fib_382 = round(swing_high - diff * 0.382, 3)
+                    fib_500 = round(swing_high - diff * 0.500, 3)
+                    fib_618 = round(swing_high - diff * 0.618, 3)
+                    fib_786 = round(swing_high - diff * 0.786, 3)
+                    tol = current * 0.003
+                    levels = {"0.382": fib_382, "0.500": fib_500, "0.618": fib_618, "0.786": fib_786}
+                    closest = min(levels.items(), key=lambda x: abs(current - x[1]))
+                    at_level = abs(current - closest[1]) < tol
+                    fib_data = {
+                        "fib_382": fib_382, "fib_500": fib_500,
+                        "fib_618": fib_618, "fib_786": fib_786,
+                        "current_fib_level": closest[0] if at_level else "NONE",
+                        "at_fib_support":    at_level and current < swing_high * 0.99,
+                        "at_fib_resistance": at_level and current > swing_low  * 1.01,
+                    }
+                else:
+                    fib_data = {}
+            else:
+                fib_data = {}
+
+            # Stop Hunt dari candle 1m MetaAPI
+            candles_1m = self.get_candles(timeframe="1m", limit=10)
+            hunt_data = {"bull_stop_hunt": False, "bear_stop_hunt": False, "hunt_strength": 0}
+            if len(candles_1m) >= 5:
+                o1m = [float(c.get("open",  0)) for c in candles_1m]
+                h1m = [float(c.get("high",  0)) for c in candles_1m]
+                l1m = [float(c.get("low",   0)) for c in candles_1m]
+                cl1m= [float(c.get("close", 0)) for c in candles_1m]
+                v1m = [float(c.get("tickVolume", 1)) for c in candles_1m]
+                avg_v = sum(v1m[:-1]) / len(v1m[:-1]) if len(v1m) > 1 else 1
+                bull_h = bear_h = False
+                strength = 0
+                for i in range(-3, 0):
+                    rng = h1m[i] - l1m[i]
+                    if rng == 0: continue
+                    wd = min(o1m[i], cl1m[i]) - l1m[i]
+                    wu = h1m[i] - max(o1m[i], cl1m[i])
+                    if wd > rng * 0.6 and cl1m[i] > (h1m[i]+l1m[i])/2 and v1m[i] > avg_v * 1.5:
+                        bull_h = True; strength += 1
+                    if wu > rng * 0.6 and cl1m[i] < (h1m[i]+l1m[i])/2 and v1m[i] > avg_v * 1.5:
+                        bear_h = True; strength += 1
+                hunt_data = {"bull_stop_hunt": bull_h, "bear_stop_hunt": bear_h,
+                             "hunt_strength": min(strength, 3)}
+
+            # Volume Profile dari candle 15m
+            n_b = 30
+            p_min, p_max = min(lows), max(highs)
+            bsz = (p_max - p_min) / n_b if p_max > p_min else 1
+            buckets = [0.0] * n_b
+            for i in range(len(closes)):
+                tp = (highs[i] + lows[i] + closes[i]) / 3
+                bi = min(int((tp - p_min) / bsz), n_b - 1)
+                buckets[bi] += vols[i]
+            poc_idx = buckets.index(max(buckets))
+            poc = round(p_min + (poc_idx + 0.5) * bsz, 3)
+            poc_dist = ((closes[-1] - poc) / poc * 100) if poc > 0 else 0
+            price_vs_poc = "AT" if abs(poc_dist) < 0.1 else ("ABOVE" if closes[-1] > poc else "BELOW")
+            vp_data = {"poc": poc, "price_vs_poc": price_vs_poc, "poc_distance_pct": round(poc_dist, 3)}
+
+            # HTF Key Levels dari candle 1D MetaAPI
+            candles_1d = self.get_candles(timeframe="1D", limit=2)
+            htf_data = {"daily_high": 0, "daily_low": 0, "near_daily_level": False,
+                        "near_weekly_level": False, "htf_level_bias": "NEUTRAL"}
+            if candles_1d:
+                dh = float(candles_1d[0].get("high", 0))
+                dl = float(candles_1d[0].get("low",  0))
+                htf_data["daily_high"] = dh
+                htf_data["daily_low"]  = dl
+                cur = closes[-1]
+                near_dh = dh > 0 and abs(cur - dh) / dh < 0.005
+                near_dl = dl > 0 and abs(cur - dl) / dl < 0.005
+                htf_data["near_daily_level"] = near_dh or near_dl
+                if near_dh: htf_data["htf_level_bias"] = "RESISTANCE"
+                elif near_dl: htf_data["htf_level_bias"] = "SUPPORT"
+
+        except Exception as _e:
+            fib_data  = {}
+            hunt_data = {"bull_stop_hunt": False, "bear_stop_hunt": False, "hunt_strength": 0}
+            vp_data   = {"poc": 0, "price_vs_poc": "UNKNOWN", "poc_distance_pct": 0}
+            htf_data  = {"daily_high": 0, "daily_low": 0, "near_daily_level": False,
+                         "near_weekly_level": False, "htf_level_bias": "NEUTRAL"}
+
         return {
             "rsi":              round(rsi, 2),
             "ema200":           round(ema200, 3),
@@ -618,6 +736,27 @@ class ForexExecutor:
             "supply_zone":      dsz["supply_zone"],
             "in_demand":        dsz["in_demand"],
             "in_supply":        dsz["in_supply"],
+            # Fibonacci
+            "fib_382":            fib_data.get("fib_382", 0),
+            "fib_500":            fib_data.get("fib_500", 0),
+            "fib_618":            fib_data.get("fib_618", 0),
+            "at_fib_support":     fib_data.get("at_fib_support", False),
+            "at_fib_resistance":  fib_data.get("at_fib_resistance", False),
+            "current_fib_level":  fib_data.get("current_fib_level", "NONE"),
+            # Stop Hunt
+            "bull_stop_hunt":     hunt_data.get("bull_stop_hunt", False),
+            "bear_stop_hunt":     hunt_data.get("bear_stop_hunt", False),
+            "hunt_strength":      hunt_data.get("hunt_strength", 0),
+            # Volume Profile
+            "poc":                vp_data.get("poc", 0),
+            "price_vs_poc":       vp_data.get("price_vs_poc", "UNKNOWN"),
+            "poc_distance_pct":   vp_data.get("poc_distance_pct", 0),
+            # HTF Key Levels
+            "daily_high":         htf_data.get("daily_high", 0),
+            "daily_low":          htf_data.get("daily_low", 0),
+            "near_daily_level":   htf_data.get("near_daily_level", False),
+            "near_weekly_level":  htf_data.get("near_weekly_level", False),
+            "htf_level_bias":     htf_data.get("htf_level_bias", "NEUTRAL"),
         }
 
     #  MOMENTUM SCORING 
@@ -693,6 +832,37 @@ class ForexExecutor:
             score += 15 + min(5, dz_strength)  # max 20 poin
         if side == "sell" and in_supply:
             score += 15 + min(5, sz_strength)
+
+        #  7c. FIBONACCI RETRACEMENT (max 15 poin)
+        if side == "buy"  and ind.get("at_fib_support", False):
+            fib_lvl = ind.get("current_fib_level", "NONE")
+            score += 15 if fib_lvl in ("0.618", "0.786") else 10
+        if side == "sell" and ind.get("at_fib_resistance", False):
+            fib_lvl = ind.get("current_fib_level", "NONE")
+            score += 15 if fib_lvl in ("0.618", "0.786") else 10
+
+        #  7d. STOP HUNT SIGNAL (max 15 poin)
+        hunt_strength = ind.get("hunt_strength", 0)
+        if side == "buy"  and ind.get("bull_stop_hunt", False):
+            score += 10 + min(5, hunt_strength * 2)
+        if side == "sell" and ind.get("bear_stop_hunt", False):
+            score += 10 + min(5, hunt_strength * 2)
+
+        #  7e. VOLUME PROFILE / POC (max 10 poin, penalti -8)
+        price_vs_poc = ind.get("price_vs_poc", "UNKNOWN")
+        poc_dist     = abs(ind.get("poc_distance_pct", 0))
+        if side == "buy"  and price_vs_poc == "BELOW": score += min(10, poc_dist * 3)
+        if side == "sell" and price_vs_poc == "ABOVE": score += min(10, poc_dist * 3)
+        if side == "buy"  and price_vs_poc == "ABOVE" and poc_dist > 2: score -= 8
+        if side == "sell" and price_vs_poc == "BELOW" and poc_dist > 2: score -= 8
+
+        #  7f. HTF KEY LEVELS (penalti -15 kalau melawan level kritis)
+        htf_bias    = ind.get("htf_level_bias", "NEUTRAL")
+        near_weekly = ind.get("near_weekly_level", False)
+        if side == "buy"  and htf_bias == "RESISTANCE":
+            score -= 15 if near_weekly else 8
+        if side == "sell" and htf_bias == "SUPPORT":
+            score -= 15 if near_weekly else 8
 
         #  8. Whale Signal via PAXG Order Book (max 15 poin) 
         # Ini sinyal paling kuat — whale di gold market = institutional money
@@ -1127,6 +1297,31 @@ class ForexExecutor:
                     time.sleep(60)
                     continue
 
+                # SESSION LOSS LIMIT
+                # Reset session loss counter saat sesi berganti (Asia/London/NY)
+                now_h = datetime.datetime.utcnow().hour
+                current_session = (
+                    "ASIA"   if 2  <= now_h < 5  else
+                    "LONDON" if 7  <= now_h < 16 else
+                    "NY"     if 12 <= now_h < 21 else "OFF"
+                )
+                if not hasattr(self, '_last_session'):
+                    self._last_session = current_session
+                if current_session != self._last_session:
+                    # Sesi baru — reset loss counter
+                    print("[SESSION] Sesi baru: " + current_session + ". Reset session loss counter.")
+                    self._session_loss_usd = 0.0
+                    self._last_session = current_session
+
+                # Update session loss dari equity change
+                if balance > 0:
+                    session_pnl = equity - balance
+                    if session_pnl < -SESSION_MAX_LOSS_USD:
+                        print("[SESSION LOSS] Rugi $" + str(round(abs(session_pnl), 2)) +
+                              " dalam sesi " + current_session + " (limit $" + str(SESSION_MAX_LOSS_USD) + "). Stop trading sesi ini.")
+                        time.sleep(300)
+                        continue
+
                 if broker_price == 0:
                     time.sleep(5)
                     continue
@@ -1169,6 +1364,20 @@ class ForexExecutor:
                     print("[FOREX SCAN] No setup. Buy:" + str(buy_sc) + " Sell:" + str(sell_sc) + " (need " + str(MIN_MOMENTUM_SCORE) + "+)")
                     time.sleep(SCAN_INTERVAL)
                     continue
+
+                # NEWS CALENDAR CHECK — jangan buka trade baru sebelum event besar
+                try:
+                    from news_sniper import get_upcoming_high_impact_events
+                    cal = get_upcoming_high_impact_events()
+                    if cal.get("recommendation") == "AVOID_NEW_TRADES":
+                        print("[NEWS CALENDAR] Event high-impact dalam 30 menit! Tidak buka trade baru.")
+                        time.sleep(SCAN_INTERVAL)
+                        continue
+                    elif cal.get("recommendation") == "REDUCE_SIZE":
+                        trades_to_open = 1  # Kurangi size saat ada event
+                        print("[NEWS CALENDAR] Event dalam 2 jam. Reduce size ke 1 trade.")
+                except Exception:
+                    pass
 
                 # MARKET REGIME FILTER (ADX)
                 adx = self._calc_adx_forex()
