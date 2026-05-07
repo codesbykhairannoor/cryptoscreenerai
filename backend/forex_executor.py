@@ -116,7 +116,7 @@ class ForexExecutor:
 
     #  CANDLE DATA 
 
-    def get_candles(self, symbol=None, timeframe="15m", limit=CANDLE_LIMIT):
+    def get_candles(self, symbol=None, timeframe="30m", limit=CANDLE_LIMIT):
         sym     = symbol or self._working_symbol or "XAUUSD"
         headers = {"auth-token": self.api_token}
         hosts   = [
@@ -178,7 +178,7 @@ class ForexExecutor:
         ADX < 18 = ranging, skip.
         """
         try:
-            candles = self.get_candles(timeframe="15m", limit=period * 3)
+            candles = self.get_candles(timeframe="30m", limit=period * 3)
             if len(candles) < period + 2:
                 return 25.0
 
@@ -220,7 +220,7 @@ class ForexExecutor:
         ATR candle terakhir vs ATR baseline 20 periode.
         """
         try:
-            candles = self.get_candles(timeframe="15m", limit=30)
+            candles = self.get_candles(timeframe="30m", limit=30)
             if len(candles) < 22:
                 return {"regime": "NORMAL", "atr_ratio": 1.0}
 
@@ -415,12 +415,12 @@ class ForexExecutor:
     def _calc_indicators(self):
         """
         XAUUSD Multi-Timeframe Indicator Engine v6.0.
-        Data source: MetaAPI candle 15m (fallback 5m, lalu price momentum).
+        Data source: MetaAPI candle 30m (fallback 5m, lalu price momentum).
         Tambahan v6.0: 4h trend bias, DXY context, lebih banyak sinyal.
         """
-        candles = self.get_candles(timeframe="15m", limit=100)
+        candles = self.get_candles(timeframe="30m", limit=100)
         if len(candles) < 20:
-            candles = self.get_candles(timeframe="5m", limit=100)
+            candles = self.get_candles(timeframe="15m", limit=100)  # fallback ke 15m
 
         # Fallback: price momentum dari harga live
         if len(candles) < 10:
@@ -542,7 +542,7 @@ class ForexExecutor:
         liq_sweep = (lows[-1] < lows[-2] and closes[-1] > lows[-2]) or \
                     (highs[-1] > highs[-2] and closes[-1] < highs[-2])
 
-        # Trend 15m
+        # Trend 30m
         trend = "NEUTRAL"
         if last_close > ema200: trend = "BULLISH"
         elif last_close < ema200: trend = "BEARISH"
@@ -672,7 +672,7 @@ class ForexExecutor:
                 hunt_data = {"bull_stop_hunt": bull_h, "bear_stop_hunt": bear_h,
                              "hunt_strength": min(strength, 3)}
 
-            # Volume Profile dari candle 15m
+            # Volume Profile dari candle 30m
             n_b = 30
             p_min, p_max = min(lows), max(highs)
             bsz = (p_max - p_min) / n_b if p_max > p_min else 1
@@ -881,14 +881,14 @@ class ForexExecutor:
             elif obi < -0.10:          score += 5
             elif obi > 0.15:           score -= 8
 
-        #  8. Trend 15m alignment (max 5 poin, penalti -8) 
+        #  8. Trend 30m alignment (max 5 poin, penalti -8) 
         # Penalti dikurangi kalau ada sinyal pembalikan kuat (pump/dump signal)
         reversal_signal = pump_sig in ("PUMP_IMMINENT", "DUMP_IMMINENT", "BREAKOUT_UP", "BREAKOUT_DOWN")
-        trend_penalty_15m = 4 if reversal_signal else 8   # penalti lebih kecil saat ada reversal
+        trend_penalty_30m = 4 if reversal_signal else 8   # penalti lebih kecil saat ada reversal
         if side == "buy"  and trend == "BULLISH": score += 5
         if side == "sell" and trend == "BEARISH": score += 5
-        if side == "buy"  and trend == "BEARISH": score -= trend_penalty_15m
-        if side == "sell" and trend == "BULLISH": score -= trend_penalty_15m
+        if side == "buy"  and trend == "BEARISH": score -= trend_penalty_30m
+        if side == "sell" and trend == "BULLISH": score -= trend_penalty_30m
 
         #  9. Trend 1h confirmation (max 10 poin, penalti -12 normal, -6 saat reversal) 
         trend_penalty_1h = 6 if reversal_signal else 12
@@ -1354,7 +1354,7 @@ class ForexExecutor:
                 trend_1h = ind.get("trend_1h", "NEUTRAL")
                 trend_4h = ind.get("trend_4h", "NEUTRAL")
                 pump_sig = ind.get("pump_signal", "NONE")
-                print("[FOREX SCAN] RSI:" + str(rsi_val) + " 15m:" + trend + " 1h:" + trend_1h + " 4h:" + trend_4h + " Pump:" + pump_sig)
+                print("[FOREX SCAN] RSI:" + str(rsi_val) + " 30m:" + trend + " 1h:" + trend_1h + " 4h:" + trend_4h + " Pump:" + pump_sig)
 
                 # DETERMINE SIDE  HARUS SEBELUM COMMIT CHECK
                 side, score, trades_to_open = self._determine_side(ind, spread_pts)
@@ -1466,7 +1466,7 @@ class ForexExecutor:
                 print("  Pump: " + str(pump_sig) + " | RSI Div: " + str(ind.get("rsi_divergence","NONE")))
                 print("  Price: " + str(entry_price) + " | ATR: " + str(atr) + " | Lot: " + str(lot))
                 print("  RSI: " + str(rsi_val) + " | VWAP: " + str(ind.get("vwap_dist",0)) + "%")
-                print("  15m: " + trend + " | 1h: " + trend_1h + " | 4h: " + trend_4h)
+                print("  30m: " + trend + " | 1h: " + trend_1h + " | 4h: " + trend_4h)
                 print("  DXY: " + dxy_ctx.get("trend","NEUTRAL") + " (" + str(dxy_ctx.get("change",0)) + "%)")
                 print("  Whale: " + str(ind.get("whale_signal","NORMAL")) + " | OBI: " + str(ind.get("obi",0)))
                 print("  DemandZone: " + str(ind.get("in_demand",False)) + " | SupplyZone: " + str(ind.get("in_supply",False)))
@@ -1497,7 +1497,7 @@ class ForexExecutor:
                         from database import log_trade
                         log_trade(sym, fresh_entry, fresh_tp, fresh_sl, market="forex",
                                   side=side, lot_size=lot, score=score,
-                                  reason="Pump:" + str(pump_sig) + " RSI:" + str(rsi_val) + " 15m:" + trend + " 1h:" + trend_1h + " 4h:" + trend_4h)
+                                  reason="Pump:" + str(pump_sig) + " RSI:" + str(rsi_val) + " 30m:" + trend + " 1h:" + trend_1h + " 4h:" + trend_4h)
                         opened += 1
                     time.sleep(0.2)  # sedikit lebih lama agar harga stabil
 
