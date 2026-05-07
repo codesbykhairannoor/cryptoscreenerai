@@ -237,9 +237,10 @@ class ForexExecutor:
 
     def _calc_ev_forex(self, side: str, ind: dict, score: int) -> float:
         """
-        Expected Value untuk XAUUSD trade.
-        EV = (P_win x TP_pct) - (P_loss x SL_pct)
-        TP = 20 poin, SL = 8 poin, RR = 1:2.5
+        Expected Value untuk XAUUSD trade — sudah include spread cost.
+        EV = (P_win x TP_pct) - (P_loss x SL_pct) - spread_cost
+        TP = 20 poin, SL = 8 poin, spread ~2.8 poin
+        Spread cost = 2.8 / entry_price ~ 0.006% per trade
         """
         base_p_win = 0.30 + (score / 100) * 0.35
 
@@ -257,15 +258,24 @@ class ForexExecutor:
         if side == "buy"  and pump in ("PUMP_IMMINENT", "BREAKOUT_UP"):   adj += 0.07
         if side == "sell" and pump in ("DUMP_IMMINENT", "BREAKOUT_DOWN"): adj += 0.07
 
+        # Demand/Supply zone bonus
+        if side == "buy"  and ind.get("in_demand", False): adj += 0.06
+        if side == "sell" and ind.get("in_supply", False): adj += 0.06
+
         p_win  = min(0.75, max(0.20, base_p_win + adj))
         p_loss = 1.0 - p_win
 
         # XAUUSD: TP 20 poin / entry ~4700 = ~0.43%, SL 8 poin = ~0.17%
-        tp_pct = 20.0 / 4700
-        sl_pct = 8.0  / 4700
+        entry_approx = self._last_known_price if self._last_known_price > 0 else 4700
+        tp_pct = 20.0 / entry_approx
+        sl_pct = 8.0  / entry_approx
 
-        ev = (p_win * tp_pct) - (p_loss * sl_pct)
-        return round(ev, 5)
+        # Spread cost: 2.8 poin / entry = biaya masuk + keluar
+        spread_cost = 2.8 / entry_approx
+
+        ev_gross = (p_win * tp_pct) - (p_loss * sl_pct)
+        ev_net   = ev_gross - spread_cost  # EV setelah spread
+        return round(ev_net, 5)
 
     def _get_gold_orderbook(self):
         """

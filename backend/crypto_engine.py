@@ -84,19 +84,34 @@ DAILY_LOSS_LIMIT_PCT = -40
 
 # ── MARKET INTELLIGENCE CONFIG ────────────────────────────────────────────────
 # ADX Market Regime: hanya trade di trending market
-ADX_TRENDING_THRESHOLD  = 22   # ADX > 22 = trending, boleh entry
-ADX_RANGING_THRESHOLD   = 18   # ADX < 18 = ranging, skip semua entry
+ADX_TRENDING_THRESHOLD  = 22
+ADX_RANGING_THRESHOLD   = 18
 ADX_PERIOD              = 14
 
-# Volatility Regime: ATR relatif vs baseline
-VOL_HIGH_MULTIPLIER     = 2.5  # ATR > 2.5x baseline = terlalu volatile, SL sering kena noise
-VOL_LOW_MULTIPLIER      = 0.4  # ATR < 0.4x baseline = terlalu sepi, spread makan profit
-VOL_BASELINE_PERIOD     = 20   # Periode untuk hitung ATR baseline
+# Volatility Regime
+VOL_HIGH_MULTIPLIER     = 2.5
+VOL_LOW_MULTIPLIER      = 0.4
+VOL_BASELINE_PERIOD     = 20
 
-# Expected Value minimum sebelum entry
-# EV = (win_rate_estimate x TP_pct) - (loss_rate x SL_pct)
-# Kalau EV negatif atau terlalu kecil, skip
-MIN_EXPECTED_VALUE      = 0.005  # Minimum 0.5% EV per trade
+# Expected Value minimum — sekarang sudah include fee Bitget
+# Fee Bitget futures taker = 0.06% per side = 0.12% round trip
+# Notional $70 → fee = $0.084 per trade = 1.2% PnL
+# EV harus > fee agar worth it
+BITGET_FEE_PCT          = 0.0012  # 0.12% round trip fee
+MIN_EXPECTED_VALUE      = 0.008   # Minimum EV setelah fee (0.8%)
+
+# BTC Correlation Filter
+# Kalau BTC bearish kuat, jangan LONG altcoin (semua altcoin ikut turun)
+# Kalau BTC bullish kuat, jangan SHORT altcoin
+BTC_BEAR_THRESHOLD      = -2.0    # BTC turun > 2% dalam 1 jam = bearish kuat
+BTC_BULL_THRESHOLD      = 2.0     # BTC naik > 2% dalam 1 jam = bullish kuat
+BTC_CACHE_TTL           = 120     # Cache BTC data 2 menit
+
+# Consecutive Loss Tracker
+# Kalau kalah 2x berturut-turut, pause 30 menit
+# Ini mencegah bot terus masuk saat kondisi market sedang tidak favorable
+CONSEC_LOSS_LIMIT       = 2       # Maksimal 2 loss berturut-turut
+CONSEC_LOSS_PAUSE_MIN   = 30      # Pause 30 menit setelah 2x loss berturut-turut
 
 
 # ─── MARKET INTELLIGENCE ENGINE ──────────────────────────────────────────────
@@ -287,8 +302,67 @@ def _calc_expected_value(side: str, tech: dict, combined_score: int) -> float:
     tp_pct = SCALP_TP_PCT   # 8%
     sl_pct = SCALP_SL_PCT   # 1.5%
 
-    ev = (p_win * tp_pct) - (p_loss * sl_pct)
-    return round(ev, 4)
+    # Fee-adjusted EV: kurangi biaya fee Bitget dari EV
+    # Fee 0.12% round trip = langsung mengurangi profit
+    ev_gross = (p_win * tp_pct) - (p_loss * sl_pct)
+    ev_net   = ev_gross - BITGET_FEE_PCT  # EV setelah fee
+    return round(ev_net, 4)
+
+
+def _get_btc_context() -> dict:
+    """
+    Ambil konteks BTC untuk correlation filter.
+    BTC adalah market leader — pergerakannya mempengaruhi semua altcoin.
+
+    Return:
+      trend    : BULLISH / BEARISH / NEUTRAL
+      change_1h: % perubahan harga BTC dalam 1 jam terakhir
+      signal   : AVOID_LONG / AVOID_SHORT / NEUTRAL
+                 AVOID_LONG  = BTC bearish kuat, jangan LONG altcoin
+                 AVOID_SHORT = BTC bullish kuat, jangan SHORT altcoin
+    """
+    # Cache sederhana di module level
+    if not hasattr(_get_btc_context, '_cache'):
+        _get_btc_context._cache = {"ts": 0, "result": {"trend": "NEUTRAL", "change_1h": 0, "signal": "NEUTRAL"}}
+
+    now = time.time()
+    if now - _get_btc_context._cache["ts"] < BTC_CACHE_TTL:
+        return _get_btc_context._cache["result"]
+
+    try:
+        # Ambil candle 1h BTC dari Bitget
+        url = ("https://api.bitget.com/api/v2/mix/market/history-candles"
+               "?symbol=BTCUSDT&granularity=1h&limit=3&productType=USDT-FUTURES")
+        r = requests.get(url, timeout=5, verify=False)
+        if r.status_code != 200:
+            return _get_btc_context._cache["result"]
+
+        data = r.json().get('data', [])
+        if len(data) < 2:
+            return _get_btc_context._cache["result"]
+
+        # Hitung % change dari 1 jam lalu ke sekarang
+        close_now  = float(data[0][4])   # candle terbaru
+        close_1h   = float(data[1][4])   # 1 jam lalu
+        change_1h  = ((close_now - close_1h) / close_1h) * 100 if close_1h > 0 else 0
+
+        # Tentukan trend dan signal
+        if change_1h <= BTC_BEAR_THRESHOLD:
+            trend  = "BEARISH"
+            signal = "AVOID_LONG"   # BTC turun kuat, jangan LONG altcoin
+        elif change_1h >= BTC_BULL_THRESHOLD:
+            trend  = "BULLISH"
+            signal = "AVOID_SHORT"  # BTC naik kuat, jangan SHORT altcoin
+        else:
+            trend  = "NEUTRAL"
+            signal = "NEUTRAL"
+
+        result = {"trend": trend, "change_1h": round(change_1h, 2), "signal": signal}
+        _get_btc_context._cache = {"ts": now, "result": result}
+        return result
+
+    except Exception:
+        return _get_btc_context._cache["result"]
 
 
 # WHALE OBSERVER
@@ -932,6 +1006,9 @@ def run_crypto_engine():
     # Track koin yang sering kena SL - {clean_base: [timestamp_sl1, timestamp_sl2, ...]}
     # Kalau kena SL 2x dalam 4 jam -> blacklist sementara
     _loss_tracker      = {}  # {clean_base: [timestamps]}
+    # Consecutive loss tracker — pause bot kalau kalah 2x berturut-turut
+    _consec_losses     = 0   # jumlah loss berturut-turut
+    _consec_pause_until = 0  # timestamp sampai kapan bot pause
 
     # Mulai observasi langsung dari startup
     observer.reset()
@@ -959,11 +1036,22 @@ def run_crypto_engine():
 
             # ── 4. CIRCUIT BREAKER ────────────────────────────────────────────
             stats     = get_performance_stats('crypto')
-            daily_pnl = stats.get('daily_pnl', 0)  # pakai daily_pnl, bukan win_rate
+            daily_pnl = stats.get('daily_pnl', 0)
             if daily_pnl < DAILY_LOSS_LIMIT_PCT:
                 print(f"[CIRCUIT BREAKER] Daily loss {daily_pnl}% melewati limit "
                       f"{DAILY_LOSS_LIMIT_PCT}%. Standby 30 menit.")
                 time.sleep(1800)
+                continue
+
+            # ── 4c. CONSECUTIVE LOSS PAUSE ────────────────────────────────────
+            # Kalau kalah 2x berturut-turut, pause 30 menit
+            # Ini mencegah bot terus masuk saat kondisi market sedang tidak favorable
+            if now < _consec_pause_until:
+                remaining = round((_consec_pause_until - now) / 60, 1)
+                if int(now) % 60 < 10:
+                    print(f"[CONSEC LOSS] Pause aktif. {remaining} menit lagi. "
+                          f"({_consec_losses}x loss berturut-turut)")
+                time.sleep(SCAN_INTERVAL)
                 continue
 
             # ── 4b. SESSION FILTER ────────────────────────────────────────────
@@ -1003,7 +1091,6 @@ def run_crypto_engine():
                         if now - v < 1800:
                             # Koin baru di-exit - catat ke loss tracker
                             if k not in _recently_exited:
-                                # Ini exit baru, tambah ke loss tracker
                                 if k not in _loss_tracker:
                                     _loss_tracker[k] = []
                                 _loss_tracker[k].append(v)
@@ -1012,6 +1099,18 @@ def run_crypto_engine():
                                 if loss_count >= REPEAT_LOSS_MAX_COUNT:
                                     print(f"[LOSS TRACKER] {k} kena SL {loss_count}x dalam "
                                           f"{REPEAT_LOSS_BLACKLIST_HOURS}h. Blacklist sementara.")
+
+                                # ── CONSECUTIVE LOSS TRACKING ─────────────────
+                                _consec_losses += 1
+                                print(f"[CONSEC LOSS] Loss ke-{_consec_losses} ({k}). "
+                                      f"Limit: {CONSEC_LOSS_LIMIT}x")
+                                if _consec_losses >= CONSEC_LOSS_LIMIT:
+                                    _consec_pause_until = now + (CONSEC_LOSS_PAUSE_MIN * 60)
+                                    print(f"[CONSEC LOSS] {_consec_losses}x loss berturut-turut! "
+                                          f"Pause {CONSEC_LOSS_PAUSE_MIN} menit. "
+                                          f"Market sedang tidak favorable.")
+                                    _consec_losses = 0  # Reset counter setelah pause
+
                             _recently_exited[k] = v
                         else:
                             del _state.recently_exited[k]
@@ -1062,10 +1161,12 @@ def run_crypto_engine():
             # ── 9a. SCAN SEMUA KANDIDAT & CATAT KE OBSERVER ──────────────────
             # Log ringkas: berapa koin yang di-scan dan berapa yang lolos
             top_candidates = candidates[:20]
+            btc_ctx = _get_btc_context()
             print(f"[CRYPTO ENGINE] Scan {len(top_candidates)} koin | "
                   f"Watchlist: {len(observer._watchlist)} | "
                   f"Obs: {round((now - observer._obs_start)/60, 1)}m | "
-                  f"Sentiment: {market_sentiment} | DXY: {dxy_trend}")
+                  f"Sentiment: {market_sentiment} | DXY: {dxy_trend} | "
+                  f"BTC: {btc_ctx['trend']} ({btc_ctx['change_1h']:+.1f}%/1h)")
 
             scan_count   = 0
             skip_reasons = {}  # track kenapa koin di-skip
@@ -1135,6 +1236,18 @@ def run_crypto_engine():
                 # DXY override
                 is_dxy_active = abs(dxy_change) > 0.0001
                 if is_dxy_active and side == "buy" and dxy_trend == "BULLISH" and dxy_change > 0.2:
+                    continue
+
+                # ── BTC CORRELATION FILTER ────────────────────────────────────
+                # BTC adalah market leader. Kalau BTC bearish kuat, jangan LONG altcoin.
+                # Kalau BTC bullish kuat, jangan SHORT altcoin.
+                btc_ctx = _get_btc_context()
+                btc_signal = btc_ctx.get("signal", "NEUTRAL")
+                if btc_signal == "AVOID_LONG" and side == "buy":
+                    skip_reasons['btc_bear'] = skip_reasons.get('btc_bear', 0) + 1
+                    continue
+                if btc_signal == "AVOID_SHORT" and side == "sell":
+                    skip_reasons['btc_bull'] = skip_reasons.get('btc_bull', 0) + 1
                     continue
 
                 # Order book confirmation
@@ -1287,6 +1400,9 @@ def run_crypto_engine():
                 open_bases.append(clean_base)
                 print(f"[TRADE LOGGED] {clean_base} {side.upper()} @ {mark_price} "
                       f"| Score: {best['final_score']}")
+                # Trade berhasil masuk = reset consecutive loss counter
+                # (loss counter hanya naik saat exit, bukan saat entry)
+                _consec_losses = 0
                 # Reset observer untuk periode observasi berikutnya
                 observer.reset()
             else:
