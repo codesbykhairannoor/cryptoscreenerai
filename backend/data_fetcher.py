@@ -576,16 +576,50 @@ def get_technical_indicators(symbol, interval="15m"):
         mark_price = df_cur['close'].iloc[-1]
         ema_200_cur = df_cur['close'].ewm(span=200, adjust=False).mean()
         
-        # 2. HTF CONTEXT (1H)
+        # 2. HTF CONTEXT (1H + 4H)
         url_htf = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=1h&limit=100&productType=USDT-FUTURES"
         r_htf = requests.get(url_htf, timeout=5, verify=False)
         ema_200_htf_val = 0
+        trend_1h = "NEUTRAL"
         if r_htf.status_code == 200:
             data_htf = r_htf.json().get('data', [])
             df_htf = pd.DataFrame(data_htf, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd'])
             df_htf['close'] = df_htf['close'].astype(float)
             ema_htf = df_htf['close'].ewm(span=200, adjust=False).mean()
             ema_200_htf_val = ema_htf.iloc[-1] if len(ema_htf) > 0 else 0
+            last_1h = df_htf['close'].iloc[-1]
+            if ema_200_htf_val > 0:
+                trend_1h = "BULLISH" if last_1h > ema_200_htf_val * 1.001 else \
+                           "BEARISH" if last_1h < ema_200_htf_val * 0.999 else "NEUTRAL"
+
+        # 4H TREND — penting untuk filter falling knife
+        url_4h = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=4h&limit=50&productType=USDT-FUTURES"
+        r_4h = requests.get(url_4h, timeout=5, verify=False)
+        trend_4h = "NEUTRAL"
+        ema_50_4h = 0
+        if r_4h.status_code == 200:
+            data_4h = r_4h.json().get('data', [])
+            if len(data_4h) >= 10:
+                closes_4h = [float(c[4]) for c in data_4h]
+                # EMA 50 pada 4h = trend medium term
+                ema_4h = closes_4h[0]
+                k_4h = 2 / (50 + 1)
+                for c in closes_4h:
+                    ema_4h = c * k_4h + ema_4h * (1 - k_4h)
+                ema_50_4h = ema_4h
+                last_4h = closes_4h[-1]
+                trend_4h = "BULLISH" if last_4h > ema_4h * 1.001 else \
+                           "BEARISH" if last_4h < ema_4h * 0.999 else "NEUTRAL"
+
+                # Slope 4h: apakah trend sedang naik atau turun?
+                # Bandingkan EMA 10 candle lalu vs sekarang
+                if len(closes_4h) >= 20:
+                    ema_old = closes_4h[0]
+                    for c in closes_4h[:-10]:
+                        ema_old = c * k_4h + ema_old * (1 - k_4h)
+                    # Kalau EMA sekarang < EMA 10 candle lalu = downtrend
+                    if ema_4h < ema_old * 0.998:
+                        trend_4h = "BEARISH"  # Override: EMA turun = bearish
 
         # 3. LIQUIDITY SWEEPS
         last_candle = df_cur.iloc[-1]
@@ -706,6 +740,9 @@ def get_technical_indicators(symbol, interval="15m"):
             "hunt_strength":      hunt.get("hunt_strength", 0),
             "ema_200": round(ema_200_cur.iloc[-1], 2) if len(ema_200_cur) > 0 else 0,
             "ema_200_htf": round(ema_200_htf_val, 2),
+            "trend_1h": trend_1h,
+            "trend_4h": trend_4h,
+            "ema_50_4h": round(ema_50_4h, 6),
             "open_interest": get_open_interest(symbol),
             "funding_rate": get_funding_rate(symbol),
             "htf": "1h"

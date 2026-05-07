@@ -845,6 +845,11 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     """
     Return (side, reason, score) atau (None, '', 0) kalau tidak ada setup.
     Bi-directional: bisa long DAN short.
+
+    ANTI-FALLING-KNIFE FILTER:
+    - Tidak boleh BUY kalau 4h trend BEARISH (seperti SKYAI)
+    - Tidak boleh SELL kalau 4h trend BULLISH
+    - Exception: kalau ada stop hunt atau demand/supply zone yang sangat kuat
     """
     best_side   = None
     best_reason = ""
@@ -860,99 +865,144 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     choch_s = tech.get('choch_bearish', False)
     obi   = tech.get('obi', 0)
 
+    # ── HTF TREND FILTER ─────────────────────────────────────────────────────
+    trend_1h = tech.get('trend_1h', 'NEUTRAL')
+    trend_4h = tech.get('trend_4h', 'NEUTRAL')
+
+    # Anti-falling-knife: jangan BUY kalau 4h bearish KECUALI ada reversal signal kuat
+    # Reversal signal kuat = stop hunt + demand zone + whale buy
+    has_strong_reversal_buy = (
+        tech.get('bull_stop_hunt', False) or
+        tech.get('in_demand', False) or
+        whale == 'WHALE_BUY'
+    )
+    has_strong_reversal_sell = (
+        tech.get('bear_stop_hunt', False) or
+        tech.get('in_supply', False) or
+        whale == 'WHALE_SELL'
+    )
+
+    # Kalau 4h bearish dan tidak ada reversal signal = skip BUY
+    block_buy  = (trend_4h == 'BEARISH' and not has_strong_reversal_buy)
+    # Kalau 4h bullish dan tidak ada reversal signal = skip SELL
+    block_sell = (trend_4h == 'BULLISH' and not has_strong_reversal_sell)
+
+    # Kalau 1h juga berlawanan = block lebih ketat
+    if trend_1h == 'BEARISH' and trend_4h == 'BEARISH':
+        block_buy = True   # Double bearish = tidak ada BUY sama sekali
+    if trend_1h == 'BULLISH' and trend_4h == 'BULLISH':
+        block_sell = True  # Double bullish = tidak ada SELL sama sekali
+
     # ── LONG SETUPS ──────────────────────────────────────────────────────────
     long_candidates = []
 
-    # Setup 1: Whale Accumulation + Discount Zone
-    if whale == 'WHALE_BUY' and vwap_dist < 0.5:
-        s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "WHALE ACCUMULATION + DISCOUNT ZONE"))
+    if block_buy:
+        # Skip semua long setup kalau 4h bearish tanpa reversal signal
+        pass
+    else:
+        # Setup 1: Whale Accumulation + Discount Zone
+        if whale == 'WHALE_BUY' and vwap_dist < 0.5:
+            s = _score_candidate(tech, rsi, vwap_dist, "buy")
+            long_candidates.append((s, "WHALE ACCUMULATION + DISCOUNT ZONE"))
 
     # Setup 2: Bullish FVG Re-entry
-    if fvg == 'BULLISH_FVG' and rsi < 60:
+    if not block_buy and fvg == 'BULLISH_FVG' and rsi < 60:
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
         long_candidates.append((s, "BULLISH FVG RE-ENTRY"))
 
     # Setup 3: MSS Bullish Breakout
-    if mss_b and obi > 0.05:
+    if not block_buy and mss_b and obi > 0.05:
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
         long_candidates.append((s, "MSS BULLISH BREAKOUT"))
 
     # Setup 4: CHoCH + Liquidity Sweep
-    if choch_b and liq and rsi < 55:
+    if not block_buy and choch_b and liq and rsi < 55:
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
         long_candidates.append((s, "CHoCH REVERSAL + LIQUIDITY SWEEP"))
 
     # Setup 5: Bullish OB + Oversold RSI
-    if ob == 'BULLISH_OB' and rsi < 45:
+    if not block_buy and ob == 'BULLISH_OB' and rsi < 45:
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
         long_candidates.append((s, "BULLISH ORDER BLOCK + OVERSOLD RSI"))
 
-    # Setup 6: RSI Oversold Recovery (tidak butuh SMC signal)
-    if 28 <= rsi <= 42 and vwap_dist < 2.0:
+    # Setup 6: RSI Oversold Recovery — HANYA kalau 1h tidak bearish
+    # Ini yang bikin SKYAI masuk — RSI oversold tapi 4h bearish
+    if not block_buy and 28 <= rsi <= 42 and vwap_dist < 2.0 and trend_1h != 'BEARISH':
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
         long_candidates.append((s, "RSI OVERSOLD RECOVERY"))
 
-    # Setup 7: Momentum Breakout (harga di bawah VWAP, mulai naik)
-    if -3.0 <= vwap_dist <= -0.3 and (choch_b or mss_b or fvg == 'BULLISH_FVG'):
+    # Setup 7: Momentum Breakout
+    if not block_buy and -3.0 <= vwap_dist <= -0.3 and (choch_b or mss_b or fvg == 'BULLISH_FVG'):
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
         long_candidates.append((s, "MOMENTUM BREAKOUT FROM DISCOUNT"))
 
-    # Setup 8: Demand Zone Entry (harga kembali ke zona akumulasi institusi)
+    # Setup 8: Demand Zone Entry — boleh masuk meski 4h bearish kalau zona kuat
     if tech.get('in_demand', False):
-        s = _score_candidate(tech, rsi, vwap_dist, "buy")
         dz = tech.get('demand_zone', {})
-        long_candidates.append((s, f"DEMAND ZONE ENTRY (strength:{dz.get('strength',0)})"))
+        # Kalau 4h bearish, butuh zona yang lebih kuat (strength >= 3)
+        min_strength = 3 if trend_4h == 'BEARISH' else 1
+        if dz.get('strength', 0) >= min_strength:
+            s = _score_candidate(tech, rsi, vwap_dist, "buy")
+            long_candidates.append((s, f"DEMAND ZONE ENTRY (strength:{dz.get('strength',0)})"))
 
     # ── SHORT SETUPS ─────────────────────────────────────────────────────────
     short_candidates = []
 
     # Setup 1: Whale Distribution + Premium Zone
-    if whale == 'WHALE_SELL' and vwap_dist > 0.5:
+    if not block_sell and whale == 'WHALE_SELL' and vwap_dist > 0.5:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
         short_candidates.append((s, "WHALE DISTRIBUTION + PREMIUM ZONE"))
 
     # Setup 2: Bearish FVG Rejection
-    if fvg == 'BEARISH_FVG' and rsi > 45:
+    if not block_sell and fvg == 'BEARISH_FVG' and rsi > 45:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
         short_candidates.append((s, "BEARISH FVG REJECTION"))
 
     # Setup 3: MSS Bearish Breakdown
-    if mss_s and obi < -0.05:
+    if not block_sell and mss_s and obi < -0.05:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
         short_candidates.append((s, "MSS BEARISH BREAKDOWN"))
 
     # Setup 4: CHoCH + Liquidity Sweep Bearish
-    if choch_s and liq and rsi > 50:
+    if not block_sell and choch_s and liq and rsi > 50:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
         short_candidates.append((s, "CHoCH BEARISH + LIQUIDITY SWEEP"))
 
     # Setup 5: Bearish OB + Overbought RSI
-    if ob == 'BEARISH_OB' and rsi > 60:
+    if not block_sell and ob == 'BEARISH_OB' and rsi > 60:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
         short_candidates.append((s, "BEARISH ORDER BLOCK + OVERBOUGHT RSI"))
 
-    # Setup 6: RSI Overbought Rejection (tidak butuh SMC signal)
-    if 68 <= rsi <= 85 and vwap_dist > 1.0:
+    # Setup 6: RSI Overbought Rejection — HANYA kalau 1h tidak bullish
+    if not block_sell and 68 <= rsi <= 85 and vwap_dist > 1.0 and trend_1h != 'BULLISH':
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
         short_candidates.append((s, "RSI OVERBOUGHT REJECTION"))
 
-    # Setup 7: Bearish Momentum (harga di atas VWAP, mulai turun)
-    if 1.0 <= vwap_dist <= 5.0 and (choch_s or mss_s or fvg == 'BEARISH_FVG'):
+    # Setup 7: Bearish Momentum
+    if not block_sell and 1.0 <= vwap_dist <= 5.0 and (choch_s or mss_s or fvg == 'BEARISH_FVG'):
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
         short_candidates.append((s, "BEARISH MOMENTUM FROM PREMIUM"))
 
-    # Setup 8: Supply Zone Entry (harga kembali ke zona distribusi institusi)
+    # Setup 8: Supply Zone Entry — boleh masuk meski 4h bullish kalau zona kuat
     if tech.get('in_supply', False):
-        s = _score_candidate(tech, rsi, vwap_dist, "sell")
         sz = tech.get('supply_zone', {})
-        short_candidates.append((s, f"SUPPLY ZONE ENTRY (strength:{sz.get('strength',0)})"))
+        min_strength = 3 if trend_4h == 'BULLISH' else 1
+        if sz.get('strength', 0) >= min_strength:
+            s = _score_candidate(tech, rsi, vwap_dist, "sell")
+            short_candidates.append((s, f"SUPPLY ZONE ENTRY (strength:{sz.get('strength',0)})"))
 
     # ── PILIH SETUP TERBAIK ───────────────────────────────────────────────────
     all_candidates = [("buy", s, r) for s, r in long_candidates] + \
                      [("sell", s, r) for s, r in short_candidates]
 
     if not all_candidates:
+        # Log kenapa tidak ada setup
+        if block_buy and block_sell:
+            pass  # Kedua arah di-block
+        elif block_buy:
+            pass  # BUY di-block karena 4h bearish
+        elif block_sell:
+            pass  # SELL di-block karena 4h bullish
         return None, "", 0
 
     # Sort by score descending
@@ -964,6 +1014,12 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     if best_side == "sell" and market_sentiment == "BEARISH":  best_score = min(100, best_score + 5)
     if best_side == "buy"  and market_sentiment == "BEARISH":  best_score = max(0,   best_score - 8)
     if best_side == "sell" and market_sentiment == "BULLISH":  best_score = max(0,   best_score - 8)
+
+    # HTF alignment bonus
+    if best_side == "buy"  and trend_4h == "BULLISH": best_score = min(100, best_score + 8)
+    if best_side == "sell" and trend_4h == "BEARISH": best_score = min(100, best_score + 8)
+    if best_side == "buy"  and trend_1h == "BULLISH": best_score = min(100, best_score + 5)
+    if best_side == "sell" and trend_1h == "BEARISH": best_score = min(100, best_score + 5)
 
     return best_side, best_reason, best_score
 
@@ -1344,6 +1400,7 @@ def run_crypto_engine():
                     print(f"[OBS] {clean_base:8s} {side:4s} | Pump:{pump_sc:.0f} Dump:{dump_sc:.0f} "
                           f"Tech:{tech_score} Combined:{combined_score} | "
                           f"RSI:{rsi} VWAP:{vwap_dist}% | "
+                          f"1h:{tech.get('trend_1h','?')} 4h:{tech.get('trend_4h','?')} | "
                           f"ADX:{adx} {regime_label} | Vol:{vol_regime} | EV:{ev:.3f} | "
                           f"OI:{tech.get('open_interest',0):.0f} "
                           f"Fund:{tech.get('funding_rate',0):.4f}")
