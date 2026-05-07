@@ -443,10 +443,29 @@ class BitgetExecutor:
             if not hasattr(self, '_last_sl_check'): self._last_sl_check = {}
             if not hasattr(self, '_last_sl_set'):   self._last_sl_set = {}
             if not hasattr(self, '_peak_pnl'):      self._peak_pnl = {}  # Track PnL tertinggi per symbol
+            if not hasattr(self, '_tracked_positions'): self._tracked_positions = {}
 
             positions = self.get_all_positions()
             now = time.time()
             from shared_state import state
+
+            current_symbols = {p['symbol']: p.get('pnl', 0) for p in positions}
+            
+            # Detect ANY position that was closed (TP hit, SL hit, manual close)
+            closed_symbols = set(self._tracked_positions.keys()) - set(current_symbols.keys())
+            for sym in closed_symbols:
+                clean = self._clean_symbol(sym)
+                last_pnl = self._tracked_positions[sym]
+                
+                if not hasattr(state, 'recently_exited'): state.recently_exited = {}
+                state.recently_exited[clean] = now
+                
+                if not hasattr(state, 'exit_pnl'): state.exit_pnl = {}
+                state.exit_pnl[clean] = last_pnl
+                
+                print(f"[TRACKER] Trade {sym} closed with PnL {last_pnl}%. Cooldown initiated.")
+            
+            self._tracked_positions = current_symbols
 
             for pos in positions:
                 symbol     = pos['symbol']
@@ -556,6 +575,10 @@ class BitgetExecutor:
                     self.exchange.create_order(symbol, 'market',
                         'sell' if side in ['long','buy'] else 'buy', size)
                     if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                    
+                    clean = self._clean_symbol(symbol)
+                    if not hasattr(state, 'recently_exited'): state.recently_exited = {}
+                    state.recently_exited[clean] = time.time()
                     continue
 
                 # ── INITIAL GUARD ─────────────────────────────────────────────
@@ -583,19 +606,19 @@ class BitgetExecutor:
                 LEVERAGE_FACTOR = 10.0
                 new_sl = 0
                 if side in ['long', 'buy']:
-                    if peak_pnl >= 60:   new_sl = entry * (1 + 0.40/LEVERAGE_FACTOR)  # lock 40%
-                    elif peak_pnl >= 50: new_sl = entry * (1 + 0.30/LEVERAGE_FACTOR)  # lock 30%
-                    elif peak_pnl >= 40: new_sl = entry * (1 + 0.20/LEVERAGE_FACTOR)  # lock 20%
-                    elif peak_pnl >= 30: new_sl = entry * (1 + 0.10/LEVERAGE_FACTOR)  # lock 10%
-                    elif peak_pnl >= 20: new_sl = entry * 1.0001                       # breakeven
-                    # peak < 20%: DIAM — SL awal di -15% sudah cukup
+                    if peak_pnl >= 50:   new_sl = entry * (1 + 0.40/LEVERAGE_FACTOR)  # lock 40%
+                    elif peak_pnl >= 40: new_sl = entry * (1 + 0.30/LEVERAGE_FACTOR)  # lock 30%
+                    elif peak_pnl >= 30: new_sl = entry * (1 + 0.20/LEVERAGE_FACTOR)  # lock 20%
+                    elif peak_pnl >= 20: new_sl = entry * (1 + 0.10/LEVERAGE_FACTOR)  # lock 10%
+                    elif peak_pnl >= 10: new_sl = entry * 1.002                       # lock 2% (nutup fee)
+                    # peak < 10%: DIAM — SL awal di -15% sudah cukup
                 else:
-                    if peak_pnl >= 60:   new_sl = entry * (1 - 0.40/LEVERAGE_FACTOR)
-                    elif peak_pnl >= 50: new_sl = entry * (1 - 0.30/LEVERAGE_FACTOR)
-                    elif peak_pnl >= 40: new_sl = entry * (1 - 0.20/LEVERAGE_FACTOR)
-                    elif peak_pnl >= 30: new_sl = entry * (1 - 0.10/LEVERAGE_FACTOR)
-                    elif peak_pnl >= 20: new_sl = entry * 0.9999                       # breakeven
-                    # peak < 20%: DIAM
+                    if peak_pnl >= 50:   new_sl = entry * (1 - 0.40/LEVERAGE_FACTOR)
+                    elif peak_pnl >= 40: new_sl = entry * (1 - 0.30/LEVERAGE_FACTOR)
+                    elif peak_pnl >= 30: new_sl = entry * (1 - 0.20/LEVERAGE_FACTOR)
+                    elif peak_pnl >= 20: new_sl = entry * (1 - 0.10/LEVERAGE_FACTOR)
+                    elif peak_pnl >= 10: new_sl = entry * 0.998                       # lock 2%
+                    # peak < 10%: DIAM
 
                 if new_sl > 0:
                     # SL hanya boleh naik (long) atau turun (short) — tidak pernah mundur

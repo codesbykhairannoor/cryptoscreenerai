@@ -45,18 +45,18 @@ from bitget_executor import BitgetExecutor
 
 # ─── KONFIGURASI ──────────────────────────────────────────────────────────────
 MAX_POSITIONS        = 1      # FOKUS: 1 trade saja
-SCAN_INTERVAL        = 10     # Scan setiap 10 detik selama cooldown (observasi aktif)
-COOLDOWN_AFTER_TRADE = 900    # 15 menit cooldown - bot AKTIF observasi, bukan diam
+SCAN_INTERVAL        = 10     # Scan setiap 10 detik
+COOLDOWN_AFTER_TRADE = 60     # INSTANT SNIPER: Hanya 1 menit cooldown setelah trade tutup
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 40     # Combined score minimum untuk masuk watchlist
-MIN_TECH_SCORE       = 30     # Tech score minimum
-MIN_PUMP_SCORE       = 25     # Pump score minimum
+MIN_MOMENTUM_SCORE   = 60     # NAIK DRASTIS: Hanya ambil setup A+
+MIN_TECH_SCORE       = 45     # NAIK DRASTIS
+MIN_PUMP_SCORE       = 35     # NAIK DRASTIS
 
 # ── WHALE OBSERVER CONFIG ─────────────────────────────────────────────────────
-MIN_APPEARANCES      = 3
-MIN_AVG_SCORE        = 45
+MIN_APPEARANCES      = 1      # EKSEKUSI INSTAN: Begitu lolos filter ketat, langsung sikat
+MIN_AVG_SCORE        = 60     # NAIK DRASTIS
 CONSISTENCY_BONUS    = 1.15
 MOMENTUM_BONUS       = 1.10
 REPEAT_LOSS_BLACKLIST_HOURS = 4
@@ -93,12 +93,11 @@ VOL_HIGH_MULTIPLIER     = 2.5
 VOL_LOW_MULTIPLIER      = 0.4
 VOL_BASELINE_PERIOD     = 20
 
-# Expected Value minimum — sekarang sudah include fee Bitget
+# Expected Value minimum
 # Fee Bitget futures taker = 0.06% per side = 0.12% round trip
 # Notional $70 → fee = $0.084 per trade = 1.2% PnL
-# EV harus > fee agar worth it
 BITGET_FEE_PCT          = 0.0012  # 0.12% round trip fee
-MIN_EXPECTED_VALUE      = 0.008   # Minimum EV setelah fee (0.8%)
+MIN_EXPECTED_VALUE      = 0.015   # NAIK: Minimum EV 1.5% setelah fee
 
 # BTC Correlation Filter
 # Kalau BTC bearish kuat, jangan LONG altcoin (semua altcoin ikut turun)
@@ -1184,20 +1183,19 @@ def run_crypto_engine():
 
             if _is_active_session:
                 # JAM AKTIF (08:00-22:00 WIB): syarat normal
-                _session_min_score    = MIN_MOMENTUM_SCORE      # 40
-                _session_min_avg      = MIN_AVG_SCORE            # 45
-                _session_min_ev       = MIN_EXPECTED_VALUE       # 0.008
-                _session_need_signal  = False                    # tidak wajib ada sinyal prediktif
-                _session_min_appear   = MIN_APPEARANCES          # 3x
+                _session_min_score    = MIN_MOMENTUM_SCORE
+                _session_min_avg      = MIN_AVG_SCORE
+                _session_min_ev       = MIN_EXPECTED_VALUE
+                _session_need_signal  = True                     # WAJIB ada sinyal institusi (Whale/OBI/Funding)
+                _session_min_appear   = MIN_APPEARANCES          # 1x
             else:
-                # JAM OFF-HOURS (22:00-08:00 WIB): syarat KETAT
+                # JAM OFF-HOURS (22:00-08:00 WIB): syarat SANGAT KETAT
                 # Volume rendah, spread tinggi, sinyal palsu banyak
-                # Hanya masuk kalau sinyal benar-benar kuat
-                _session_min_score    = 55    # naik dari 40 ke 55
-                _session_min_avg      = 58    # naik dari 45 ke 58
-                _session_min_ev       = 0.015 # naik dari 0.008 ke 1.5%
+                _session_min_score    = 70    # Sangat ketat
+                _session_min_avg      = 70    # Sangat ketat
+                _session_min_ev       = 0.025 # EV harus sangat tinggi
                 _session_need_signal  = True  # WAJIB ada whale/OI/funding signal
-                _session_min_appear   = 5     # muncul minimal 5x (lebih konsisten)
+                _session_min_appear   = 1     # Instan
                 if int(now) % 300 < 10:
                     print(f"[CRYPTO SESSION] Off-hours ({wib_hour:02d}:xx WIB). "
                           f"Syarat diperketat: score>={_session_min_score} "
@@ -1220,19 +1218,16 @@ def run_crypto_engine():
             # ADX tinggi = trending = banyak setup bagus = cooldown lebih pendek
             # ADX rendah = ranging = sedikit setup = cooldown lebih panjang
             try:
+                # Karena kita ganti ke instant sniper, adaptive cooldown maksimal 2 menit
                 from data_fetcher import fetch_all_tickers as _ft
-                # Pakai BTC ADX sebagai proxy market regime
                 btc_ctx_now = _get_btc_context()
                 btc_change  = abs(btc_ctx_now.get('change_1h', 0))
                 if btc_change > 3.0:
-                    # BTC bergerak kuat = trending = cooldown 10 menit
-                    adaptive_cooldown = 600
+                    adaptive_cooldown = 30  # Sangat volatile, cooldown 30 detik
                 elif btc_change > 1.5:
-                    # BTC bergerak sedang = cooldown 12 menit
-                    adaptive_cooldown = 720
+                    adaptive_cooldown = 60  # Cooldown 1 menit
                 else:
-                    # BTC flat = ranging = cooldown penuh 15 menit
-                    adaptive_cooldown = COOLDOWN_AFTER_TRADE
+                    adaptive_cooldown = 120 # Market ranging, cooldown 2 menit
             except Exception:
                 adaptive_cooldown = COOLDOWN_AFTER_TRADE
 
@@ -1251,27 +1246,33 @@ def run_crypto_engine():
                 if hasattr(_state, 'recently_exited'):
                     for k, v in list(_state.recently_exited.items()):
                         if now - v < 1800:
-                            # Koin baru di-exit - catat ke loss tracker
+                            # Koin baru di-exit - cek apakah profit atau loss
                             if k not in _recently_exited:
-                                if k not in _loss_tracker:
-                                    _loss_tracker[k] = []
-                                _loss_tracker[k].append(v)
-                                loss_count = len([t for t in _loss_tracker[k]
-                                                  if t > now - REPEAT_LOSS_BLACKLIST_HOURS * 3600])
-                                if loss_count >= REPEAT_LOSS_MAX_COUNT:
-                                    print(f"[LOSS TRACKER] {k} kena SL {loss_count}x dalam "
-                                          f"{REPEAT_LOSS_BLACKLIST_HOURS}h. Blacklist sementara.")
+                                last_pnl = getattr(_state, 'exit_pnl', {}).get(k, -1.0)
+                                
+                                if last_pnl < 0:
+                                    if k not in _loss_tracker:
+                                        _loss_tracker[k] = []
+                                    _loss_tracker[k].append(v)
+                                    loss_count = len([t for t in _loss_tracker[k]
+                                                      if t > now - REPEAT_LOSS_BLACKLIST_HOURS * 3600])
+                                    if loss_count >= REPEAT_LOSS_MAX_COUNT:
+                                        print(f"[LOSS TRACKER] {k} kena SL {loss_count}x dalam "
+                                              f"{REPEAT_LOSS_BLACKLIST_HOURS}h. Blacklist sementara.")
 
-                                # ── CONSECUTIVE LOSS TRACKING ─────────────────
-                                _consec_losses += 1
-                                print(f"[CONSEC LOSS] Loss ke-{_consec_losses} ({k}). "
-                                      f"Limit: {CONSEC_LOSS_LIMIT}x")
-                                if _consec_losses >= CONSEC_LOSS_LIMIT:
-                                    _consec_pause_until = now + (CONSEC_LOSS_PAUSE_MIN * 60)
-                                    print(f"[CONSEC LOSS] {_consec_losses}x loss berturut-turut! "
-                                          f"Pause {CONSEC_LOSS_PAUSE_MIN} menit. "
-                                          f"Market sedang tidak favorable.")
-                                    _consec_losses = 0  # Reset counter setelah pause
+                                    # ── CONSECUTIVE LOSS TRACKING ─────────────────
+                                    _consec_losses += 1
+                                    print(f"[CONSEC LOSS] Loss ke-{_consec_losses} ({k}) | PnL: {last_pnl}%. "
+                                          f"Limit: {CONSEC_LOSS_LIMIT}x")
+                                    if _consec_losses >= CONSEC_LOSS_LIMIT:
+                                        _consec_pause_until = now + (CONSEC_LOSS_PAUSE_MIN * 60)
+                                        print(f"[CONSEC LOSS] {_consec_losses}x loss berturut-turut! "
+                                              f"Pause {CONSEC_LOSS_PAUSE_MIN} menit. "
+                                              f"Market sedang tidak favorable.")
+                                        _consec_losses = 0  # Reset counter setelah pause
+                                else:
+                                    print(f"[WIN TRACKER] {k} take profit ({last_pnl}%)! Reset consec loss.")
+                                    _consec_losses = 0
 
                             _recently_exited[k] = v
                         else:

@@ -134,7 +134,22 @@ class ForexExecutor:
     #  CANDLE DATA 
 
     def get_candles(self, symbol=None, timeframe="30m", limit=CANDLE_LIMIT):
-        sym     = symbol or self._working_symbol or "XAUUSD"
+        sym = symbol or self._working_symbol or "XAUUSD"
+        
+        # ── SMART CACHING UNTUK MENCEGAH API RATE LIMIT ──────────────────────
+        if not hasattr(self, '_candle_cache'): self._candle_cache = {}
+        now = time.time()
+        cache_key = f"{sym}_{timeframe}_{limit}"
+        
+        # Tentukan durasi cache berdasarkan TF
+        if timeframe == "1m": cache_ttl = 15
+        elif timeframe == "5m": cache_ttl = 60
+        elif timeframe in ("15m", "30m"): cache_ttl = 300
+        else: cache_ttl = 900  # 1h, 4h, 1D
+        
+        if cache_key in self._candle_cache and now - self._candle_cache[cache_key]['ts'] < cache_ttl:
+            return self._candle_cache[cache_key]['data']
+            
         headers = {"auth-token": self.api_token}
         hosts   = [
             "https://mt-market-data-client-api-v1.new-york.agiliumtrade.ai",
@@ -148,6 +163,7 @@ class ForexExecutor:
                 if res.status_code == 200:
                     data = res.json()
                     if isinstance(data, list) and len(data) > 0:
+                        self._candle_cache[cache_key] = {'ts': now, 'data': data}
                         return data
             except Exception:
                 continue
@@ -608,6 +624,14 @@ class ForexExecutor:
         elif mss_bear and vol_spike:
             pump_signal = "BREAKOUT_DOWN"
 
+        # ── EXHAUSTION (FOMO) DETECTION ──────────────────────────────────────
+        # Jangan buy hijau panjang di pucuk, jangan sell merah panjang di dasar
+        last_body_pct = abs(closes[-1] - float(candles[-1].get("open", closes[-1]))) / (highs[-1] - lows[-1]) if (highs[-1] - lows[-1]) > 0 else 0
+        # Exhaustion Pump: Candle hijau panjang, close dekat high, harga tertinggi dari 5 candle terakhir
+        is_exhaustion_pump = (closes[-1] > float(candles[-1].get("open", closes[-1]))) and (last_body_pct > 0.6) and (highs[-1] >= max(highs[-5:]))
+        # Exhaustion Dump: Candle merah panjang, close dekat low, harga terendah dari 5 candle terakhir
+        is_exhaustion_dump = (closes[-1] < float(candles[-1].get("open", closes[-1]))) and (last_body_pct > 0.6) and (lows[-1] <= min(lows[-5:]))
+
         # HTF trends (1h dan 4h)  bias filter
         trend_1h = self._get_htf_trend("1h")
         trend_4h = self._get_htf_trend("4h")
@@ -805,6 +829,9 @@ class ForexExecutor:
             "near_daily_level":   htf_data.get("near_daily_level", False),
             "near_weekly_level":  htf_data.get("near_weekly_level", False),
             "htf_level_bias":     htf_data.get("htf_level_bias", "NEUTRAL"),
+            # Exhaustion
+            "is_exhaustion_pump": is_exhaustion_pump,
+            "is_exhaustion_dump": is_exhaustion_dump,
         }
 
     #  MOMENTUM SCORING 
@@ -1267,19 +1294,37 @@ class ForexExecutor:
                 continue
 
             if is_buy:
-                if profit_pt >= 25.0:
-                    target_sl = round(open_price + 18.0, 3)
-                    stage     = "LOCK-18"
+                if profit_pt >= 35.0:
+                    target_sl = round(open_price + 25.0, 3)
+                    stage     = "LOCK-25"
+                elif profit_pt >= 30.0:
+                    target_sl = round(open_price + 20.0, 3)
+                    stage     = "LOCK-20"
+                elif profit_pt >= 25.0:
+                    target_sl = round(open_price + 15.0, 3)
+                    stage     = "LOCK-15"
+                elif profit_pt >= 20.0:
+                    target_sl = round(open_price + 10.0, 3)
+                    stage     = "LOCK-10"
                 else:
-                    target_sl = round(open_price + 8.0, 3)
-                    stage     = "LOCK-8"
+                    target_sl = round(open_price + 5.0, 3)
+                    stage     = "LOCK-5"
             else:
-                if profit_pt >= 25.0:
-                    target_sl = round(open_price - 18.0, 3)
-                    stage     = "LOCK-18"
+                if profit_pt >= 35.0:
+                    target_sl = round(open_price - 25.0, 3)
+                    stage     = "LOCK-25"
+                elif profit_pt >= 30.0:
+                    target_sl = round(open_price - 20.0, 3)
+                    stage     = "LOCK-20"
+                elif profit_pt >= 25.0:
+                    target_sl = round(open_price - 15.0, 3)
+                    stage     = "LOCK-15"
+                elif profit_pt >= 20.0:
+                    target_sl = round(open_price - 10.0, 3)
+                    stage     = "LOCK-10"
                 else:
-                    target_sl = round(open_price - 8.0, 3)
-                    stage     = "LOCK-8"
+                    target_sl = round(open_price - 5.0, 3)
+                    stage     = "LOCK-5"
 
             # SL hanya bergerak ke arah profit, tidak pernah mundur
             if is_buy:
@@ -1484,22 +1529,29 @@ class ForexExecutor:
                 near_ath = ind.get("near_ath", False)
                 near_atl = ind.get("near_atl", False)
                 price_pos = ind.get("price_position_pct", 50)
-                if side == "buy" and near_ath:
-                    print("[ATH BLOCK] Harga di " + str(price_pos) + "% dari range — terlalu tinggi untuk BUY. Skip.")
+                
+                # Tambahan: FOMO/Exhaustion Guard (Mencegah bot buy di pucuk candle hijau panjang tanpa koreksi)
+                exhaustion_pump = ind.get("is_exhaustion_pump", False)
+                exhaustion_dump = ind.get("is_exhaustion_dump", False)
+
+                if side == "buy" and (near_ath or exhaustion_pump):
+                    reason = "Harga sudah ATH" if near_ath else "Candle sudah terlalu tinggi (FOMO Guard)"
+                    print(f"[SMART ENTRY BLOCK] {reason} — Terlalu berisiko untuk BUY sekarang. Menunggu koreksi.")
                     time.sleep(SCAN_INTERVAL)
                     continue
-                if side == "sell" and near_atl:
-                    print("[ATL BLOCK] Harga di " + str(price_pos) + "% dari range — terlalu rendah untuk SELL. Skip.")
+                if side == "sell" and (near_atl or exhaustion_dump):
+                    reason = "Harga sudah ATL" if near_atl else "Candle sudah terlalu rendah (FOMO Guard)"
+                    print(f"[SMART ENTRY BLOCK] {reason} — Terlalu berisiko untuk SELL sekarang. Menunggu koreksi.")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
                 # POSITION QUALITY CHECK
                 xau_positions = [p for p in positions if "XAU" in p.get("symbol", "").upper()]
                 if xau_positions:
-                    # Hard cap 3 posisi XAU
-                    if len(xau_positions) >= 3:
+                    # Hard cap max posisi XAU
+                    if len(xau_positions) >= MAX_POSITIONS:
                         if int(now) % 60 < 3:
-                            print("[FOREX QUALITY] Sudah " + str(len(xau_positions)) + " posisi aktif (max 3). Skip.")
+                            print("[FOREX QUALITY] Sudah " + str(len(xau_positions)) + " posisi aktif (max " + str(MAX_POSITIONS) + "). Skip.")
                         time.sleep(SCAN_INTERVAL)
                         continue
 
@@ -1528,7 +1580,7 @@ class ForexExecutor:
 
                 # POSITION LIMIT
                 xau_active      = len(xau_positions)
-                slots_available = max(0, 3 - xau_active)
+                slots_available = max(0, MAX_POSITIONS - xau_active)
                 trades_to_open  = min(trades_to_open, slots_available)
                 if trades_to_open <= 0:
                     time.sleep(SCAN_INTERVAL)
