@@ -269,56 +269,67 @@ class ForexExecutor:
 
     def _get_gold_orderbook(self):
         """
-        Baca order book PAXGUSDT di Bitget sebagai proxy untuk XAUUSD.
-        PAXG = tokenized gold, pergerakannya sangat korelasi dengan spot gold.
+        Analisis tekanan beli/jual XAUUSD dari tick data MetaAPI.
+
+        Karena MetaAPI tidak expose order book depth langsung,
+        gue pakai dua pendekatan dari data yang tersedia:
+
+        1. Bid/Ask spread momentum: kalau ask naik lebih cepat dari bid
+           = buyer pressure. Kalau bid turun lebih cepat = seller pressure.
+
+        2. Candle body analysis dari 5 candle terakhir:
+           - Candle bullish besar + volume tinggi = buyer dominance
+           - Candle bearish besar + volume tinggi = seller dominance
+           - Ini proxy yang lebih akurat dari PAXG order book
 
         Return:
-          obi   : Order Book Imbalance (-1 to +1)
-                  > 0.15  = buyer dominance (bullish signal)
-                  < -0.15 = seller dominance (bearish signal)
+          obi   : -1 to +1 (positif = buyer dominance)
           whale : WHALE_BUY / WHALE_SELL / NORMAL
-                  Deteksi order besar > $50k di satu sisi
         """
         try:
-            url = "https://api.bitget.com/api/v2/mix/market/depth?symbol=PAXGUSDT&limit=50&productType=USDT-FUTURES"
-            res = requests.get(url, timeout=5, verify=False)
-            if res.status_code != 200:
+            # Ambil 10 candle 1m terakhir dari MetaAPI
+            candles = self.get_candles(timeframe="1m", limit=10)
+            if len(candles) < 5:
+                # Fallback: pakai harga live bid/ask
+                price_data = self.get_live_price()
+                bid = price_data.get("bid", 0)
+                ask = price_data.get("ask", 0)
+                if bid > 0 and ask > 0:
+                    # Spread kecil = market liquid, tidak ada tekanan kuat
+                    spread = ask - bid
+                    # Kalau mid lebih dekat ke ask = buyer pressure
+                    mid = (bid + ask) / 2
+                    obi = round((mid - bid) / spread - 0.5, 4) if spread > 0 else 0.0
+                    return {"obi": obi, "whale": "NORMAL"}
                 return {"obi": 0.0, "whale": "NORMAL"}
 
-            data  = res.json().get("data", {})
-            bids  = data.get("bids", [])
-            asks  = data.get("asks", [])
+            closes = [float(c.get("close", 0)) for c in candles]
+            opens  = [float(c.get("open",  0)) for c in candles]
+            highs  = [float(c.get("high",  0)) for c in candles]
+            lows   = [float(c.get("low",   0)) for c in candles]
+            vols   = [float(c.get("tickVolume", c.get("volume", 1))) for c in candles]
 
-            if not bids or not asks:
-                return {"obi": 0.0, "whale": "NORMAL"}
+            # Hitung body direction dan size per candle
+            bull_vol = 0.0
+            bear_vol = 0.0
+            for i in range(len(closes)):
+                body = abs(closes[i] - opens[i])
+                total_range = highs[i] - lows[i] if highs[i] > lows[i] else 0.001
+                body_ratio = body / total_range  # 0-1, makin besar makin decisive
+                if closes[i] > opens[i]:
+                    bull_vol += vols[i] * body_ratio
+                else:
+                    bear_vol += vols[i] * body_ratio
 
-            # Hitung total bid/ask volume
-            bid_vol = sum(float(b[1]) for b in bids)
-            ask_vol = sum(float(a[1]) for a in asks)
-            total   = bid_vol + ask_vol
+            total_vol = bull_vol + bear_vol
+            obi = round((bull_vol - bear_vol) / total_vol, 4) if total_vol > 0 else 0.0
 
-            obi = round((bid_vol - ask_vol) / total, 4) if total > 0 else 0.0
-
-            # Whale detection: cari single order > $50k
-            # PAXG harga ~$3000, jadi 17 unit = $50k
+            # Whale detection: candle dengan body > 3x rata-rata = institutional move
+            avg_body = sum(abs(closes[i] - opens[i]) for i in range(len(closes))) / len(closes)
+            last_body = abs(closes[-1] - opens[-1])
             whale = "NORMAL"
-            max_bid = max((float(b[1]) for b in bids), default=0)
-            max_ask = max((float(a[1]) for a in asks), default=0)
-
-            # Ambil harga PAXG untuk konversi ke USD
-            try:
-                price_url = "https://api.bitget.com/api/v2/mix/market/ticker?symbol=PAXGUSDT&productType=USDT-FUTURES"
-                pr = requests.get(price_url, timeout=3, verify=False).json()
-                paxg_price = float(pr.get("data", [{}])[0].get("lastPr", 3000)) if isinstance(pr.get("data"), list) else 3000
-            except Exception:
-                paxg_price = 3000
-
-            whale_threshold_units = 50000 / paxg_price  # $50k dalam unit PAXG
-
-            if max_bid > whale_threshold_units and max_bid > max_ask * 2:
-                whale = "WHALE_BUY"
-            elif max_ask > whale_threshold_units and max_ask > max_bid * 2:
-                whale = "WHALE_SELL"
+            if last_body > avg_body * 3.0 and vols[-1] > sum(vols[:-1]) / len(vols[:-1]) * 2:
+                whale = "WHALE_BUY" if closes[-1] > opens[-1] else "WHALE_SELL"
 
             return {"obi": obi, "whale": whale}
 
@@ -327,37 +338,37 @@ class ForexExecutor:
 
     def _get_gold_whale_trades(self):
         """
-        Scan recent trades PAXGUSDT untuk deteksi whale fills.
-        Trade besar > $30k = institutional activity.
+        Deteksi institutional activity dari tick volume MetaAPI.
+        Candle dengan volume spike 3x rata-rata = institutional move.
+        Lebih relevan dari PAXG fills karena data langsung dari broker.
         Return: WHALE_BUY / WHALE_SELL / NORMAL
         """
         try:
-            url = "https://api.bitget.com/api/v2/mix/market/fills?symbol=PAXGUSDT&limit=50&productType=USDT-FUTURES"
-            res = requests.get(url, timeout=5, verify=False)
-            if res.status_code != 200:
+            candles = self.get_candles(timeframe="5m", limit=20)
+            if len(candles) < 10:
                 return "NORMAL"
 
-            trades = res.json().get("data", [])
-            whale_buys  = 0.0
-            whale_sells = 0.0
+            closes = [float(c.get("close", 0)) for c in candles]
+            opens  = [float(c.get("open",  0)) for c in candles]
+            vols   = [float(c.get("tickVolume", c.get("volume", 1))) for c in candles]
 
-            for t in trades:
-                try:
-                    size  = float(t.get("size", 0))
-                    price = float(t.get("price", 0))
-                    usd   = size * price
-                    if usd > 30000:
-                        if t.get("side", "").lower() == "buy":
-                            whale_buys  += usd
-                        else:
-                            whale_sells += usd
-                except Exception:
-                    continue
+            avg_vol  = sum(vols[:-3]) / len(vols[:-3]) if len(vols) > 3 else 1
+            last_vol = vols[-1]
 
-            if whale_buys > whale_sells and whale_buys > 60000:
-                return "WHALE_BUY"
-            if whale_sells > whale_buys and whale_sells > 60000:
-                return "WHALE_SELL"
+            # Volume spike 3x + candle decisive = institutional
+            if last_vol > avg_vol * 3.0:
+                last_body = closes[-1] - opens[-1]
+                if last_body > 0:
+                    return "WHALE_BUY"
+                elif last_body < 0:
+                    return "WHALE_SELL"
+
+            # Cek 3 candle terakhir: konsisten satu arah dengan volume tinggi
+            recent_bull = sum(1 for i in range(-3, 0) if closes[i] > opens[i] and vols[i] > avg_vol * 1.5)
+            recent_bear = sum(1 for i in range(-3, 0) if closes[i] < opens[i] and vols[i] > avg_vol * 1.5)
+            if recent_bull >= 2: return "WHALE_BUY"
+            if recent_bear >= 2: return "WHALE_SELL"
+
             return "NORMAL"
 
         except Exception:
@@ -662,23 +673,29 @@ class ForexExecutor:
             elif obi > 0.15:           score -= 8
 
         #  8. Trend 15m alignment (max 5 poin, penalti -8) 
+        # Penalti dikurangi kalau ada sinyal pembalikan kuat (pump/dump signal)
+        reversal_signal = pump_sig in ("PUMP_IMMINENT", "DUMP_IMMINENT", "BREAKOUT_UP", "BREAKOUT_DOWN")
+        trend_penalty_15m = 4 if reversal_signal else 8   # penalti lebih kecil saat ada reversal
         if side == "buy"  and trend == "BULLISH": score += 5
         if side == "sell" and trend == "BEARISH": score += 5
-        if side == "buy"  and trend == "BEARISH": score -= 8
-        if side == "sell" and trend == "BULLISH": score -= 8
+        if side == "buy"  and trend == "BEARISH": score -= trend_penalty_15m
+        if side == "sell" and trend == "BULLISH": score -= trend_penalty_15m
 
-        #  9. Trend 1h confirmation (max 10 poin, penalti -12) 
+        #  9. Trend 1h confirmation (max 10 poin, penalti -12 normal, -6 saat reversal) 
+        trend_penalty_1h = 6 if reversal_signal else 12
         if side == "buy"  and trend_1h == "BULLISH": score += 10
         if side == "sell" and trend_1h == "BEARISH": score += 10
-        if side == "buy"  and trend_1h == "BEARISH": score -= 12
-        if side == "sell" and trend_1h == "BULLISH": score -= 12
+        if side == "buy"  and trend_1h == "BEARISH": score -= trend_penalty_1h
+        if side == "sell" and trend_1h == "BULLISH": score -= trend_penalty_1h
 
-        #  10. Trend 4h BIAS FILTER (max 8 poin, penalti -15) 
-        # 4h adalah bias besar  melawan 4h sangat berisiko untuk gold
+        #  10. Trend 4h BIAS FILTER (max 8 poin, penalti -15 normal, -5 saat reversal kuat) 
+        # Saat PUMP/DUMP_IMMINENT, penalti 4h dikurangi drastis
+        # Karena reversal sering terjadi melawan trend 4h
+        trend_penalty_4h = 5 if reversal_signal else 15
         if side == "buy"  and trend_4h == "BULLISH": score += 8
         if side == "sell" and trend_4h == "BEARISH": score += 8
-        if side == "buy"  and trend_4h == "BEARISH": score -= 15  # Melawan bias besar
-        if side == "sell" and trend_4h == "BULLISH": score -= 15
+        if side == "buy"  and trend_4h == "BEARISH": score -= trend_penalty_4h
+        if side == "sell" and trend_4h == "BULLISH": score -= trend_penalty_4h
 
         #  11. DXY Macro Context (max 10 poin, penalti -10) 
         dxy = self._get_dxy_context()
