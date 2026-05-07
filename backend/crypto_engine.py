@@ -1058,10 +1058,11 @@ def run_crypto_engine():
                 if clean_base in _repeat_losers:                      continue
 
                 pump_sc = float(coin.get('pump_score', 0))
-                if pump_sc < MIN_PUMP_SCORE:
+                dump_sc = float(coin.get('dump_score', 0))
+                best_sc = max(pump_sc, dump_sc)
+                if best_sc < MIN_PUMP_SCORE:
                     skip_reasons['low_pump'] = skip_reasons.get('low_pump', 0) + 1
                     continue
-
                 # Ambil indikator teknikal
                 tech = get_technical_indicators(symbol)
                 if not tech:
@@ -1078,8 +1079,9 @@ def run_crypto_engine():
                     tech, rsi, vwap_dist, market_sentiment
                 )
 
-                combined_score = round((pump_sc * 0.5) + (tech_score * 0.5))
-
+                combined_score = round(
+                    ((dump_sc if side == "sell" else pump_sc) * 0.5) + (tech_score * 0.5)
+                )
                 if side is None or combined_score < MIN_MOMENTUM_SCORE or tech_score < MIN_TECH_SCORE:
                     skip_reasons['low_score'] = skip_reasons.get('low_score', 0) + 1
 
@@ -1124,7 +1126,7 @@ def run_crypto_engine():
                     observer.record(clean_base, combined_score, tech_score, side, tech,
                                     adx=adx, ev=ev, vol_regime=vol_regime)
                     scan_count += 1
-                    print(f"[OBS] {clean_base:8s} {side:4s} | Pump:{pump_sc:.0f} "
+                    print(f"[OBS] {clean_base:8s} {side:4s} | Pump:{pump_sc:.0f} Dump:{dump_sc:.0f} "
                           f"Tech:{tech_score} Combined:{combined_score} | "
                           f"RSI:{rsi} VWAP:{vwap_dist}% | "
                           f"ADX:{adx} {regime_label} | Vol:{vol_regime} | EV:{ev:.3f} | "

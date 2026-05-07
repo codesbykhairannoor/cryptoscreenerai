@@ -157,7 +157,77 @@ def analyze_and_sort(raw_data):
         return max(0.0, min(100.0, score))
 
     df['pump_score'] = df.apply(pump_score, axis=1)
-    df_sorted = df.sort_values(by='pump_score', ascending=False).head(30)
+
+    # ── DUMP SCORE — untuk SHORT candidates ──────────────────────────────────
+    def dump_score(row):
+        """
+        Score untuk SHORT setup.
+        Koin yang ideal untuk short:
+        - Harga di 65-90% dari range 24h (dekat puncak)
+        - Sudah naik banyak (overbought)
+        - Volume tinggi (likuiditas untuk short)
+        - Range besar (bisa turun 8% untuk hit TP)
+        """
+        score = 0.0
+        vol   = float(row.get('quoteVolume', 0))
+        pct   = float(row.get('priceChangePercent', 0))
+        price = float(row.get('lastPrice', 0))
+        high  = float(row.get('high24h', price * 1.01))
+        low   = float(row.get('low24h',  price * 0.99))
+        rng   = float(row.get('range_pct', 0))
+
+        # 1. VOLATILITAS RANGE (sama dengan pump)
+        if rng >= 20:    score += 30
+        elif rng >= 15:  score += 25
+        elif rng >= 10:  score += 20
+        elif rng >= 7:   score += 15
+        elif rng >= 5:   score += 10
+        elif rng >= 3:   score += 5
+
+        # 2. VOLUME ABSOLUT (sama dengan pump)
+        if vol >= 100_000_000:   score += 25
+        elif vol >= 50_000_000:  score += 20
+        elif vol >= 20_000_000:  score += 15
+        elif vol >= 10_000_000:  score += 10
+        elif vol >= 5_000_000:   score += 7
+        elif vol >= 2_000_000:   score += 4
+
+        # 3. POSISI HARGA DI RANGE — kebalikan dari pump
+        # Harga di 65-90% dari range = dekat puncak, ideal short
+        if high > low and price > 0:
+            pos = (price - low) / (high - low) * 100
+            if 65 <= pos <= 90:   score += 25   # Dekat puncak, ideal short
+            elif 50 <= pos < 65:  score += 18   # Di atas tengah
+            elif 35 <= pos < 50:  score += 10   # Di tengah
+            elif pos < 15:        score -= 5    # Dekat bottom, risky short
+
+        # 4. MOMENTUM — koin yang sudah naik banyak = reversal candidate
+        if 6 < pct <= 15:    score += 20   # Sudah naik banyak, ripe for reversal
+        elif 3 < pct <= 6:   score += 15   # Naik signifikan
+        elif 1.5 < pct <= 3: score += 8    # Naik sedikit
+        elif pct < -5:       score -= 10   # Sudah turun banyak, jangan short lagi
+
+        # 5. Whale SELL dari WebSocket
+        try:
+            from shared_state import state
+            sym   = str(row.get('symbol', ''))
+            whale = state.rt_whale.get(sym, '')
+            obi   = state.rt_obi.get(sym, 0)
+            if whale == 'WHALE_SELL': score += 20
+            elif whale == 'WHALE_BUY': score -= 5
+            if obi < -0.15:           score += 10
+            elif obi > 0.15:          score -= 5
+        except Exception:
+            pass
+
+        return max(0.0, min(100.0, score))
+
+    df['dump_score'] = df.apply(dump_score, axis=1)
+
+    # Gabungkan: setiap koin punya pump_score dan dump_score
+    # Sort berdasarkan max(pump_score, dump_score) untuk dapat kandidat terbaik
+    df['best_score'] = df[['pump_score', 'dump_score']].max(axis=1)
+    df_sorted = df.sort_values(by='best_score', ascending=False).head(30)
 
     # Log top 5
     print(f"[PUMP PREDICTOR] Top 5 candidates:")
@@ -166,13 +236,15 @@ def analyze_and_sort(raw_data):
         pct  = round(float(row.get('priceChangePercent', 0)), 2)
         rng  = round(float(row.get('range_pct', 0)), 1)
         vol  = round(float(row.get('quoteVolume', 0)) / 1_000_000, 1)
-        sc   = round(float(row.get('pump_score', 0)), 1)
+        ps   = round(float(row.get('pump_score', 0)), 1)
+        ds   = round(float(row.get('dump_score', 0)), 1)
+        bias = "LONG" if ps >= ds else "SHORT"
         pos_in_range = 0
         h = float(row.get('high24h', 0))
         l = float(row.get('low24h', 0))
         p = float(row.get('lastPrice', 0))
         if h > l: pos_in_range = round((p - l) / (h - l) * 100, 0)
-        print(f"  {sym}: {pct:+.1f}% | Range {rng}% | Pos {pos_in_range:.0f}% | Vol ${vol}M | Score {sc}/100")
+        print(f"  {sym}: {pct:+.1f}% | Range {rng}% | Pos {pos_in_range:.0f}% | Vol ${vol}M | Pump:{ps} Dump:{ds} [{bias}]")
 
     return df_sorted.to_dict('records')
 
