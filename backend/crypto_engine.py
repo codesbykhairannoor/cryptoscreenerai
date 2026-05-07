@@ -514,14 +514,19 @@ class WhaleObserver:
 
         return round(future_score, 2)
 
-    def get_best_candidate(self, open_bases: list, recently_exited: dict) -> dict | None:
+    def get_best_candidate(self, open_bases: list, recently_exited: dict,
+                           min_appearances: int = MIN_APPEARANCES,
+                           require_signal: bool = False,
+                           min_avg_score: float = MIN_AVG_SCORE) -> dict | None:
         # Pilih kandidat terbaik dari observasi. Return dict atau None.
         now = time.time()
         best = None
         best_final = 0.0
 
+        session_label = "OFF-HOURS" if require_signal else "ACTIVE"
         print(f"\n[WHALE OBSERVER] Evaluasi {len(self._watchlist)} kandidat dari "
-              f"{round((now - self._obs_start)/60, 1)} menit observasi:")
+              f"{round((now - self._obs_start)/60, 1)} menit observasi "
+              f"[{session_label} | min_appear:{min_appearances} min_score:{min_avg_score}]:")
 
         for clean_base, entries in self._watchlist.items():
             # Skip koin yang sudah ada posisi atau baru di-exit
@@ -533,12 +538,12 @@ class WhaleObserver:
                 continue
 
             # Minimum appearances filter
-            if len(entries) < MIN_APPEARANCES:
+            if len(entries) < min_appearances:
                 continue
 
             # Hitung avg combined score
             avg_score = sum(e[1] for e in entries) / len(entries)
-            if avg_score < MIN_AVG_SCORE:
+            if avg_score < min_avg_score:
                 continue
 
             # Ambil side yang paling sering muncul (majority vote)
@@ -573,6 +578,12 @@ class WhaleObserver:
             has_predictive_signal = future_sc > 0 or is_rising or \
                                     latest_tech.get('whale_signal') == 'WHALE_BUY' or \
                                     latest_tech.get('whale_signal') == 'WHALE_SELL'
+
+            # OFF-HOURS: wajib ada sinyal prediktif kuat
+            # Jam sepi = volume rendah = sinyal lemah lebih sering false
+            if require_signal and not has_predictive_signal:
+                print(f"  [SKIP-OFFHOURS] {clean_base} tidak ada sinyal prediktif di jam sepi.")
+                continue
 
             # Ambil tech dari observasi terakhir
             latest_tech = side_entries[-1][4]
@@ -1165,16 +1176,32 @@ def run_crypto_engine():
                 pass
 
 
-            # ── 4b. SESSION FILTER ────────────────────────────────────────────
+            # ── 4b. SESSION FILTER — off-hours diperketat, bukan di-skip ─────────
             import datetime as _dt
             utc_hour = _dt.datetime.utcnow().hour
-            if not (CRYPTO_SESSION_START_UTC <= utc_hour < CRYPTO_SESSION_END_UTC):
+            wib_hour = (utc_hour + 7) % 24
+            _is_active_session = (CRYPTO_SESSION_START_UTC <= utc_hour < CRYPTO_SESSION_END_UTC)
+
+            if _is_active_session:
+                # JAM AKTIF (08:00-22:00 WIB): syarat normal
+                _session_min_score    = MIN_MOMENTUM_SCORE      # 40
+                _session_min_avg      = MIN_AVG_SCORE            # 45
+                _session_min_ev       = MIN_EXPECTED_VALUE       # 0.008
+                _session_need_signal  = False                    # tidak wajib ada sinyal prediktif
+                _session_min_appear   = MIN_APPEARANCES          # 3x
+            else:
+                # JAM OFF-HOURS (22:00-08:00 WIB): syarat KETAT
+                # Volume rendah, spread tinggi, sinyal palsu banyak
+                # Hanya masuk kalau sinyal benar-benar kuat
+                _session_min_score    = 55    # naik dari 40 ke 55
+                _session_min_avg      = 58    # naik dari 45 ke 58
+                _session_min_ev       = 0.015 # naik dari 0.008 ke 1.5%
+                _session_need_signal  = True  # WAJIB ada whale/OI/funding signal
+                _session_min_appear   = 5     # muncul minimal 5x (lebih konsisten)
                 if int(now) % 300 < 10:
-                    wib_hour = (utc_hour + 7) % 24
                     print(f"[CRYPTO SESSION] Off-hours ({wib_hour:02d}:xx WIB). "
-                          f"Aktif jam 08:00-22:00 WIB.")
-                time.sleep(60)
-                continue
+                          f"Syarat diperketat: score>={_session_min_score} "
+                          f"EV>={_session_min_ev} wajib_signal={_session_need_signal}")
 
             # ── 5. POSITION CHECK ─────────────────────────────────────────────
             positions  = executor.get_all_positions()
@@ -1393,7 +1420,11 @@ def run_crypto_engine():
                 if side == "sell" and ob_ratio > 0.1:  continue
 
                 # Lolos semua filter - catat ke observer
-                if side is not None and combined_score >= MIN_MOMENTUM_SCORE and tech_score >= MIN_TECH_SCORE:
+                if side is not None and combined_score >= _session_min_score and tech_score >= MIN_TECH_SCORE:
+                    # Off-hours: cek EV lebih ketat
+                    if ev < _session_min_ev:
+                        skip_reasons['low_ev'] = skip_reasons.get('low_ev', 0) + 1
+                        continue
                     observer.record(clean_base, combined_score, tech_score, side, tech,
                                     adx=adx, ev=ev, vol_regime=vol_regime)
                     scan_count += 1
@@ -1427,7 +1458,12 @@ def run_crypto_engine():
                 time.sleep(SCAN_INTERVAL)
                 continue
 
-            best = observer.get_best_candidate(open_bases, _recently_exited)
+            best = observer.get_best_candidate(
+                open_bases, _recently_exited,
+                min_appearances=_session_min_appear,
+                require_signal=_session_need_signal,
+                min_avg_score=_session_min_avg,
+            )
 
             if best is None:
                 # Tidak ada kandidat yang cukup kuat dari observasi
