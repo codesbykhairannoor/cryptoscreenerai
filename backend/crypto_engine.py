@@ -683,6 +683,17 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
         if fvg == 'BEARISH_FVG':   score += 12
         if ob  == 'BEARISH_OB':    score += 8
 
+    # 3b. DEMAND/SUPPLY ZONE (max 20 poin) — lebih kuat dari Order Block biasa
+    # Zona ini terbentuk dari konsolidasi institusi sebelum impulse move
+    in_demand = tech.get('in_demand', False)
+    in_supply = tech.get('in_supply', False)
+    dz_strength = tech.get('demand_zone', {}).get('strength', 0)
+    sz_strength = tech.get('supply_zone', {}).get('strength', 0)
+    if side == "buy" and in_demand:
+        score += 15 + min(5, dz_strength)  # max 20 poin, lebih kuat kalau lebih banyak candle
+    if side == "sell" and in_supply:
+        score += 15 + min(5, sz_strength)
+
     # 4. Market Structure (max 15 poin)
     if side == "buy":
         if tech.get('mss_bullish'):   score += 15
@@ -773,6 +784,12 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
         long_candidates.append((s, "MOMENTUM BREAKOUT FROM DISCOUNT"))
 
+    # Setup 8: Demand Zone Entry (harga kembali ke zona akumulasi institusi)
+    if tech.get('in_demand', False):
+        s = _score_candidate(tech, rsi, vwap_dist, "buy")
+        dz = tech.get('demand_zone', {})
+        long_candidates.append((s, f"DEMAND ZONE ENTRY (strength:{dz.get('strength',0)})"))
+
     # ── SHORT SETUPS ─────────────────────────────────────────────────────────
     short_candidates = []
 
@@ -810,6 +827,12 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     if 1.0 <= vwap_dist <= 5.0 and (choch_s or mss_s or fvg == 'BEARISH_FVG'):
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
         short_candidates.append((s, "BEARISH MOMENTUM FROM PREMIUM"))
+
+    # Setup 8: Supply Zone Entry (harga kembali ke zona distribusi institusi)
+    if tech.get('in_supply', False):
+        s = _score_candidate(tech, rsi, vwap_dist, "sell")
+        sz = tech.get('supply_zone', {})
+        short_candidates.append((s, f"SUPPLY ZONE ENTRY (strength:{sz.get('strength',0)})"))
 
     # ── PILIH SETUP TERBAIK ───────────────────────────────────────────────────
     all_candidates = [("buy", s, r) for s, r in long_candidates] + \

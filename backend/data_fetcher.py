@@ -28,6 +28,113 @@ def detect_candle_patterns(df):
         
     return "NEUTRAL"
 
+def detect_demand_supply_zones(df):
+    """
+    Deteksi Demand Zone (untuk BUY) dan Supply Zone (untuk SELL).
+
+    Algoritma:
+    1. Cari area konsolidasi: 3+ candle berturut-turut dengan range < 40% ATR
+    2. Setelah konsolidasi, cek apakah ada impulse candle > 1.5x ATR
+       - Impulse naik setelah konsolidasi = DEMAND ZONE (institusi akumulasi)
+       - Impulse turun setelah konsolidasi = SUPPLY ZONE (institusi distribusi)
+    3. Kalau harga sekarang kembali ke zona tersebut = sinyal entry
+
+    Return:
+      demand_zone : {"active": bool, "top": float, "bottom": float, "strength": int}
+      supply_zone : {"active": bool, "top": float, "bottom": float, "strength": int}
+      in_demand   : True kalau harga sekarang di dalam demand zone
+      in_supply   : True kalau harga sekarang di dalam supply zone
+    """
+    result = {
+        "demand_zone": {"active": False, "top": 0, "bottom": 0, "strength": 0},
+        "supply_zone": {"active": False, "top": 0, "bottom": 0, "strength": 0},
+        "in_demand":   False,
+        "in_supply":   False,
+    }
+
+    if len(df) < 15:
+        return result
+
+    highs  = df['high'].tolist()
+    lows   = df['low'].tolist()
+    closes = df['close'].tolist()
+    opens  = df['open'].tolist()
+    n      = len(closes)
+
+    # Hitung ATR untuk threshold konsolidasi
+    trs = []
+    for i in range(1, n):
+        tr = max(highs[i] - lows[i],
+                 abs(highs[i] - closes[i-1]),
+                 abs(lows[i]  - closes[i-1]))
+        trs.append(tr)
+    atr = sum(trs[-14:]) / 14 if len(trs) >= 14 else (sum(trs) / len(trs) if trs else 0.001)
+
+    current_price = closes[-1]
+    consolidation_threshold = atr * 0.4   # Range candle < 40% ATR = konsolidasi
+    impulse_threshold       = atr * 1.5   # Body candle > 150% ATR = impulse
+
+    # Scan dari candle ke-3 sampai ke-2 dari belakang (bukan candle terakhir)
+    # Cari pola: konsolidasi (3+ candle) → impulse
+    for i in range(3, n - 1):
+        # Cek apakah candle i adalah impulse
+        body_i = abs(closes[i] - opens[i])
+        if body_i < impulse_threshold:
+            continue
+
+        # Cek apakah 3 candle sebelumnya adalah konsolidasi
+        consol_start = max(0, i - 5)
+        consol_candles = []
+        for j in range(consol_start, i):
+            candle_range = highs[j] - lows[j]
+            if candle_range <= consolidation_threshold:
+                consol_candles.append(j)
+
+        if len(consol_candles) < 2:
+            continue
+
+        # Ada konsolidasi sebelum impulse — tentukan zona
+        zone_top    = max(highs[j] for j in consol_candles)
+        zone_bottom = min(lows[j]  for j in consol_candles)
+        strength    = len(consol_candles)  # Lebih banyak candle = zona lebih kuat
+
+        if closes[i] > opens[i]:
+            # Impulse naik = DEMAND ZONE
+            # Simpan zona yang paling dekat dengan harga sekarang
+            if not result["demand_zone"]["active"] or \
+               abs(current_price - zone_top) < abs(current_price - result["demand_zone"]["top"]):
+                result["demand_zone"] = {
+                    "active":   True,
+                    "top":      round(zone_top, 6),
+                    "bottom":   round(zone_bottom, 6),
+                    "strength": strength,
+                }
+        else:
+            # Impulse turun = SUPPLY ZONE
+            if not result["supply_zone"]["active"] or \
+               abs(current_price - zone_bottom) < abs(current_price - result["supply_zone"]["bottom"]):
+                result["supply_zone"] = {
+                    "active":   True,
+                    "top":      round(zone_top, 6),
+                    "bottom":   round(zone_bottom, 6),
+                    "strength": strength,
+                }
+
+    # Cek apakah harga sekarang di dalam zona
+    dz = result["demand_zone"]
+    sz = result["supply_zone"]
+
+    # Harga di demand zone: dalam range zona atau sedikit di bawah (max 0.5 ATR)
+    if dz["active"] and dz["bottom"] - atr * 0.5 <= current_price <= dz["top"] + atr * 0.3:
+        result["in_demand"] = True
+
+    # Harga di supply zone: dalam range zona atau sedikit di atas (max 0.5 ATR)
+    if sz["active"] and sz["bottom"] - atr * 0.3 <= current_price <= sz["top"] + atr * 0.5:
+        result["in_supply"] = True
+
+    return result
+
+
 def detect_smart_money_concepts(df):
     """SMC: Order Blocks & FVG Detection"""
     if len(df) < 20: return {"ob": "NONE", "fvg": "NONE"}
@@ -179,6 +286,7 @@ def get_technical_indicators(symbol, interval="15m"):
         pattern = detect_candle_patterns(df_cur)
         smc = detect_smart_money_concepts(df_cur)
         inst_flow = detect_institutional_flow(df_cur)
+        dsz = detect_demand_supply_zones(df_cur)  # Demand/Supply Zones
 
         # 7. ATR 14 (True Range)
         trs = []
@@ -221,6 +329,10 @@ def get_technical_indicators(symbol, interval="15m"):
             "order_block": smc["ob"],
             "fvg": smc["fvg"],
             "inst_flow": inst_flow,
+            "demand_zone":  dsz["demand_zone"],
+            "supply_zone":  dsz["supply_zone"],
+            "in_demand":    dsz["in_demand"],
+            "in_supply":    dsz["in_supply"],
             "ema_200": round(ema_200_cur.iloc[-1], 2) if len(ema_200_cur) > 0 else 0,
             "ema_200_htf": round(ema_200_htf_val, 2),
             "open_interest": get_open_interest(symbol),

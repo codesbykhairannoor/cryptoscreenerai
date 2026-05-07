@@ -555,7 +555,7 @@ class ForexExecutor:
         trend_1h = self._get_htf_trend("1h")
         trend_4h = self._get_htf_trend("4h")
 
-        # Order Book & Whale (via PAXG proxy)
+        # Order Book & Whale (via MetaAPI tick/volume)
         ob_data      = self._get_gold_orderbook()
         whale_trades = self._get_gold_whale_trades()
         obi          = ob_data.get("obi", 0.0)
@@ -567,6 +567,20 @@ class ForexExecutor:
             whale_signal = "WHALE_SELL"
         else:
             whale_signal = "NORMAL"
+
+        # ── DEMAND/SUPPLY ZONE DETECTION ─────────────────────────────────────
+        try:
+            import pandas as _pd
+            from data_fetcher import detect_demand_supply_zones as _dsz_func
+            df_dsz = _pd.DataFrame({
+                'open':  [float(c.get("open",  closes[i])) for i, c in enumerate(candles)],
+                'high':  highs, 'low': lows, 'close': closes, 'vol': vols,
+            })
+            dsz = _dsz_func(df_dsz)
+        except Exception:
+            dsz = {"demand_zone": {"active": False, "top": 0, "bottom": 0, "strength": 0},
+                   "supply_zone": {"active": False, "top": 0, "bottom": 0, "strength": 0},
+                   "in_demand": False, "in_supply": False}
 
         return {
             "rsi":              round(rsi, 2),
@@ -590,6 +604,10 @@ class ForexExecutor:
             "pump_signal":      pump_signal,
             "obi":              round(obi, 4),
             "whale_signal":     whale_signal,
+            "demand_zone":      dsz["demand_zone"],
+            "supply_zone":      dsz["supply_zone"],
+            "in_demand":        dsz["in_demand"],
+            "in_supply":        dsz["in_supply"],
         }
 
     #  MOMENTUM SCORING 
@@ -654,6 +672,17 @@ class ForexExecutor:
 
         #  7. Liquidity Sweep (max 5 poin) 
         if liq: score += 5
+
+        #  7b. DEMAND/SUPPLY ZONE (max 20 poin) 
+        # Zona ini lebih kuat dari Order Block karena terbentuk dari konsolidasi institusi
+        in_demand   = ind.get("in_demand", False)
+        in_supply   = ind.get("in_supply", False)
+        dz_strength = ind.get("demand_zone", {}).get("strength", 0)
+        sz_strength = ind.get("supply_zone", {}).get("strength", 0)
+        if side == "buy" and in_demand:
+            score += 15 + min(5, dz_strength)  # max 20 poin
+        if side == "sell" and in_supply:
+            score += 15 + min(5, sz_strength)
 
         #  8. Whale Signal via PAXG Order Book (max 15 poin) 
         # Ini sinyal paling kuat — whale di gold market = institutional money
@@ -1221,6 +1250,7 @@ class ForexExecutor:
                 print("  15m: " + trend + " | 1h: " + trend_1h + " | 4h: " + trend_4h)
                 print("  DXY: " + dxy_ctx.get("trend","NEUTRAL") + " (" + str(dxy_ctx.get("change",0)) + "%)")
                 print("  Whale: " + str(ind.get("whale_signal","NORMAL")) + " | OBI: " + str(ind.get("obi",0)))
+                print("  DemandZone: " + str(ind.get("in_demand",False)) + " | SupplyZone: " + str(ind.get("in_supply",False)))
                 print("  TP: " + str(tp) + " | SL: " + str(sl))
                 print("=" * 65)
 
