@@ -624,10 +624,15 @@ def get_technical_indicators(symbol, interval="15m"):
         dsz = detect_demand_supply_zones(df_cur)  # Demand/Supply Zones
 
         # Volume Profile, HTF Key Levels, Fibonacci, Stop Hunt
-        vp   = get_volume_profile(symbol)
-        htf  = get_htf_key_levels(symbol)
-        fib  = get_fibonacci_levels(symbol)
-        hunt = detect_stop_hunt(symbol)
+        # CATATAN: Fungsi-fungsi ini dipanggil hanya saat entry (bukan saat scan)
+        # untuk menghindari terlalu banyak API call per koin
+        # Gunakan get_volume_profile(), get_htf_key_levels(), dll secara terpisah
+        vp   = {"poc": 0, "value_area_high": 0, "value_area_low": 0,
+                "price_vs_poc": "UNKNOWN", "poc_distance_pct": 0}
+        htf  = {"daily_high": 0, "daily_low": 0, "weekly_high": 0, "weekly_low": 0,
+                "near_daily_level": False, "near_weekly_level": False, "level_bias": "NEUTRAL"}
+        fib  = {}
+        hunt = {"bull_stop_hunt": False, "bear_stop_hunt": False, "hunt_strength": 0}
 
         # 7. ATR 14 (True Range)
         trs = []

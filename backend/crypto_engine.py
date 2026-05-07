@@ -1409,10 +1409,46 @@ def run_crypto_engine():
             if not symbol:
                 symbol = clean_base + 'USDT'
 
-            # Ambil harga terbaru
+            # Ambil harga terbaru + data institusional lengkap untuk entry
             fresh_tech = get_technical_indicators(symbol)
             if fresh_tech:
                 tech = fresh_tech  # Pakai data fresh untuk eksekusi
+
+            # Tambahkan Volume Profile, HTF Levels, Fibonacci, Stop Hunt
+            # Hanya dipanggil saat entry — tidak saat scan (terlalu banyak API call)
+            try:
+                from data_fetcher import (
+                    get_volume_profile, get_htf_key_levels,
+                    get_fibonacci_levels, detect_stop_hunt
+                )
+                vp   = get_volume_profile(symbol)
+                htf  = get_htf_key_levels(symbol)
+                fib  = get_fibonacci_levels(symbol)
+                hunt = detect_stop_hunt(symbol)
+                tech.update({
+                    "poc":              vp.get("poc", 0),
+                    "price_vs_poc":     vp.get("price_vs_poc", "UNKNOWN"),
+                    "poc_distance_pct": vp.get("poc_distance_pct", 0),
+                    "daily_high":       htf.get("daily_high", 0),
+                    "daily_low":        htf.get("daily_low", 0),
+                    "near_daily_level": htf.get("near_daily_level", False),
+                    "near_weekly_level":htf.get("near_weekly_level", False),
+                    "htf_level_bias":   htf.get("level_bias", "NEUTRAL"),
+                    "fib_382":          fib.get("fib_382", 0),
+                    "fib_618":          fib.get("fib_618", 0),
+                    "at_fib_support":   fib.get("at_fib_support", False),
+                    "at_fib_resistance":fib.get("at_fib_resistance", False),
+                    "current_fib_level":fib.get("current_fib_level", "NONE"),
+                    "bull_stop_hunt":   hunt.get("bull_stop_hunt", False),
+                    "bear_stop_hunt":   hunt.get("bear_stop_hunt", False),
+                    "hunt_strength":    hunt.get("hunt_strength", 0),
+                })
+                print(f"[ENTRY INTEL] {clean_base} | POC:{vp.get('price_vs_poc','?')} "
+                      f"| HTF:{htf.get('level_bias','?')} "
+                      f"| Fib:{fib.get('current_fib_level','NONE')} "
+                      f"| Hunt:{'YES' if hunt.get('bull_stop_hunt') or hunt.get('bear_stop_hunt') else 'NO'}")
+            except Exception as _e:
+                pass  # Kalau gagal, lanjut dengan data yang ada
 
             mark_price = tech.get('mark_price', 0)
             if mark_price == 0:
