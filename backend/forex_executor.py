@@ -1,31 +1,48 @@
 """
-FOREX SCALPER v6.0 - AGGRESSIVE GENIUS EDITION
+FOREX SCALPER v7.0 - PRECISION EDITION
+========================================
+Fix berdasarkan analisis database:
+- SL 8 poin terlalu kecil (noise+spread = 5-8 poin) → naik ke 20 poin
+- TP 20 poin → naik ke 40 poin (RR tetap 1:2)
+- Bot masuk BUY di ATH range → tambah ATH detection
+- RSI 72+ masih masuk BUY → turunkan ke 65
+- Max 3 posisi terlalu banyak → turun ke 2
+- Session Asia terlalu banyak false signal → hanya London+NY
 """
 import requests, os, time, datetime
 from dotenv import load_dotenv
 load_dotenv()
 
-MAX_POSITIONS        = 5
+MAX_POSITIONS        = 2      # Turun dari 3 ke 2 — risiko lebih terkontrol
 SCAN_INTERVAL        = 3
 COOLDOWN_AFTER_TRADE = 45
 EQUITY_GUARD_PCT     = 0.92
-MAX_SPREAD_POINTS    = 250
-MIN_MOMENTUM_SCORE   = 50
+MAX_SPREAD_POINTS    = 200    # Lebih ketat dari 250
+MIN_MOMENTUM_SCORE   = 55     # Naik dari 50 ke 55 — lebih selektif
 CANDLE_LIMIT         = 100
-MAX_TRADES_PER_SIGNAL = 3
-SCALP_TP_POINTS      = 20.0
-SCALP_SL_POINTS      = 8.0
-TRAIL_BUFFER_POINTS     = 3.0    # Buffer poin saat trailing (SL = entry + profit_pt - buffer)
-TRAIL_ACTIVATION_POINTS = 8.0    # Trailing mulai aktif setelah profit >= 8 poin (tunggu profit solid dulu)
+MAX_TRADES_PER_SIGNAL = 2     # Turun dari 3 ke 2
+
+# SL/TP baru — lebih realistis untuk XAUUSD
+# SL 20 poin = 0.43% dari 4700 = cukup jauh dari noise (5-8 poin) + spread (2.8 poin)
+# TP 40 poin = 0.85% dari 4700 = RR 1:2, butuh win rate 33% untuk break-even
+SCALP_TP_POINTS      = 40.0   # Naik dari 20 ke 40 poin
+SCALP_SL_POINTS      = 20.0   # Naik dari 8 ke 20 poin
+TRAIL_BUFFER_POINTS     = 5.0
+TRAIL_ACTIVATION_POINTS = 15.0  # Trailing aktif setelah profit 15 poin (bukan 8)
 BASE_LOT_PER_100     = 0.01
 MAX_LOT_PER_TRADE    = 0.05
 MIN_LOT_PER_TRADE    = 0.01
 DXY_STRONG_THRESHOLD = 0.3
 DXY_WEAK_THRESHOLD   = -0.3
 
-# Session Loss Limit: max kerugian per sesi trading
-# Kalau rugi > $15 dalam satu sesi, stop trading sampai sesi berikutnya
-SESSION_MAX_LOSS_USD = 15.0
+# ATH/ATL Detection — jangan BUY di puncak range, jangan SELL di dasar range
+# Kalau harga di 80%+ dari range 30m = dekat ATH = risky BUY
+# Kalau harga di 20%- dari range 30m = dekat ATL = risky SELL
+ATH_BLOCK_PCT        = 0.80   # Block BUY kalau harga di 80%+ dari range
+ATL_BLOCK_PCT        = 0.20   # Block SELL kalau harga di 20%- dari range
+
+# Session Loss Limit
+SESSION_MAX_LOSS_USD = 20.0   # Naik dari 15 ke 20 (SL lebih besar sekarang)
 
 class ForexExecutor:
     def __init__(self):
@@ -550,6 +567,28 @@ class ForexExecutor:
         # Volume Spike
         vol_spike = last_vol > avg_vol * 2.0
 
+        # ── ATH/ATL DETECTION ─────────────────────────────────────────────────
+        # Posisi harga dalam range 30m terakhir (0-100%)
+        # 80%+ = dekat ATH = risky BUY (harga sudah tinggi, butuh effort untuk tembus)
+        # 20%- = dekat ATL = risky SELL
+        range_high = max(highs[-20:]) if len(highs) >= 20 else max(highs)
+        range_low  = min(lows[-20:])  if len(lows)  >= 20 else min(lows)
+        range_size = range_high - range_low
+        price_position_pct = ((last_close - range_low) / range_size * 100) if range_size > 0 else 50
+        near_ath = price_position_pct >= ATH_BLOCK_PCT * 100  # harga di 80%+ dari range
+        near_atl = price_position_pct <= ATL_BLOCK_PCT * 100  # harga di 20%- dari range
+
+        # ── PRICE VELOCITY (momentum detection) ──────────────────────────────
+        # Seberapa cepat harga bergerak dalam 5 candle terakhir
+        # Velocity tinggi = momentum kuat = sinyal lebih reliable
+        if len(closes) >= 6:
+            price_change_5c = (closes[-1] - closes[-6]) / closes[-6] * 100 if closes[-6] > 0 else 0
+            velocity = abs(price_change_5c)
+            velocity_direction = "UP" if price_change_5c > 0 else "DOWN"
+        else:
+            velocity = 0
+            velocity_direction = "FLAT"
+
         # RSI Divergence
         rsi_divergence = "NONE"
         if len(rsi_history) >= 5 and len(closes) >= 5:
@@ -736,6 +775,15 @@ class ForexExecutor:
             "supply_zone":      dsz["supply_zone"],
             "in_demand":        dsz["in_demand"],
             "in_supply":        dsz["in_supply"],
+            # ATH/ATL Detection
+            "price_position_pct": round(price_position_pct, 1),
+            "near_ath":           near_ath,
+            "near_atl":           near_atl,
+            "range_high":         round(range_high, 3),
+            "range_low":          round(range_low, 3),
+            # Price Velocity
+            "velocity":           round(velocity, 3),
+            "velocity_direction": velocity_direction,
             # Fibonacci
             "fib_382":            fib_data.get("fib_382", 0),
             "fib_500":            fib_data.get("fib_500", 0),
@@ -798,14 +846,16 @@ class ForexExecutor:
         if vol_spike: score += 12
 
         #  3. RSI Zone (max 15 poin) 
+        # RSI threshold diturunkan: max 65 untuk BUY (bukan 72)
+        # Data: RSI 76+ masih masuk BUY = salah
         if side == "buy":
             if 28 <= rsi <= 48:   score += 15   # Oversold recovery
             elif 48 < rsi <= 58:  score += 8
-            elif rsi > 72:        score -= 12   # Overbought, risky long
+            elif rsi > 65:        score -= 15   # Overbought — penalti lebih besar
         else:
             if 52 <= rsi <= 72:   score += 15   # Overbought rejection
             elif 42 <= rsi < 52:  score += 8
-            elif rsi < 28:        score -= 12   # Oversold, risky short
+            elif rsi < 35:        score -= 15   # Oversold — penalti lebih besar
 
         #  4. FVG (max 10 poin) 
         if side == "buy"  and fvg == "BULLISH_FVG": score += 10
@@ -928,6 +978,36 @@ class ForexExecutor:
         elif 2 <= hour <= 4:
             score += 5
 
+        #  14. ATH/ATL DETECTION (penalti besar) 
+        # Jangan BUY di puncak range — harga butuh effort untuk tembus ATH
+        # Jangan SELL di dasar range — harga butuh effort untuk tembus ATL
+        near_ath = ind.get("near_ath", False)
+        near_atl = ind.get("near_atl", False)
+        price_pos = ind.get("price_position_pct", 50)
+        if side == "buy" and near_ath:
+            score -= 20  # Harga di 80%+ range = risky BUY
+            # Kalau di 90%+ = sangat risky
+            if price_pos >= 90:
+                score -= 10
+        if side == "sell" and near_atl:
+            score -= 20  # Harga di 20%- range = risky SELL
+            if price_pos <= 10:
+                score -= 10
+
+        # Bonus kalau harga di zona ideal untuk entry
+        if side == "buy"  and 20 <= price_pos <= 45:  score += 8  # Dekat bottom range
+        if side == "sell" and 55 <= price_pos <= 80:  score += 8  # Dekat top range
+
+        #  15. PRICE VELOCITY BONUS 
+        # Momentum kuat = sinyal lebih reliable
+        velocity = ind.get("velocity", 0)
+        vel_dir  = ind.get("velocity_direction", "FLAT")
+        if side == "buy"  and vel_dir == "UP"   and velocity > 0.3: score += 8
+        if side == "sell" and vel_dir == "DOWN" and velocity > 0.3: score += 8
+        # Velocity berlawanan = momentum melawan = penalti
+        if side == "buy"  and vel_dir == "DOWN" and velocity > 0.5: score -= 8
+        if side == "sell" and vel_dir == "UP"   and velocity > 0.5: score -= 8
+
         return max(0, min(100, score))
 
     def _determine_side(self, ind, spread_points):
@@ -971,20 +1051,23 @@ class ForexExecutor:
 
     def _calc_tp_sl(self, price, side, atr):
         """
-        TP/SL ATR-based dengan hard minimum.
-        SL min 7 poin (spread + noise), TP min 15 poin (RR 1:2.1+).
+        TP/SL v7.0 — lebih realistis untuk XAUUSD.
+        SL 20 poin minimum: noise(5-8) + spread(2.8) + buffer = ~16 poin minimum
+        TP 40 poin minimum: RR 1:2, butuh win rate 33% untuk break-even
+        ATR dipakai kalau lebih besar dari minimum.
         """
-        if atr and 1.0 <= atr <= 15:
-            sl_dist = max(atr * 1.5, SCALP_SL_POINTS)
-            tp_dist = max(atr * 4.0, SCALP_TP_POINTS)
+        if atr and 1.0 <= atr <= 20:
+            sl_dist = max(atr * 2.0, SCALP_SL_POINTS)   # ATR × 2 atau min 20
+            tp_dist = max(atr * 4.5, SCALP_TP_POINTS)   # ATR × 4.5 atau min 40
         else:
             sl_dist = SCALP_SL_POINTS
             tp_dist = SCALP_TP_POINTS
 
-        sl_dist = max(sl_dist, 7.0)
-        tp_dist = max(tp_dist, 15.0)
-        sl_dist = min(sl_dist, 12.0)
-        tp_dist = min(tp_dist, 30.0)
+        # Hard limits
+        sl_dist = max(sl_dist, 18.0)   # Absolute minimum 18 poin
+        tp_dist = max(tp_dist, 36.0)   # Absolute minimum 36 poin (RR 1:2)
+        sl_dist = min(sl_dist, 30.0)   # Max 30 poin SL
+        tp_dist = min(tp_dist, 70.0)   # Max 70 poin TP
 
         if side == "buy":
             return round(price + tp_dist, 3), round(price - sl_dist, 3)
@@ -992,24 +1075,23 @@ class ForexExecutor:
             return round(price - tp_dist, 3), round(price + sl_dist, 3)
 
     def _calc_lot_size(self, balance):
-        """
-        Lot sizing FIXED: selalu 0.01 lot per trade.
-        Cent account — kontrol risiko ketat, tidak berubah apapun balance-nya.
-        """
-        return MIN_LOT_PER_TRADE  # Fixed 0.01
+        """Lot sizing FIXED: selalu 0.01 lot per trade."""
+        return MIN_LOT_PER_TRADE
 
     def _is_trading_session(self):
         """
-        Trade di London (07-16 UTC) dan NY (12-21 UTC).
-        Tambah Asia open (02-05 UTC)  gold volatile saat Tokyo open.
-        Skip weekend.
+        Hanya London (07-16 UTC) dan NY (12-21 UTC).
+        HAPUS Asia session — terlalu banyak false signal, volume rendah.
+        Data menunjukkan Asia session win rate buruk kecuali sample sangat kecil.
         """
         now_utc = datetime.datetime.utcnow()
         weekday = now_utc.weekday()
         if weekday == 6: return False
         if weekday == 5 and now_utc.hour >= 21: return False
         hour = now_utc.hour
-        return (2 <= hour < 5) or (7 <= hour < 16) or (12 <= hour < 21)
+        # London: 07-16 UTC (14:00-23:00 WIB)
+        # NY: 12-21 UTC (19:00-04:00 WIB)
+        return (7 <= hour < 16) or (12 <= hour < 21)
 
     #  POSITIONS 
 
@@ -1173,41 +1255,31 @@ class ForexExecutor:
                     self._close_attempted.discard(pos_id)
                 continue
 
-            # TRAILING SL - LOGIKA BARU (jarak konsisten 8 poin dari harga)
-            # Tidak ada breakeven +0.2 yang terlalu sempit.
-            # SL hanya naik kalau profit sudah solid.
-            # Jarak SL ke harga selalu ~8 poin = cukup untuk noise XAUUSD.
-            #
-            # profit < 12 poin  : DIAM, SL awal di entry-8 tetap
-            # profit >= 12 poin : SL ke entry+4  (jarak ke harga = profit-4, min 8)
-            # profit >= 18 poin : SL ke entry+10 (jarak ke harga = profit-10, min 8)
-            # TP kena di 20 poin: selesai, profit $2+ per trade
-            #
-            # Contoh: entry 4711, profit 12 poin (harga 4723)
-            #   SL naik ke 4715 (entry+4), jarak ke harga = 8 poin ✓
-            # Contoh: entry 4711, profit 18 poin (harga 4729)
-            #   SL naik ke 4721 (entry+10), jarak ke harga = 8 poin ✓
+            # TRAILING SL v7.0 - disesuaikan dengan SL/TP baru (20/40 poin)
+            # profit < 15 poin  : DIAM (noise XAUUSD bisa 5-10 poin)
+            # profit 15-24 poin : LOCK-8  (SL ke entry+8)
+            # profit >= 25 poin : LOCK-18 (SL ke entry+18)
+            # TP kena di 40 poin: profit $4+ per trade
 
-            if profit_pt < 12.0:
-                # Belum 12 poin — diam, biarkan SL awal bekerja
+            if profit_pt < 15.0:
                 if profit_pt > 0:
-                    print("[TRAIL] " + sym + " profit_pt=" + str(round(profit_pt,2)) + " < 12.0, waiting...")
+                    print("[TRAIL] " + sym + " profit_pt=" + str(round(profit_pt,2)) + " < 15.0, waiting...")
                 continue
 
             if is_buy:
-                if profit_pt >= 18.0:
-                    target_sl = round(open_price + 12.0, 3)
-                    stage     = "LOCK-12"
+                if profit_pt >= 25.0:
+                    target_sl = round(open_price + 18.0, 3)
+                    stage     = "LOCK-18"
                 else:
-                    target_sl = round(open_price + 5.0, 3)
-                    stage     = "LOCK-5"
+                    target_sl = round(open_price + 8.0, 3)
+                    stage     = "LOCK-8"
             else:
-                if profit_pt >= 18.0:
-                    target_sl = round(open_price - 12.0, 3)
-                    stage     = "LOCK-12"
+                if profit_pt >= 25.0:
+                    target_sl = round(open_price - 18.0, 3)
+                    stage     = "LOCK-18"
                 else:
-                    target_sl = round(open_price - 5.0, 3)
-                    stage     = "LOCK-5"
+                    target_sl = round(open_price - 8.0, 3)
+                    stage     = "LOCK-8"
 
             # SL hanya bergerak ke arah profit, tidak pernah mundur
             if is_buy:
@@ -1406,7 +1478,20 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                print("[INTEL] ADX:" + str(adx) + " " + regime + " | Vol:" + vol_regime + " | EV:" + str(ev) + " | Whale:" + str(ind.get("whale_signal","NORMAL")) + " OBI:" + str(ind.get("obi",0)))
+                print("[INTEL] ADX:" + str(adx) + " " + regime + " | Vol:" + vol_regime + " | EV:" + str(ev) + " | Whale:" + str(ind.get("whale_signal","NORMAL")) + " OBI:" + str(ind.get("obi",0)) + " | PricePos:" + str(ind.get("price_position_pct",50)) + "% Vel:" + str(ind.get("velocity",0)) + ind.get("velocity_direction",""))
+
+                # ATH/ATL BLOCK — jangan BUY di puncak range, jangan SELL di dasar range
+                near_ath = ind.get("near_ath", False)
+                near_atl = ind.get("near_atl", False)
+                price_pos = ind.get("price_position_pct", 50)
+                if side == "buy" and near_ath:
+                    print("[ATH BLOCK] Harga di " + str(price_pos) + "% dari range — terlalu tinggi untuk BUY. Skip.")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+                if side == "sell" and near_atl:
+                    print("[ATL BLOCK] Harga di " + str(price_pos) + "% dari range — terlalu rendah untuk SELL. Skip.")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
 
                 # POSITION QUALITY CHECK
                 xau_positions = [p for p in positions if "XAU" in p.get("symbol", "").upper()]
