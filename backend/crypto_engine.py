@@ -33,7 +33,17 @@ MATEMATIKA:
 
 import time
 import requests
+import sys
+import io
 from collections import defaultdict
+
+# Force UTF-8 for Windows CMD compatibility
+if sys.platform == "win32":
+    try:
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    except:
+        pass
+
 from data_fetcher import (
     fetch_all_tickers, get_technical_indicators,
     get_retail_sentiment, detect_institutional_flow
@@ -43,7 +53,7 @@ from ai_model import analyze_and_sort
 from database import log_trade
 from bitget_executor import BitgetExecutor
 
-# ─── KONFIGURASI ──────────────────────────────────────────────────────────────
+#  KONFIGURASI 
 MAX_POSITIONS        = 1      # FOKUS: 1 trade saja
 SCAN_INTERVAL        = 10     # Scan setiap 10 detik
 COOLDOWN_AFTER_TRADE = 60     # INSTANT SNIPER: Hanya 1 menit cooldown setelah trade tutup
@@ -54,7 +64,7 @@ MIN_MOMENTUM_SCORE   = 60     # NAIK DRASTIS: Hanya ambil setup A+
 MIN_TECH_SCORE       = 45     # NAIK DRASTIS
 MIN_PUMP_SCORE       = 35     # NAIK DRASTIS
 
-# ── WHALE OBSERVER CONFIG ─────────────────────────────────────────────────────
+#  WHALE OBSERVER CONFIG 
 MIN_APPEARANCES      = 1      # EKSEKUSI INSTAN: Begitu lolos filter ketat, langsung sikat
 MIN_AVG_SCORE        = 60     # NAIK DRASTIS
 CONSISTENCY_BONUS    = 1.15
@@ -82,7 +92,7 @@ SIDEWAYS_PNL_RANGE   = 2.0
 SIDEWAYS_PRICE_MOVE  = 0.5
 DAILY_LOSS_LIMIT_PCT = -40
 
-# ── MARKET INTELLIGENCE CONFIG ────────────────────────────────────────────────
+#  MARKET INTELLIGENCE CONFIG 
 # ADX Market Regime: hanya trade di trending market
 ADX_TRENDING_THRESHOLD  = 22
 ADX_RANGING_THRESHOLD   = 18
@@ -95,7 +105,7 @@ VOL_BASELINE_PERIOD     = 20
 
 # Expected Value minimum
 # Fee Bitget futures taker = 0.06% per side = 0.12% round trip
-# Notional $70 → fee = $0.084 per trade = 1.2% PnL
+# Notional $70  fee = $0.084 per trade = 1.2% PnL
 BITGET_FEE_PCT          = 0.0012  # 0.12% round trip fee
 MIN_EXPECTED_VALUE      = 0.015   # NAIK: Minimum EV 1.5% setelah fee
 
@@ -113,7 +123,7 @@ CONSEC_LOSS_LIMIT       = 2       # Maksimal 2 loss berturut-turut
 CONSEC_LOSS_PAUSE_MIN   = 30      # Pause 30 menit setelah 2x loss berturut-turut
 
 
-# ─── MARKET INTELLIGENCE ENGINE ──────────────────────────────────────────────
+#  MARKET INTELLIGENCE ENGINE 
 
 def _calc_adx(symbol: str, period: int = ADX_PERIOD, interval: str = "15m") -> float:
     """
@@ -262,10 +272,10 @@ def _calc_expected_value(side: str, tech: dict, combined_score: int) -> float:
     Contoh:
     - Score 70, trend aligned, whale buy -> P_win ~55%
     - TP 8%, SL 1.5%
-    - EV = (0.55 x 0.08) - (0.45 x 0.015) = 0.044 - 0.0068 = 0.037 = 3.7% ✓
+    - EV = (0.55 x 0.08) - (0.45 x 0.015) = 0.044 - 0.0068 = 0.037 = 3.7% 
 
     - Score 42, no whale, ranging market -> P_win ~30%
-    - EV = (0.30 x 0.08) - (0.70 x 0.015) = 0.024 - 0.0105 = 0.0135 = 1.35% ✓ (tapi tipis)
+    - EV = (0.30 x 0.08) - (0.70 x 0.015) = 0.024 - 0.0105 = 0.0135 = 1.35%  (tapi tipis)
     """
     # Estimasi P_win dari combined_score (base probability)
     # Score 40 = 35% win rate (minimum), Score 100 = 65% win rate (maximum)
@@ -311,7 +321,7 @@ def _calc_expected_value(side: str, tech: dict, combined_score: int) -> float:
 def _get_btc_context() -> dict:
     """
     Ambil konteks BTC untuk correlation filter.
-    BTC adalah market leader — pergerakannya mempengaruhi semua altcoin.
+    BTC adalah market leader  pergerakannya mempengaruhi semua altcoin.
 
     Return:
       trend    : BULLISH / BEARISH / NEUTRAL
@@ -419,7 +429,7 @@ class WhaleObserver:
         latest_tech  = entries[-1][4]  # tech dict dari observasi terakhir
         side         = entries[-1][3]
 
-        # ── 0. ADX TREND STRENGTH BONUS (max 15 poin) ─────────────────────────
+        #  0. ADX TREND STRENGTH BONUS (max 15 poin) 
         # Koin yang konsisten di trending market = sinyal lebih reliable
         adx_values = [e[5] for e in entries if len(e) > 5]
         if adx_values:
@@ -429,7 +439,7 @@ class WhaleObserver:
             elif avg_adx >= 22: future_score += 5
             # ADX < 22 = tidak ada bonus, tapi sudah lolos filter minimum
 
-        # ── 0b. EV TREND BONUS (max 10 poin) ──────────────────────────────────
+        #  0b. EV TREND BONUS (max 10 poin) 
         # EV yang naik dari scan ke scan = kondisi membaik
         ev_values = [e[6] for e in entries if len(e) > 6]
         if len(ev_values) >= 3:
@@ -437,7 +447,7 @@ class WhaleObserver:
             if ev_slope > 0.005:   future_score += 10  # EV naik signifikan
             elif ev_slope > 0.002: future_score += 5
             elif ev_slope < -0.005: future_score -= 8  # EV turun = kondisi memburuk
-        # ── 1. OI SURGE (max 25 poin) ─────────────────────────────────────────
+        #  1. OI SURGE (max 25 poin) 
         # OI naik dari baseline = posisi baru dibuka = akumulasi
         oi_now      = latest_tech.get('open_interest', 0)
         oi_baseline = self._oi_baseline.get(clean_base, oi_now)
@@ -452,7 +462,7 @@ class WhaleObserver:
                 if oi_change >= 0.10:   future_score += 20  # OI naik + short = distribution
                 elif oi_change >= 0.05: future_score += 12
 
-        # ── 2. FUNDING SQUEEZE (max 20 poin) ──────────────────────────────────
+        #  2. FUNDING SQUEEZE (max 20 poin) 
         # Funding negatif = shorts bayar longs = short squeeze imminent
         funding = latest_tech.get('funding_rate', 0)
         if side == "buy" and funding < FUNDING_SQUEEZE_THR:
@@ -463,7 +473,7 @@ class WhaleObserver:
             # Funding positif tinggi = longs terlalu mahal = long squeeze
             future_score += min(15, (funding / 0.001) * 10)
 
-        # ── 3. SCORE MOMENTUM (max 20 poin) ───────────────────────────────────
+        #  3. SCORE MOMENTUM (max 20 poin) 
         # Score naik dari scan ke scan = momentum building
         if len(entries) >= 3:
             scores = [e[1] for e in entries]  # combined_score per scan
@@ -480,7 +490,7 @@ class WhaleObserver:
             elif slope > 0:    future_score += 5   # Score stabil naik
             elif slope < -1.5: future_score -= 15  # Score turun = sinyal melemah
 
-        # ── 4. WHALE SIGNAL CONSISTENCY (max 15 poin) ─────────────────────────
+        #  4. WHALE SIGNAL CONSISTENCY (max 15 poin) 
         # WHALE_BUY muncul berulang = smart money terus akumulasi
         whale_signals = [e[4].get('whale_signal', 'NORMAL') for e in entries]
         if side == "buy":
@@ -495,14 +505,14 @@ class WhaleObserver:
             if whale_ratio >= 0.6:   future_score += 15
             elif whale_ratio >= 0.4: future_score += 10
 
-        # ── 5. LIQUIDITY HUNT (max 10 poin) ───────────────────────────────────
+        #  5. LIQUIDITY HUNT (max 10 poin) 
         # Liquidity sweep berulang = stop hunt sebelum reversal
         liq_sweeps = sum(1 for e in entries if e[4].get('is_liquidity_sweep', False))
         liq_ratio  = liq_sweeps / len(entries)
         if liq_ratio >= 0.4:   future_score += 10  # 40%+ scan ada liq sweep
         elif liq_ratio >= 0.2: future_score += 5
 
-        # ── 6. OBI CONSISTENCY (max 10 poin) ──────────────────────────────────
+        #  6. OBI CONSISTENCY (max 10 poin) 
         # Bid/Ask imbalance konsisten ke satu arah = buyer/seller dominance
         obis = [e[4].get('obi', 0) for e in entries]
         avg_obi = sum(obis) / len(obis) if obis else 0
@@ -590,8 +600,8 @@ class WhaleObserver:
 
             print(f"  {clean_base:10s} | Side:{side:4s} | Appear:{appearances:2d}x | "
                   f"AvgScore:{avg_score:.1f} | Future:{future_sc:.1f} | Final:{final:.1f} "
-                  f"{'📈' if is_rising else '  '} "
-                  f"{'🐋' if latest_tech.get('whale_signal')=='WHALE_BUY' else '  '}"
+                  f"{'' if is_rising else '  '} "
+                  f"{'' if latest_tech.get('whale_signal')=='WHALE_BUY' else '  '}"
                   f"{'NO_SIGNAL' if not has_predictive_signal else ''}")
 
             if final > best_final:
@@ -610,7 +620,7 @@ class WhaleObserver:
                 }
 
         if best:
-            print(f"\n[WHALE OBSERVER] 🎯 PILIHAN TERBAIK: {best['clean_base']} {best['side'].upper()}")
+            print(f"\n[WHALE OBSERVER]  PILIHAN TERBAIK: {best['clean_base']} {best['side'].upper()}")
             print(f"  AvgScore:{best['avg_score']} | Future:{best['future_score']} | "
                   f"Final:{best['final_score']} | Muncul:{best['appearances']}x | "
                   f"Rising:{best['is_rising']}")
@@ -620,7 +630,7 @@ class WhaleObserver:
         return best
 
 
-# ─── HELPER: HITUNG VWAP ──────────────────────────────────────────────────────
+#  HELPER: HITUNG VWAP 
 def _calc_vwap_dist(mark_price: float, symbol: str) -> float:
     """
     Hitung jarak harga dari VWAP dalam persen menggunakan candle 15m.
@@ -670,7 +680,7 @@ def _calc_vwap_dist(mark_price: float, symbol: str) -> float:
         return 0.0
 
 
-# ─── HELPER: HITUNG RSI ───────────────────────────────────────────────────────
+#  HELPER: HITUNG RSI 
 def _calc_rsi(symbol: str, period: int = 14, interval: str = "15m") -> float:
     """Hitung RSI dari candle Bitget."""
     try:
@@ -708,7 +718,7 @@ def _calc_rsi(symbol: str, period: int = 14, interval: str = "15m") -> float:
         return 50.0
 
 
-# ─── HELPER: DETECT VOLATILITY SPIKE ─────────────────────────────────────────
+#  HELPER: DETECT VOLATILITY SPIKE 
 def detect_volatility_spike(symbol: str, timeframe: str = "1m") -> bool:
     """Deteksi apakah ada volume spike 3x dari rata-rata."""
     try:
@@ -727,7 +737,7 @@ def detect_volatility_spike(symbol: str, timeframe: str = "1m") -> bool:
         return False
 
 
-# ─── CORE: MOMENTUM SCORING SYSTEM ───────────────────────────────────────────
+#  CORE: MOMENTUM SCORING SYSTEM 
 def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int:
     """
     Hitung momentum score 0-100 untuk sebuah kandidat.
@@ -767,7 +777,7 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
         if fvg == 'BEARISH_FVG':   score += 12
         if ob  == 'BEARISH_OB':    score += 8
 
-    # 3b. DEMAND/SUPPLY ZONE (max 20 poin) — lebih kuat dari Order Block biasa
+    # 3b. DEMAND/SUPPLY ZONE (max 20 poin)  lebih kuat dari Order Block biasa
     # Zona ini terbentuk dari konsolidasi institusi sebelum impulse move
     in_demand = tech.get('in_demand', False)
     in_supply = tech.get('in_supply', False)
@@ -859,7 +869,7 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
     return max(0, min(100, score))
 
 
-# ─── CORE: TENTUKAN SIDE & REASON ────────────────────────────────────────────
+#  CORE: TENTUKAN SIDE & REASON 
 def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
                            market_sentiment: str) -> tuple[str | None, str, int]:
     """
@@ -885,7 +895,7 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     choch_s = tech.get('choch_bearish', False)
     obi   = tech.get('obi', 0)
 
-    # ── HTF TREND FILTER ─────────────────────────────────────────────────────
+    #  HTF TREND FILTER 
     trend_1h = tech.get('trend_1h', 'NEUTRAL')
     trend_4h = tech.get('trend_4h', 'NEUTRAL')
 
@@ -920,7 +930,7 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     if trend_1h == 'BULLISH' and trend_4h == 'BULLISH':
         block_sell = True  # Double bullish = tidak ada SELL sama sekali
 
-    # ── LONG SETUPS ──────────────────────────────────────────────────────────
+    #  LONG SETUPS 
     long_candidates = []
 
     if block_buy:
@@ -952,8 +962,8 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
         long_candidates.append((s, "BULLISH ORDER BLOCK + OVERSOLD RSI"))
 
-    # Setup 6: RSI Oversold Recovery — HANYA kalau 1h tidak bearish
-    # Ini yang bikin SKYAI masuk — RSI oversold tapi 4h bearish
+    # Setup 6: RSI Oversold Recovery  HANYA kalau 1h tidak bearish
+    # Ini yang bikin SKYAI masuk  RSI oversold tapi 4h bearish
     if not block_buy and 28 <= rsi <= 42 and vwap_dist < 2.0 and trend_1h != 'BEARISH':
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
         long_candidates.append((s, "RSI OVERSOLD RECOVERY"))
@@ -963,7 +973,7 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
         long_candidates.append((s, "MOMENTUM BREAKOUT FROM DISCOUNT"))
 
-    # Setup 8: Demand Zone Entry — boleh masuk meski 4h bearish kalau zona kuat
+    # Setup 8: Demand Zone Entry  boleh masuk meski 4h bearish kalau zona kuat
     if tech.get('in_demand', False):
         dz = tech.get('demand_zone', {})
         # Kalau 4h bearish, butuh zona yang lebih kuat (strength >= 3)
@@ -972,7 +982,7 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
             s = _score_candidate(tech, rsi, vwap_dist, "buy")
             long_candidates.append((s, f"DEMAND ZONE ENTRY (strength:{dz.get('strength',0)})"))
 
-    # ── SHORT SETUPS ─────────────────────────────────────────────────────────
+    #  SHORT SETUPS 
     short_candidates = []
 
     # Setup 1: Whale Distribution + Premium Zone
@@ -1000,7 +1010,7 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
         short_candidates.append((s, "BEARISH ORDER BLOCK + OVERBOUGHT RSI"))
 
-    # Setup 6: RSI Overbought Rejection — HANYA kalau 1h tidak bullish
+    # Setup 6: RSI Overbought Rejection  HANYA kalau 1h tidak bullish
     if not block_sell and 68 <= rsi <= 85 and vwap_dist > 1.0 and trend_1h != 'BULLISH':
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
         short_candidates.append((s, "RSI OVERBOUGHT REJECTION"))
@@ -1010,7 +1020,7 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
         short_candidates.append((s, "BEARISH MOMENTUM FROM PREMIUM"))
 
-    # Setup 8: Supply Zone Entry — boleh masuk meski 4h bullish kalau zona kuat
+    # Setup 8: Supply Zone Entry  boleh masuk meski 4h bullish kalau zona kuat
     if tech.get('in_supply', False):
         sz = tech.get('supply_zone', {})
         min_strength = 3 if trend_4h == 'BULLISH' else 1
@@ -1018,7 +1028,7 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
             s = _score_candidate(tech, rsi, vwap_dist, "sell")
             short_candidates.append((s, f"SUPPLY ZONE ENTRY (strength:{sz.get('strength',0)})"))
 
-    # ── PILIH SETUP TERBAIK ───────────────────────────────────────────────────
+    #  PILIH SETUP TERBAIK 
     all_candidates = [("buy", s, r) for s, r in long_candidates] + \
                      [("sell", s, r) for s, r in short_candidates]
 
@@ -1051,7 +1061,7 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     return best_side, best_reason, best_score
 
 
-# ─── CORE: HITUNG TP/SL BERBASIS PnL TARGET ──────────────────────────────────
+#  CORE: HITUNG TP/SL BERBASIS PnL TARGET 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]:
     """
     TP/SL berbasis PnL target di 10x leverage.
@@ -1093,22 +1103,22 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]
         return round(mark_price - tp_dist, 6), round(mark_price + sl_dist, 6)
 
 
-# ─── MAIN ENGINE ──────────────────────────────────────────────────────────────
+#  MAIN ENGINE 
 def run_crypto_engine():
     """
     [CRYPTO SCALPER v9.0] - Whale Observer Mode.
 
     FLOW:
-    ┌─────────────────────────────────────────────────────────┐
-    │  FASE OBSERVASI (15 menit setelah trade / startup)      │
-    │  ↓ Setiap 10 detik:                                     │
-    │    - Scan top 20 koin                                   │
-    │    - Evaluasi setiap koin (pump + SMC + future signals) │
-    │    - Catat ke WhaleObserver watchlist                   │
-    │  ↓ Di akhir 15 menit:                                   │
-    │    - Pilih koin dengan final_score tertinggi            │
-    │    - Eksekusi dengan full confidence                    │
-    └─────────────────────────────────────────────────────────┘
+    
+      FASE OBSERVASI (15 menit setelah trade / startup)      
+       Setiap 10 detik:                                     
+        - Scan top 20 koin                                   
+        - Evaluasi setiap koin (pump + SMC + future signals) 
+        - Catat ke WhaleObserver watchlist                   
+       Di akhir 15 menit:                                   
+        - Pilih koin dengan final_score tertinggi            
+        - Eksekusi dengan full confidence                    
+    
     """
     executor = BitgetExecutor()
     observer  = WhaleObserver()
@@ -1129,7 +1139,7 @@ def run_crypto_engine():
     # Track koin yang sering kena SL - {clean_base: [timestamp_sl1, timestamp_sl2, ...]}
     # Kalau kena SL 2x dalam 4 jam -> blacklist sementara
     _loss_tracker      = {}  # {clean_base: [timestamps]}
-    # Consecutive loss tracker — pause bot kalau kalah 2x berturut-turut
+    # Consecutive loss tracker  pause bot kalau kalah 2x berturut-turut
     _consec_losses     = 0   # jumlah loss berturut-turut
     _consec_pause_until = 0  # timestamp sampai kapan bot pause
 
@@ -1138,26 +1148,26 @@ def run_crypto_engine():
 
     while True:
         try:
-            # ── 1. MANAGE EXISTING POSITIONS ─────────────────────────────────
+            #  1. MANAGE EXISTING POSITIONS 
             executor.manage_open_positions()
             check_pending_trades()
 
             now = time.time()
 
-            # ── 2. NEWS VELOCITY (setiap 10 menit) ───────────────────────────
+            #  2. NEWS VELOCITY (setiap 10 menit) 
             if now - last_news_report > NEWS_REPORT_INTERVAL:
                 digest = get_market_news_digest()
                 print(f"[NEWS VELOCITY] Sentiment: {digest['sentiment']} | "
                       f"Top: {digest['crypto_top']}")
                 last_news_report = now
 
-            # ── 3. GLOBAL CONTEXT (setiap 5 menit) ───────────────────────────
+            #  3. GLOBAL CONTEXT (setiap 5 menit) 
             if now - last_global_report > GLOBAL_REPORT_INTERVAL:
                 global_ctx = get_global_market_data()
                 print(f"[GLOBAL] {global_ctx}")
                 last_global_report = now
 
-            # ── 4. CIRCUIT BREAKER ────────────────────────────────────────────
+            #  4. CIRCUIT BREAKER 
             stats     = get_performance_stats('crypto')
             daily_pnl = stats.get('daily_pnl', 0)
             if daily_pnl < DAILY_LOSS_LIMIT_PCT:
@@ -1166,7 +1176,7 @@ def run_crypto_engine():
                 time.sleep(1800)
                 continue
 
-            # ── 4c. CONSECUTIVE LOSS PAUSE ────────────────────────────────────
+            #  4c. CONSECUTIVE LOSS PAUSE 
             # Kalau kalah 2x berturut-turut, pause 30 menit
             # Ini mencegah bot terus masuk saat kondisi market sedang tidak favorable
             if now < _consec_pause_until:
@@ -1192,7 +1202,7 @@ def run_crypto_engine():
                 pass
 
 
-            # ── 4b. SESSION FILTER — off-hours diperketat, bukan di-skip ─────────
+            #  4b. SESSION FILTER  off-hours diperketat, bukan di-skip 
             import datetime as _dt
             utc_hour = _dt.datetime.utcnow().hour
             wib_hour = (utc_hour + 7) % 24
@@ -1218,7 +1228,7 @@ def run_crypto_engine():
                           f"Syarat diperketat: score>={_session_min_score} "
                           f"EV>={_session_min_ev} wajib_signal={_session_need_signal}")
 
-            # ── 5. POSITION CHECK ─────────────────────────────────────────────
+            #  5. POSITION CHECK 
             positions  = executor.get_all_positions()
             open_count = len(positions) if isinstance(positions, list) else 0
             open_bases = [executor._clean_symbol(p['symbol']) for p in positions] \
@@ -1229,7 +1239,7 @@ def run_crypto_engine():
                 time.sleep(SCAN_INTERVAL)
                 continue
 
-            # ── 6. COOLDOWN CHECK ─────────────────────────────────────────────
+            #  6. COOLDOWN CHECK 
             elapsed_since_trade = now - last_exec_time
             # ADAPTIVE COOLDOWN: lebih pendek saat trending kuat, lebih panjang saat ranging
             # ADX tinggi = trending = banyak setup bagus = cooldown lebih pendek
@@ -1255,7 +1265,7 @@ def run_crypto_engine():
                 print(f"[COOLDOWN] {round(cooldown_remaining/60,1)} menit lagi "
                       f"(adaptive: {adaptive_cooldown//60} menit | BTC: {btc_ctx_now.get('change_1h',0):+.1f}%/1h)")
 
-            # ── 7. BERSIHKAN recently_exited + TRACK LOSSES ──────────────────
+            #  7. BERSIHKAN recently_exited + TRACK LOSSES 
             _recently_exited = {k: v for k, v in _recently_exited.items()
                                  if now - v < 1800}
             try:
@@ -1277,7 +1287,7 @@ def run_crypto_engine():
                                         print(f"[LOSS TRACKER] {k} kena SL {loss_count}x dalam "
                                               f"{REPEAT_LOSS_BLACKLIST_HOURS}h. Blacklist sementara.")
 
-                                    # ── CONSECUTIVE LOSS TRACKING ─────────────────
+                                    #  CONSECUTIVE LOSS TRACKING 
                                     _consec_losses += 1
                                     print(f"[CONSEC LOSS] Loss ke-{_consec_losses} ({k}) | PnL: {last_pnl}%. "
                                           f"Limit: {CONSEC_LOSS_LIMIT}x")
@@ -1297,7 +1307,7 @@ def run_crypto_engine():
             except Exception:
                 pass
 
-            # ── 8. MARKET SENTIMENT & DXY ────────────────────────────────────
+            #  8. MARKET SENTIMENT & DXY 
             digest           = get_market_news_digest()
             market_sentiment = digest.get('sentiment', 'NEUTRAL')
 
@@ -1313,7 +1323,7 @@ def run_crypto_engine():
             dxy_trend  = _dxy_cache.get("trend", "NEUTRAL")
             dxy_change = _dxy_cache.get("change", 0)
 
-            # ── 9. SCAN & OBSERVASI ───────────────────────────────────────────
+            #  9. SCAN & OBSERVASI 
             raw_data   = fetch_all_tickers()
             candidates = analyze_and_sort(raw_data)
 
@@ -1340,7 +1350,7 @@ def run_crypto_engine():
             if last_exec_time > 0 and elapsed_since_trade < SCAN_INTERVAL + 5:
                 observer.reset()
 
-            # ── 9a. SCAN SEMUA KANDIDAT & CATAT KE OBSERVER ──────────────────
+            #  9a. SCAN SEMUA KANDIDAT & CATAT KE OBSERVER 
             # Log ringkas: berapa koin yang di-scan dan berapa yang lolos
             top_candidates = candidates[:20]
             btc_ctx = _get_btc_context()
@@ -1391,14 +1401,14 @@ def run_crypto_engine():
                 if side is None or combined_score < MIN_MOMENTUM_SCORE or tech_score < MIN_TECH_SCORE:
                     skip_reasons['low_score'] = skip_reasons.get('low_score', 0) + 1
 
-                # ── MARKET REGIME FILTER (ADX) ────────────────────────────────
+                #  MARKET REGIME FILTER (ADX) 
                 adx = _calc_adx(symbol)
                 if adx < ADX_RANGING_THRESHOLD:
                     skip_reasons['ranging'] = skip_reasons.get('ranging', 0) + 1
                     continue
                 regime_label = "TRENDING" if adx >= ADX_TRENDING_THRESHOLD else "WEAK_TREND"
 
-                # ── VOLATILITY REGIME FILTER ──────────────────────────────────
+                #  VOLATILITY REGIME FILTER 
                 vol_data = _calc_volatility_regime(symbol)
                 vol_regime = vol_data.get("regime", "NORMAL")
                 if vol_regime == "HIGH_VOL":
@@ -1408,7 +1418,7 @@ def run_crypto_engine():
                     skip_reasons['low_vol'] = skip_reasons.get('low_vol', 0) + 1
                     continue
 
-                # ── EXPECTED VALUE CHECK ──────────────────────────────────────
+                #  EXPECTED VALUE CHECK 
                 # Hitung EV sebelum entry. Kalau EV terlalu kecil, tidak worth it.
                 ev = _calc_expected_value(side, tech, combined_score) if side else 0
                 if ev < MIN_EXPECTED_VALUE:
@@ -1420,7 +1430,7 @@ def run_crypto_engine():
                 if is_dxy_active and side == "buy" and dxy_trend == "BULLISH" and dxy_change > 0.2:
                     continue
 
-                # ── BTC CORRELATION FILTER ────────────────────────────────────
+                #  BTC CORRELATION FILTER 
                 # BTC adalah market leader. Kalau BTC bearish kuat, jangan LONG altcoin.
                 # Kalau BTC bullish kuat, jangan SHORT altcoin.
                 btc_ctx = _get_btc_context()
@@ -1461,7 +1471,7 @@ def run_crypto_engine():
             print(f"[SCAN] {scan_count} masuk watchlist | Skip: {skip_str} | "
                   f"Cooldown: {'YA ' + str(round(cooldown_remaining))+'s' if in_cooldown else 'TIDAK - SIAP ENTRY'}")
 
-            # ── 10. KEPUTUSAN ENTRY ───────────────────────────────────────────
+            #  10. KEPUTUSAN ENTRY 
             if in_cooldown:
                 # Masih dalam cooldown - terus observasi, jangan entry
                 mins_left = round(cooldown_remaining / 60, 1)
@@ -1497,7 +1507,7 @@ def run_crypto_engine():
                 continue
 
             # Kalau kandidat terbaik tidak punya sinyal prediktif sama sekali,
-            # JANGAN masuk paksa — reset dan tunggu siklus baru yang lebih baik.
+            # JANGAN masuk paksa  reset dan tunggu siklus baru yang lebih baik.
             # Lebih baik tidak trade daripada masuk dengan sinyal lemah.
             if not best.get('has_predictive_signal', True):
                 obs_duration = time.time() - observer._obs_start
@@ -1508,7 +1518,7 @@ def run_crypto_engine():
                 time.sleep(SCAN_INTERVAL)
                 continue
 
-            # ── 11. EKSEKUSI KANDIDAT TERBAIK ────────────────────────────────
+            #  11. EKSEKUSI KANDIDAT TERBAIK 
             clean_base = best['clean_base']
             side       = best['side']
             tech       = best['tech']
@@ -1528,7 +1538,7 @@ def run_crypto_engine():
                 tech = fresh_tech  # Pakai data fresh untuk eksekusi
 
             # Tambahkan Volume Profile, HTF Levels, Fibonacci, Stop Hunt
-            # Hanya dipanggil saat entry — tidak saat scan (terlalu banyak API call)
+            # Hanya dipanggil saat entry  tidak saat scan (terlalu banyak API call)
             try:
                 from data_fetcher import (
                     get_volume_profile, get_htf_key_levels,
@@ -1602,7 +1612,7 @@ def run_crypto_engine():
                 time.sleep(SCAN_INTERVAL)
                 continue
 
-            # ── EKSEKUSI ──────────────────────────────────────────────────────
+            #  EKSEKUSI 
             print(f"\n{'='*65}")
             print(f"[WHALE OBSERVER] ENTRY: {clean_base} {side.upper()}")
             print(f"  Reason      : {reason}")
