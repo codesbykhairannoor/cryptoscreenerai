@@ -1386,7 +1386,7 @@ class ForexExecutor:
                     time.sleep(60)
                     continue
 
-                # TRAILING STOP — jalan SELALU, tidak peduli session
+                # TRAILING STOP   jalan SELALU, tidak peduli session
                 price_data   = self.get_live_price()
                 broker_price = price_data["mid"]
                 spread_pts   = price_data["spread_points"]
@@ -1475,7 +1475,7 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # CALCULATE INDICATORS — throttle log ke 30 detik
+                # CALCULATE INDICATORS   throttle log ke 30 detik
                 do_log = (now - last_scan_log >= 30)
                 if do_log:
                     print(f"[FOREX SCAN] {self._working_symbol} | RSI calculating...", flush=True)

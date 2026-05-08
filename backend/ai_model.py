@@ -4,8 +4,8 @@ PUMP PREDICTOR ENGINE v1.0
 Deteksi koin yang AKAN pump sebelum pump terjadi.
 
 Sinyal pump yang valid (berdasarkan market microstructure):
-1. OI naik + harga naik = fresh longs masuk → bullish
-2. OI naik + harga turun = fresh shorts masuk → bearish (short squeeze candidate)
+1. OI naik + harga naik = fresh longs masuk -> bullish
+2. OI naik + harga turun = fresh shorts masuk -> bearish (short squeeze candidate)
 3. Funding rate negatif + OI tinggi = short squeeze imminent
 4. Volume spike 3x+ dari rata-rata = institutional accumulation
 5. Bid/Ask imbalance > 0.2 = buyer dominance
@@ -47,7 +47,7 @@ def analyze_and_sort(raw_data):
     if len(df) == 0:
         return []
 
-    # ── Normalisasi kolom ─────────────────────────────────────────────────────
+    # -- Normalisasi kolom --
     # Bitget V2 ticker fields: symbol, lastPr, high24h, low24h, change24h, baseVolume, quoteVolume
     col_map = {
         'priceChangePercent': ['change24h', 'priceChangePercent', 'chgPct', 'change'],
@@ -74,7 +74,7 @@ def analyze_and_sort(raw_data):
     if df['priceChangePercent'].abs().max() < 2.0:
         df['priceChangePercent'] = df['priceChangePercent'] * 100
 
-    # ── BLACKLIST ─────────────────────────────────────────────────────────────
+    # -- BLACKLIST --
     def is_blacklisted(sym):
         base = sym.upper().replace('USDT', '').replace('_UMCBL', '').replace('PERP', '')
         skip = {'BTC', 'ETH', 'USDC', 'USDT', 'DAI', 'BUSD', 'TUSD', 'FDUSD',
@@ -97,7 +97,7 @@ def analyze_and_sort(raw_data):
     if len(df) == 0:
         return []
 
-    # ── SCORING — HANYA PAKAI DATA YANG SUDAH ADA (tidak butuh API tambahan) ──
+    # -- SCORING --
     def pump_score(row):
         score = 0.0
         vol   = float(row.get('quoteVolume', 0))
@@ -107,7 +107,7 @@ def analyze_and_sort(raw_data):
         low   = float(row.get('low24h',  price * 0.99))
         rng   = float(row.get('range_pct', 0))
 
-        # ── 1. VOLATILITAS RANGE (max 30 poin) ───────────────────────────────
+        # -- 1. VOLATILITAS RANGE (max 30 poin) --
         # Range besar = koin bisa bergerak 8% untuk hit TP
         if rng >= 20:    score += 30
         elif rng >= 15:  score += 25
@@ -116,7 +116,7 @@ def analyze_and_sort(raw_data):
         elif rng >= 5:   score += 10
         elif rng >= 3:   score += 5
 
-        # ── 2. VOLUME ABSOLUT (max 25 poin) ──────────────────────────────────
+        # -- 2. VOLUME ABSOLUT (max 25 poin) --
         # Volume besar = likuiditas, slippage kecil
         if vol >= 100_000_000:   score += 25   # $100M+
         elif vol >= 50_000_000:  score += 20   # $50M+
@@ -125,7 +125,7 @@ def analyze_and_sort(raw_data):
         elif vol >= 5_000_000:   score += 7    # $5M+
         elif vol >= 2_000_000:   score += 4    # $2M+
 
-        # ── 3. POSISI HARGA DI RANGE (max 25 poin) ───────────────────────────
+        # -- 3. POSISI HARGA DI RANGE (max 25 poin) --
         # Harga di 10-45% dari range = early entry, belum terlambat
         if high > low and price > 0:
             pos = (price - low) / (high - low) * 100
@@ -134,14 +134,14 @@ def analyze_and_sort(raw_data):
             elif 50 < pos <= 65:  score += 10   # Di atas tengah
             elif pos > 85:        score -= 5    # Dekat puncak, risky
 
-        # ── 4. MOMENTUM AWAL (max 20 poin) ───────────────────────────────────
+        # -- 4. MOMENTUM AWAL (max 20 poin) --
         # Koin yang baru mulai bergerak = early entry
         if 1.5 <= pct <= 6:    score += 20   # Sweet spot
         elif 0.5 <= pct < 1.5: score += 12   # Mulai bergerak
         elif 6 < pct <= 12:    score += 8    # Sudah bergerak, masih bisa
         elif pct < 0:          score += 5    # Turun = reversal candidate
 
-        # ── BONUS: Whale + OBI dari WebSocket ────────────────────────────────
+        # -- BONUS: Whale + OBI dari WebSocket --
         try:
             from shared_state import state
             sym   = str(row.get('symbol', ''))
@@ -158,7 +158,7 @@ def analyze_and_sort(raw_data):
 
     df['pump_score'] = df.apply(pump_score, axis=1)
 
-    # ── DUMP SCORE — untuk SHORT candidates ──────────────────────────────────
+    # -- DUMP SCORE - untuk SHORT candidates --
     def dump_score(row):
         """
         Score untuk SHORT setup.
@@ -192,7 +192,7 @@ def analyze_and_sort(raw_data):
         elif vol >= 5_000_000:   score += 7
         elif vol >= 2_000_000:   score += 4
 
-        # 3. POSISI HARGA DI RANGE — kebalikan dari pump
+        # 3. POSISI HARGA DI RANGE - kebalikan dari pump
         # Harga di 65-90% dari range = dekat puncak, ideal short
         if high > low and price > 0:
             pos = (price - low) / (high - low) * 100
@@ -201,7 +201,7 @@ def analyze_and_sort(raw_data):
             elif 35 <= pos < 50:  score += 10   # Di tengah
             elif pos < 15:        score -= 5    # Dekat bottom, risky short
 
-        # 4. MOMENTUM — koin yang sudah naik banyak = reversal candidate
+        # 4. MOMENTUM - koin yang sudah naik banyak = reversal candidate
         if 6 < pct <= 15:    score += 20   # Sudah naik banyak, ripe for reversal
         elif 3 < pct <= 6:   score += 15   # Naik signifikan
         elif 1.5 < pct <= 3: score += 8    # Naik sedikit
@@ -250,12 +250,12 @@ def analyze_and_sort(raw_data):
 
 
 def smart_trade_decision(symbol, technicals, news):
-    """Tidak dipakai lagi — diganti pump predictor scoring."""
+    """Tidak dipakai lagi - diganti pump predictor scoring."""
     return True, "Pump predictor approved"
 
 
 def analyze_market_data(data_json):
-    """Untuk frontend dashboard — menggunakan DeepSeek."""
+    """Untuk frontend dashboard - menggunakan DeepSeek."""
     if not client:
         return "DeepSeek API Key tidak tersedia."
     try:

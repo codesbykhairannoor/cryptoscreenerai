@@ -1,10 +1,10 @@
 """
-NEWS SNIPER v3.0 — ULTRA-FAST FOREX NEWS EXECUTION
+NEWS SNIPER v3.0   ULTRA-FAST FOREX NEWS EXECUTION
 ====================================================
 Arsitektur untuk eksekusi sub-detik:
 
 1. ForexExecutor di-pre-initialize SEKALI di startup (bukan per-news)
-2. Koneksi MetaAPI sudah warm — tidak ada cold start saat news masuk
+2. Koneksi MetaAPI sudah warm   tidak ada cold start saat news masuk
 3. Multi-source parallel polling: 3 RSS + Finnhub WebSocket
 4. Keyword detection spesifik untuk XAUUSD (gold sangat sensitif ke:
    - NFP, CPI, FOMC, Fed Rate Decision
@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 import re
 
 
-# ─── 8. NEWS CALENDAR — UPCOMING HIGH-IMPACT EVENTS ──────────────────────────
+#     8. NEWS CALENDAR   UPCOMING HIGH-IMPACT EVENTS                           
 
 def get_upcoming_high_impact_events() -> dict:
     """
@@ -126,7 +126,7 @@ def get_upcoming_high_impact_events() -> dict:
         get_upcoming_high_impact_events._cache = {"ts": now, "result": result}
         return result
 
-# ─── NEWS SOURCES ─────────────────────────────────────────────────────────────
+#     NEWS SOURCES                                                              
 SOURCES = [
     "https://content.dailyfx.com/feeds/forex_market_news",
     "https://www.forexlive.com/feed/news",
@@ -134,7 +134,7 @@ SOURCES = [
     "https://feeds.reuters.com/reuters/businessNews",  # Reuters business
 ]
 
-# ─── KEYWORD PATTERNS ─────────────────────────────────────────────────────────
+#     KEYWORD PATTERNS                                                          
 # XAUUSD sangat sensitif ke events ini
 CRITICAL_KEYWORDS = re.compile(
     r"NFP|NON.FARM|FOMC|CPI|FED|POWELL|LAGARDE|INTEREST RATE|UNEMPLOYMENT|"
@@ -156,7 +156,7 @@ BEARISH_GOLD = re.compile(
     r"XAU DROPS|GOLD SLUMPS|YIELDS RISE"
 )
 
-# ─── CONFIDENCE SCORING ───────────────────────────────────────────────────────
+#     CONFIDENCE SCORING                                                        
 HIGH_IMPACT = re.compile(r"NFP|NON.FARM|FOMC|RATE DECISION|CPI|PAYROLL")
 MED_IMPACT  = re.compile(r"FED|POWELL|LAGARDE|INFLATION|UNEMPLOYMENT|TREASURY")
 GEO_IMPACT  = re.compile(r"WAR|CONFLICT|SANCTION|GEOPOLIT|NUCLEAR|ATTACK")
@@ -175,7 +175,7 @@ class NewsSniper:
         self._last_exec  = 0
         self._cooldown   = 60  # detik antar eksekusi
 
-        # PRE-INITIALIZE ForexExecutor SEKALI — ini kunci latency rendah
+        # PRE-INITIALIZE ForexExecutor SEKALI   ini kunci latency rendah
         # Saat news masuk, koneksi sudah warm, tidak ada cold start
         print("[NEWS SNIPER] Pre-initializing ForexExecutor...")
         from forex_executor import ForexExecutor
@@ -233,7 +233,7 @@ class NewsSniper:
     def process_news(self, title, ingestion_time):
         """
         Proses news dan eksekusi kalau memenuhi kriteria.
-        Dipanggil dari thread — harus thread-safe.
+        Dipanggil dari thread   harus thread-safe.
         """
         title_upper = title.upper()
 
@@ -241,14 +241,14 @@ class NewsSniper:
         if not CRITICAL_KEYWORDS.search(title_upper):
             return
 
-        print(f"\n🚨 [CRITICAL NEWS] {title}")
+        print(f"\n  [CRITICAL NEWS] {title}")
 
         # Tentukan arah
         is_bullish = bool(BULLISH_GOLD.search(title_upper))
         is_bearish = bool(BEARISH_GOLD.search(title_upper))
 
         if not is_bullish and not is_bearish:
-            print(f"⚠️  [NEWS ALERT] Sentiment unclear — monitoring only: {title[:60]}")
+            print(f"    [NEWS ALERT] Sentiment unclear   monitoring only: {title[:60]}")
             return
 
         side       = 'buy' if is_bullish else 'sell'
@@ -285,7 +285,7 @@ class NewsSniper:
             return
 
         self._last_exec = now
-        print(f"\n🚨 [FINNHUB NEWS] {headline[:80]} | Score: {score}")
+        print(f"\n  [FINNHUB NEWS] {headline[:80]} | Score: {score}")
         self.callback(side, headline, ingestion_time, confidence)
 
     def start(self):
@@ -296,8 +296,8 @@ class NewsSniper:
             Thread(target=self.fetch_source, args=(source,), daemon=True).start()
 
 
-# ─── GLOBAL SNIPER INSTANCE ───────────────────────────────────────────────────
-# Singleton — dipakai oleh FinnhubWS dan main.py
+#     GLOBAL SNIPER INSTANCE                                                    
+# Singleton   dipakai oleh FinnhubWS dan main.py
 _sniper_instance = None
 
 def get_sniper_instance():
@@ -317,7 +317,7 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
     execution_start = time.time()
     latency_ms      = (execution_start - ingestion_time) * 1000
 
-    # Lot sizing berdasarkan confidence — max 3 trade
+    # Lot sizing berdasarkan confidence   max 3 trade
     lot_map    = {2: (1, 0.01), 3: (2, 0.01), 4: (3, 0.01), 5: (3, 0.01)}
     trades, lot = lot_map.get(confidence, (1, 0.01))
 
@@ -341,7 +341,7 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
             if news_conflicts:
                 # News berlawanan arah posisi aktif
                 if confidence >= 4:
-                    # Cek minimum holding time — jangan close posisi yang baru dibuka < 30 menit
+                    # Cek minimum holding time   jangan close posisi yang baru dibuka < 30 menit
                     import datetime
                     now_utc = datetime.datetime.now(datetime.timezone.utc)
                     too_young = []
@@ -358,10 +358,10 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
 
                     if too_young:
                         print(f"[NEWS SKIP] {len(too_young)} posisi baru dibuka < 30 menit. "
-                              f"Tidak override — hindari FOMO.")
+                              f"Tidak override   hindari FOMO.")
                         return
 
-                    # News kuat (geopolitical/NFP/FOMC) → close semua posisi, lalu masuk arah baru
+                    # News kuat (geopolitical/NFP/FOMC)   close semua posisi, lalu masuk arah baru
                     print(f"[NEWS OVERRIDE] Confidence {confidence}/5. Closing all {len(xau_positions)} "
                           f"{'BUY' if has_buy else 'SELL'} positions, then entering {side.upper()}.")
                     closed = 0
@@ -381,7 +381,7 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
                     # Reset trades ke max 3
                     trades = min(trades, 3)
                 else:
-                    # News lemah (confidence 2-3) → skip, tidak worth it close semua
+                    # News lemah (confidence 2-3)   skip, tidak worth it close semua
                     print(f"[NEWS SKIP] Confidence {confidence}/5 terlalu rendah untuk override "
                           f"{len(xau_positions)} posisi aktif. Skip.")
                     return
@@ -401,7 +401,7 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
                     print(f"[NEWS SKIP] {len(losing)} posisi rugi. Skip news.")
                     return
             else:
-                # Tidak ada posisi aktif — cek slot
+                # Tidak ada posisi aktif   cek slot
                 slots = max(0, 3 - len(xau_positions))
                 trades = min(trades, slots)
                 if trades <= 0:
@@ -413,7 +413,7 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
     except Exception:
         pass  # Kalau gagal cek, tetap fire dengan jumlah original
 
-    # Cek kondisi teknikal — kalau trend berlawanan, kurangi trades
+    # Cek kondisi teknikal   kalau trend berlawanan, kurangi trades
     try:
         ind   = sniper.fx._calc_indicators()
         trend = ind.get("trend", "NEUTRAL") if ind else "NEUTRAL"
@@ -429,10 +429,10 @@ def news_execution_handler(side, title, ingestion_time, confidence=3):
         pass
 
     print(f"\n{'='*60}")
-    print(f"🎯 [NEWS EXECUTION] {side.upper()} XAUUSD")
+    print(f"  [NEWS EXECUTION] {side.upper()} XAUUSD")
     print(f"   News     : {title[:70]}")
     print(f"   Latency  : {round(latency_ms, 2)}ms")
-    print(f"   Confidence: {confidence}/5 → {trades} trades × {lot} lot")
+    print(f"   Confidence: {confidence}/5   {trades} trades   {lot} lot")
     print(f"{'='*60}")
 
     sniper.fx.place_xauusd_scalp_batch(side, trades_count=trades, volume=lot)

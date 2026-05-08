@@ -205,7 +205,7 @@ class BitgetPublicWS:
                                 if size_usd > 50000:
                                     side = "BUY" if t.get("side") == "buy" else "SELL"
                                     state.rt_whale[symbol] = f"WHALE_{side}"
-                                    print(f"🐋 [WHALE ALERT] {symbol} | {side} | ${round(size_usd/1000, 1)}K")
+                                    print(f"  [WHALE ALERT] {symbol} | {side} | ${round(size_usd/1000, 1)}K")
                         
                         elif channel == "books5" and "data" in data:
                             for d in data["data"]:
@@ -287,7 +287,7 @@ class FinnhubWS:
                                         sniper = get_sniper_instance()
                                         sniper.process_finnhub_news(headline, score)
                                     except Exception as e:
-                                        print(f"[FINNHUB→SNIPER ERROR] {e}")
+                                        print(f"[FINNHUB SNIPER ERROR] {e}")
                                 
                         elif m_type == "trade" and "data" in data:
                             for t in data["data"]:

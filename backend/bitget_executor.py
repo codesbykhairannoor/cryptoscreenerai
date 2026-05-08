@@ -134,14 +134,14 @@ class BitgetExecutor:
         Hitung size berdasarkan FIXED MARGIN per trade.
         
         Default: $7 margin per trade (fixed, tidak berubah)
-        Notional = $7 × 10x = $70
+        Notional = $7   10x = $70
         SL 15% PnL = -$1.05 per loss
         TP 80% PnL = +$5.60 per win
-        1 win = 5.3 loss → konsisten tidak peduli balance berapa
+        1 win = 5.3 loss   konsisten tidak peduli balance berapa
         
         Kalau balance < $7, pakai semua yang tersedia (minimum $5 notional).
         """
-        FIXED_MARGIN = 7.0  # $7 margin per trade — FIXED
+        FIXED_MARGIN = 7.0  # $7 margin per trade   FIXED
 
         try:
             balance    = self.get_balance()
@@ -257,7 +257,7 @@ class BitgetExecutor:
             order = self.exchange.create_order(symbol, 'market', side, amount)
             print(f"[BITGET CLASSIC] {side.upper()} {symbol} executed @ {leverage}x.")
 
-            # 3. AMBIL HARGA FILL — handle NoneType
+            # 3. AMBIL HARGA FILL   handle NoneType
             raw_price = order.get('price') or order.get('average') or order.get('info', {}).get('priceAvg')
             if raw_price is None or float(raw_price) == 0:
                 ticker = self.exchange.fetch_ticker(symbol)
@@ -272,7 +272,7 @@ class BitgetExecutor:
             if side.lower() in ['long', 'buy']:
                 # SL long harus di bawah fill price
                 if sl and sl > 0 and sl < price:
-                    final_sl = sl   # Pakai SL dari crypto_engine — sudah benar
+                    final_sl = sl   # Pakai SL dari crypto_engine   sudah benar
                 else:
                     final_sl = price * 0.985  # Fallback: 1.5% = 15% PnL
                     print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 1.5%: {round(final_sl,6)}")
@@ -334,7 +334,7 @@ class BitgetExecutor:
             self._set_tp_ccxt(symbol, side, size, tp_price)
 
     def _set_sl_ccxt(self, symbol, side, size, sl_price):
-        """Set SL via ccxt — cancel SL lama dulu, lalu buat yang baru."""
+        """Set SL via ccxt   cancel SL lama dulu, lalu buat yang baru."""
         try:
             tp_side = 'sell' if side in ['long', 'buy'] else 'buy'
             ticker  = self.exchange.fetch_ticker(symbol)
@@ -375,12 +375,9 @@ class BitgetExecutor:
                 symbol, 'market', tp_side, size, None,
                 params={'productType': 'USDT-FUTURES', 'reduceOnly': True, 'stopLossPrice': sl_price}
             )
-            print(f"[SL CCXT] {symbol} SL@{round(sl_price,6)} ✓")
+            print(f"[SL CCXT] {symbol} SL@{round(sl_price,6)} OK", flush=True)
         except Exception as e:
-            print(f"[SL CCXT FAIL] {symbol}: {e}")
-            print(f"[SL CCXT] {symbol} SL@{round(sl_price,6)} ✓")
-        except Exception as e:
-            print(f"[SL CCXT FAIL] {symbol}: {e}")
+            print(f"[SL CCXT FAIL] {symbol}: {e}", flush=True)
 
     def _set_tp_ccxt(self, symbol, side, size, tp_price):
         """Set TP via ccxt."""
@@ -390,9 +387,9 @@ class BitgetExecutor:
                 symbol, 'market', tp_side, size, None,
                 params={'productType': 'USDT-FUTURES', 'reduceOnly': True, 'takeProfitPrice': tp_price}
             )
-            print(f"[TP CCXT] {symbol} TP@{round(tp_price,6)} ✓")
+            print(f"[TP CCXT] {symbol} TP@{round(tp_price,6)} OK", flush=True)
         except Exception as e:
-            print(f"[TP CCXT FAIL] {symbol}: {e}")
+            print(f"[TP CCXT FAIL] {symbol}: {e}", flush=True)
 
     def _set_sl_tp_ccxt(self, symbol, side, size, sl_price=None, tp_price=None):
         """Fallback lengkap: set SL dan TP via ccxt."""
@@ -436,8 +433,8 @@ class BitgetExecutor:
         Prinsip kunci:
         - SL dihitung dari PEAK PnL (tertinggi yang pernah dicapai), bukan PnL saat ini
         - Kalau PnL pernah 50% lalu turun ke 30%, SL tetap di level dari puncak 50%
-        - SL hanya bergerak NAIK (long) atau TURUN (short) — tidak pernah mundur
-        - Gap SL = 15% dari peak PnL (misal peak 50% → SL di 35%)
+        - SL hanya bergerak NAIK (long) atau TURUN (short)   tidak pernah mundur
+        - Gap SL = 15% dari peak PnL (misal peak 50%   SL di 35%)
         """
         try:
             if not hasattr(self, '_last_sl_check'): self._last_sl_check = {}
@@ -475,7 +472,7 @@ class BitgetExecutor:
                 pnl        = float(pos.get('pnl', 0))
                 mark_price = float(pos.get('mark_price', 0))
 
-                # ── SMALL TRADE SCRUBBER ──────────────────────────────────────
+                #    SMALL TRADE SCRUBBER                                       
                 notional = size * mark_price
                 if 0 < notional < 5.0:
                     print(f"[SCRUBBER] Closing micro-position {symbol} (${round(notional,2)})")
@@ -490,7 +487,7 @@ class BitgetExecutor:
                     except Exception as e:
                         print(f"[SCRUBBER ERROR] {symbol}: {e}")
 
-                # ── SIDEWAYS DETECTION ────────────────────────────────────────
+                #    SIDEWAYS DETECTION                                         
                 if symbol not in state.pos_start_time:
                     state.pos_start_time[symbol] = now
                 duration_hours = (now - state.pos_start_time[symbol]) / 3600
@@ -498,7 +495,7 @@ class BitgetExecutor:
 
                 # MINIMUM HOLD TIME: 5 menit sebelum sideways detection aktif
                 # Ini mencegah close terlalu cepat karena noise/spread
-                # RAVE close 12 detik, CRCL close 11 detik — ini yang dicegah
+                # RAVE close 12 detik, CRCL close 11 detik   ini yang dicegah
                 if duration_hours >= (5.0 / 60):  # Sudah > 5 menit
                     SIDEWAYS_WARN_HOURS    = 2.0
                     SIDEWAYS_TIMEOUT_HOURS = 2.667
@@ -531,21 +528,21 @@ class BitgetExecutor:
                                 print(f"[SIDEWAYS WARNING] {symbol} {round(duration_hours,1)}h. "
                                       f"PnL:{pnl}% (need 5%+). Timeout in {remaining_min}min.")
                 else:
-                    # Belum 5 menit — log saja, jangan close
+                    # Belum 5 menit   log saja, jangan close
                     if int(now) % 30 < 2:
                         print(f"[HOLD] {symbol} baru {round(duration_hours*60,1)} menit. Min hold 5 menit.")
 
                 if now - self._last_sl_check.get(symbol, 0) < 10: continue
                 self._last_sl_check[symbol] = now
 
-                # ── UPDATE PEAK PnL ───────────────────────────────────────────
+                #    UPDATE PEAK PnL                                            
                 # Ini kunci: track PnL tertinggi yang pernah dicapai
                 prev_peak = self._peak_pnl.get(symbol, 0)
                 if pnl > prev_peak:
                     self._peak_pnl[symbol] = pnl
                 peak_pnl = self._peak_pnl.get(symbol, pnl)
 
-                # ── DETECT SL/TP ──────────────────────────────────────────────
+                #    DETECT SL/TP                                               
                 clean_sym = self._clean_symbol(symbol)
                 plans     = self.get_pending_plan_orders(symbol)
                 ws_plans  = [o for o in state.orders if self._clean_symbol(
@@ -569,7 +566,7 @@ class BitgetExecutor:
                     print(f"[MONITOR] {symbol} | PNL:{pnl}% PEAK:{peak_pnl}% | "
                           f"SL:{'OK' if has_sl else 'MISSING'} TP:{'OK' if has_tp else 'MISSING'}")
 
-                # ── HARD EXIT ─────────────────────────────────────────────────
+                #    HARD EXIT                                                  
                 if pnl <= -15:
                     print(f"[HARD EXIT] {symbol} hit {pnl}% PNL. Closing.")
                     self.exchange.create_order(symbol, 'market',
@@ -581,7 +578,7 @@ class BitgetExecutor:
                     state.recently_exited[clean] = time.time()
                     continue
 
-                # ── INITIAL GUARD ─────────────────────────────────────────────
+                #    INITIAL GUARD                                              
                 if (not has_sl or not has_tp) and now - self.startup_time > self.warmup_period:
                     if now - self._last_sl_set.get(symbol, 0) > 60:
                         print(f"[GUARD] Protecting {symbol} | SL 15% | TP 80%")
@@ -591,14 +588,14 @@ class BitgetExecutor:
                         if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                         self._last_sl_set[symbol] = now
 
-                # ── TRAILING SL BERBASIS PEAK PnL ─────────────────────────────
+                #    TRAILING SL BERBASIS PEAK PnL                              
                 # Filosofi: biarkan trade jalan sampai TP, jangan potong terlalu cepat.
-                # Altcoin sering koreksi 10-15% sebelum lanjut naik — jangan kena SL.
+                # Altcoin sering koreksi 10-15% sebelum lanjut naik   jangan kena SL.
                 # SL hanya dipindah kalau profit sudah SOLID (peak >= 20%).
                 #
                 # Tabel trailing:
-                # peak < 20%  : DIAM — biarkan SL awal di -15%, jangan ganggu
-                # peak 20-29% : breakeven (entry) — tidak rugi
+                # peak < 20%  : DIAM   biarkan SL awal di -15%, jangan ganggu
+                # peak 20-29% : breakeven (entry)   tidak rugi
                 # peak 30-39% : lock 10% PnL
                 # peak 40-49% : lock 20% PnL
                 # peak 50-59% : lock 30% PnL
@@ -620,7 +617,7 @@ class BitgetExecutor:
                         new_sl = entry * 0.998  # lock 2%
 
                 if new_sl > 0:
-                    # SL hanya boleh naik (long) atau turun (short) — tidak pernah mundur
+                    # SL hanya boleh naik (long) atau turun (short)   tidak pernah mundur
                     if side in ['long', 'buy']:
                         is_better = new_sl > sl_p
                     else:
