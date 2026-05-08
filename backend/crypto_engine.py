@@ -907,13 +907,21 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     falling_knife = tech.get('falling_knife', False)
     flying_rocket = tech.get('flying_rocket', False)
 
+    #  SMC PROTECTION (HARAM RULE) 
+    # Jangan pernah ngeshort di area Demand (Support) karena pasti mantul
+    # Jangan pernah ngelong di area Supply (Resistance) karena pasti rontok
+    in_demand = tech.get('in_demand', False)
+    in_supply = tech.get('in_supply', False)
+
     # Kalau 4h bearish dan tidak ada reversal signal = skip BUY
     # ATAU kalau harga masih terjun bebas (pisau jatuh) = HARAM BUY!
-    block_buy  = (trend_4h == 'BEARISH' and not has_strong_reversal_buy) or falling_knife
+    # ATAU harga nyentuh Supply Zone = HARAM BUY!
+    block_buy  = (trend_4h == 'BEARISH' and not has_strong_reversal_buy) or falling_knife or in_supply
     
     # Kalau 4h bullish dan tidak ada reversal signal = skip SELL
     # ATAU kalau harga masih meroket = HARAM SELL!
-    block_sell = (trend_4h == 'BULLISH' and not has_strong_reversal_sell) or flying_rocket
+    # ATAU harga nyentuh Demand Zone = HARAM SELL!
+    block_sell = (trend_4h == 'BULLISH' and not has_strong_reversal_sell) or flying_rocket or in_demand
 
     # Kalau 1h juga berlawanan = block lebih ketat
     if trend_1h == 'BEARISH' and trend_4h == 'BEARISH':
