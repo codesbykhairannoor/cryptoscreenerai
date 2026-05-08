@@ -59,28 +59,17 @@ class ForexExecutor:
         self._close_attempted   = set()
         self._dxy_cache         = {"change": 0.0, "trend": "NEUTRAL", "ts": 0}
         # Session loss tracking
-        self._session_loss_usd  = 0.0   # total loss dalam sesi ini
+        self._session_loss_usd  = 0.0
         self._session_start_ts  = time.time()
-        self._last_session_hour = -1    # track pergantian sesi
+        self._last_session_hour = -1
 
         if self.is_active:
             try:
-                info = self.get_account_information()
-                if info:
-                    print("[FOREX STARTUP] MT5 Balance: $" + str(info.get("balance",0)) + " Equity: $" + str(info.get("equity",0)))
-                pos = self._get_positions()
-                if pos:
-                    print("[FOREX STARTUP] Active Trades: " + str(len(pos)))
-                    for p in pos[:5]:
-                        print("   > " + str(p.get("symbol")) + " | Vol: " + str(p.get("volume")) + " | Profit: " + str(p.get("profit")))
-                else:
-                    print("[FOREX STARTUP] No active trades.")
                 self._working_symbol = self._resolve_symbol("XAUUSD")
-                print("[FOREX STARTUP] Working symbol: " + str(self._working_symbol))
-            except Exception as e:
-                print("[FOREX STARTUP ERROR] " + str(e))
+            except Exception:
+                self._working_symbol = "XAUUSDc"
         else:
-            print("[FOREX] MetaAPI credentials missing. Forex engine disabled.")
+            print("[FOREX] MetaAPI credentials missing. Forex engine disabled.", flush=True)
 
     #  ACCOUNT & CONNECTION 
 
@@ -1374,9 +1363,20 @@ class ForexExecutor:
         - DXY macro context
         - Trailing aktif dari 3 poin profit
         """
-        print("[FOREX ENGINE v6.0] Aggressive Genius XAUUSD Scalper AKTIF!")
-        print("  Sessions: Asia(02-05) + London(07-16) + NY(12-21) UTC")
-        print("  TP: " + str(SCALP_TP_POINTS) + " pts | SL: " + str(SCALP_SL_POINTS) + " pts | Cooldown: " + str(COOLDOWN_AFTER_TRADE) + "s")
+        # ONE-TIME startup info - hanya print sekali saat thread mulai
+        try:
+            info = self.get_account_information()
+            if info:
+                print(f"[FOREX] MT5 Ready | Bal: ${info.get('balance',0)} | Eq: ${info.get('equity',0)} | Sym: {self._working_symbol}", flush=True)
+            pos = self._get_positions()
+            if pos:
+                print(f"[FOREX] Active: {len(pos)} trades", flush=True)
+                for p in pos[:3]:
+                    print(f"   > {p.get('symbol')} | Vol: {p.get('volume')} | Profit: {p.get('profit')}", flush=True)
+        except Exception as e:
+            print(f"[FOREX STARTUP ERROR] {e}", flush=True)
+
+        print("[FOREX ENGINE v6.0] XAUUSD Scalper AKTIF! TP:" + str(SCALP_TP_POINTS) + " SL:" + str(SCALP_SL_POINTS), flush=True)
         last_auto_trade = 0
 
         while True:
