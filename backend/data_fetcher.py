@@ -292,7 +292,7 @@ def detect_stop_hunt(symbol: str) -> dict:
         r = requests.get(url_1m, timeout=5, verify=False)
         if r.status_code != 200:
             return {"bull_stop_hunt": False, "bear_stop_hunt": False, "hunt_strength": 0}
-
+# halo
         data = r.json().get('data', [])
         if len(data) < 5:
             return {"bull_stop_hunt": False, "bear_stop_hunt": False, "hunt_strength": 0}
