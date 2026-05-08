@@ -1196,7 +1196,7 @@ def run_crypto_engine():
                     if int(now) % 60 < 10:
                         events = cal.get("events", [])
                         ev_str = events[0]["title"] if events else "Unknown"
-                        print(f"[NEWS CALENDAR] '{ev_str}' dalam 30 menit! Observasi jalan, eksekusi di-block.")
+                        print(f"[NEWS CALENDAR] '{ev_str}' dalam 30 menit! Observasi jalan, eksekusi di-block.", flush=True)
             except Exception:
                 pass
 
@@ -1468,7 +1468,7 @@ def run_crypto_engine():
             # Summary scan cycle
             skip_str = " | ".join(f"{k}:{v}" for k, v in skip_reasons.items()) if skip_reasons else "none"
             print(f"[SCAN] {scan_count} masuk watchlist | Skip: {skip_str} | "
-                  f"Cooldown: {'YA ' + str(round(cooldown_remaining))+'s' if in_cooldown else 'TIDAK - SIAP ENTRY'}")
+                  f"Cooldown: {'YA ' + str(round(cooldown_remaining))+'s' if in_cooldown else 'TIDAK - SIAP ENTRY'}", flush=True)
 
             #  10. KEPUTUSAN ENTRY 
             if in_cooldown:

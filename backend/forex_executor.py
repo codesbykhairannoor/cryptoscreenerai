@@ -1404,7 +1404,7 @@ class ForexExecutor:
 
                 if broker_price > 0:
                     if int(time.time()) % 10 < 3:
-                        print("[FOREX] Price: " + str(broker_price) + " | Trades: " + str(active_count) + " | Lots: " + str(round(total_lots,2)) + " | Spread: " + str(spread_pts) + "pts")
+                        print("[FOREX] Price: " + str(broker_price) + " | Trades: " + str(active_count) + " | Lots: " + str(round(total_lots,2)) + " | Spread: " + str(spread_pts) + "pts", flush=True)
 
                 if broker_price > 0 and positions:
                     for p in positions:
@@ -1491,7 +1491,7 @@ class ForexExecutor:
                 pump_sig = ind.get("pump_signal", "NONE")
                 
                 if int(now) % 10 < 3:
-                    print("[FOREX SCAN] RSI:" + str(rsi_val) + " 30m:" + trend + " 1h:" + trend_1h + " 4h:" + trend_4h + " Pump:" + pump_sig)
+                    print("[FOREX SCAN] RSI:" + str(rsi_val) + " 30m:" + trend + " 1h:" + trend_1h + " 4h:" + trend_4h + " Pump:" + pump_sig, flush=True)
 
                 # DETERMINE SIDE  HARUS SEBELUM COMMIT CHECK
                 side, score, trades_to_open = self._determine_side(ind, spread_pts)
