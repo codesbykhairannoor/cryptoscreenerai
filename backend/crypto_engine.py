@@ -1604,7 +1604,7 @@ def run_crypto_engine():
 
             # ── EKSEKUSI ──────────────────────────────────────────────────────
             print(f"\n{'='*65}")
-            print(f"[WHALE OBSERVER] 🎯 ENTRY: {clean_base} {side.upper()}")
+            print(f"[WHALE OBSERVER] ENTRY: {clean_base} {side.upper()}")
             print(f"  Reason      : {reason}")
             print(f"  Avg Score   : {best['avg_score']}/100 | Final: {best['final_score']}")
             print(f"  Future Score: {best['future_score']} | Appearances: {best['appearances']}x")
