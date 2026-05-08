@@ -17,12 +17,6 @@ import requests
 import random
 import threading
 import time
-import sys
-import io
-
-# Force UTF-8 for Windows CMD compatibility
-if sys.platform == "win32":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
 app = FastAPI()
 

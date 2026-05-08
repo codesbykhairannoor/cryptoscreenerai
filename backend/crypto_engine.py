@@ -33,16 +33,7 @@ MATEMATIKA:
 
 import time
 import requests
-import sys
-import io
 from collections import defaultdict
-
-# Force UTF-8 for Windows CMD compatibility
-if sys.platform == "win32":
-    try:
-        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-    except:
-        pass
 
 from data_fetcher import (
     fetch_all_tickers, get_technical_indicators,
