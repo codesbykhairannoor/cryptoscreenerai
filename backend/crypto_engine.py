@@ -52,9 +52,9 @@ COOLDOWN_AFTER_TRADE = 60     # INSTANT SNIPER: Hanya 1 menit cooldown setelah t
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 60     # NAIK DRASTIS: Hanya ambil setup A+
-MIN_TECH_SCORE       = 45     # NAIK DRASTIS
-MIN_PUMP_SCORE       = 35     # NAIK DRASTIS
+MIN_MOMENTUM_SCORE   = 60     # Minimum combined score untuk masuk watchlist
+MIN_TECH_SCORE       = 55     # NAIK dari 45 ke 55 — tech score harus kuat, bukan cuma pump score yang angkat
+MIN_PUMP_SCORE       = 35
 
 #  WHALE OBSERVER CONFIG 
 MIN_APPEARANCES      = 3      # Minimal 3x muncul dalam observasi (sebelumnya 1 = tidak ada observasi)
@@ -1513,8 +1513,13 @@ def run_crypto_engine():
                 )
 
                 combined_score = round(
-                    ((dump_sc if side == "sell" else pump_sc) * 0.5) + (tech_score * 0.5)
+                    ((dump_sc if side == "sell" else pump_sc) * 0.3) + (tech_score * 0.7)
                 )
+                # Penjelasan bobot baru:
+                # Sebelumnya: pump 50% + tech 50% → pump score 80 bisa angkat tech score 51 jadi 65 (lolos)
+                # Sekarang:   pump 30% + tech 70% → pump score 80 + tech score 51 = 59.7 (tidak lolos MIN_TECH_SCORE 55)
+                # Tech score harus dominan karena dia yang tahu apakah harga di area yang tepat
+                # Pump score hanya sebagai filter awal, bukan penentu entry
                 if side is None or combined_score < MIN_MOMENTUM_SCORE or tech_score < MIN_TECH_SCORE:
                     skip_reasons['low_score'] = skip_reasons.get('low_score', 0) + 1
 
@@ -1720,6 +1725,105 @@ def run_crypto_engine():
 
             rsi       = tech.get('rsi', 50)
             vwap_dist = _calc_vwap_dist(mark_price, symbol)
+
+            # ── 5M ENTRY CONFIRMATION ──────────────────────────────────────────
+            # Masalah utama: bot lihat 15m bagus tapi di 5m harga di area supply
+            # dari bounce sebelumnya — entry di tengah no man's land.
+            #
+            # Cek 3 hal di 5m sebelum entry:
+            # 1. Apakah harga di bawah VWAP 5m? (discount zone untuk BUY)
+            # 2. Apakah MA5 > MA10 di 5m? (momentum 5m bullish untuk BUY)
+            # 3. Apakah tidak ada bearish structure di 5m? (lower high/lower low)
+            try:
+                url_5m = (f"https://api.bitget.com/api/v2/mix/market/history-candles"
+                          f"?symbol={symbol}&granularity=5m&limit=20&productType=USDT-FUTURES")
+                r5 = requests.get(url_5m, timeout=5, verify=False)
+                if r5.status_code == 200:
+                    data_5m = r5.json().get('data', [])
+                    if len(data_5m) >= 10:
+                        closes_5m = [float(c[4]) for c in data_5m]
+                        highs_5m  = [float(c[2]) for c in data_5m]
+                        lows_5m   = [float(c[3]) for c in data_5m]
+                        vols_5m   = [float(c[5]) for c in data_5m]
+
+                        # VWAP 5m (20 candle = 100 menit)
+                        cum_pv = sum((highs_5m[i]+lows_5m[i]+closes_5m[i])/3 * vols_5m[i]
+                                     for i in range(len(closes_5m)))
+                        cum_v  = sum(vols_5m)
+                        vwap_5m = cum_pv / cum_v if cum_v > 0 else closes_5m[-1]
+                        price_vs_vwap_5m = (closes_5m[-1] - vwap_5m) / vwap_5m * 100
+
+                        # MA5 dan MA10 di 5m
+                        ma5_5m  = sum(closes_5m[-5:]) / 5
+                        ma10_5m = sum(closes_5m[-10:]) / 10
+
+                        # Bearish structure di 5m: lower high + lower low di 3 candle terakhir
+                        lh = highs_5m[-1] < highs_5m[-2] < highs_5m[-3]
+                        ll = lows_5m[-1]  < lows_5m[-2]  < lows_5m[-3]
+                        bearish_5m = lh or ll
+
+                        # Bullish structure di 5m: higher high + higher low
+                        hh = highs_5m[-1] > highs_5m[-2]
+                        hl = lows_5m[-1]  > lows_5m[-2]
+                        bullish_5m = hh and hl
+
+                        # Resistance dari bounce: harga sudah naik > 3% dari low 5m terakhir
+                        # dan sekarang di area atas dari range itu = area supply dari bounce
+                        low_5m_recent  = min(lows_5m[-10:])
+                        high_5m_recent = max(highs_5m[-10:])
+                        range_5m = high_5m_recent - low_5m_recent
+                        pos_in_range_5m = ((closes_5m[-1] - low_5m_recent) / range_5m * 100) if range_5m > 0 else 50
+                        bounce_pct = ((closes_5m[-1] - low_5m_recent) / low_5m_recent * 100) if low_5m_recent > 0 else 0
+
+                        # BLOCK BUY kalau di 5m:
+                        # - Harga di atas VWAP 5m (premium zone) DAN bearish structure
+                        # - ATAU harga sudah bounce > 5% dari low dan di 70%+ dari range 5m
+                        #   (ini yang terjadi di NIL: bounce dari 0.06655 ke 0.07115 = +6.9%)
+                        block_5m_buy = False
+                        block_5m_sell = False
+
+                        if side == "buy":
+                            if price_vs_vwap_5m > 1.0 and bearish_5m:
+                                block_5m_buy = True
+                                print(f"[5M GUARD] {clean_base} BUY diblokir: "
+                                      f"Harga di atas VWAP 5m (+{round(price_vs_vwap_5m,2)}%) "
+                                      f"+ bearish structure 5m. Entry di area supply bounce.")
+                            elif bounce_pct > 5.0 and pos_in_range_5m > 70:
+                                block_5m_buy = True
+                                print(f"[5M GUARD] {clean_base} BUY diblokir: "
+                                      f"Sudah bounce {round(bounce_pct,1)}% dari low, "
+                                      f"harga di {round(pos_in_range_5m,0)}% dari range 5m. "
+                                      f"Terlambat untuk BUY — tunggu pullback.")
+                            elif ma5_5m < ma10_5m and not bullish_5m:
+                                block_5m_buy = True
+                                print(f"[5M GUARD] {clean_base} BUY diblokir: "
+                                      f"MA5({round(ma5_5m,6)}) < MA10({round(ma10_5m,6)}) di 5m "
+                                      f"= momentum 5m masih bearish.")
+                        elif side == "sell":
+                            if price_vs_vwap_5m < -1.0 and bullish_5m:
+                                block_5m_sell = True
+                                print(f"[5M GUARD] {clean_base} SELL diblokir: "
+                                      f"Harga di bawah VWAP 5m ({round(price_vs_vwap_5m,2)}%) "
+                                      f"+ bullish structure 5m. Entry di area demand.")
+                            elif bounce_pct < -5.0 and pos_in_range_5m < 30:
+                                block_5m_sell = True
+                                print(f"[5M GUARD] {clean_base} SELL diblokir: "
+                                      f"Sudah dump {round(abs(bounce_pct),1)}% dari high, "
+                                      f"harga di {round(pos_in_range_5m,0)}% dari range 5m. "
+                                      f"Terlambat untuk SELL — tunggu pullback.")
+
+                        if block_5m_buy or block_5m_sell:
+                            skip_reasons['5m_guard'] = skip_reasons.get('5m_guard', 0) + 1
+                            observer.reset()
+                            time.sleep(SCAN_INTERVAL)
+                            continue
+
+                        print(f"[5M OK] {clean_base} | VWAP5m:{round(price_vs_vwap_5m,2)}% "
+                              f"| MA5>{round(ma5_5m,6)} MA10>{round(ma10_5m,6)} "
+                              f"| Pos:{round(pos_in_range_5m,0)}% Bounce:{round(bounce_pct,1)}% "
+                              f"| {'BULL' if bullish_5m else 'BEAR' if bearish_5m else 'NEUTRAL'}_5m")
+            except Exception as _e5m:
+                print(f"[5M GUARD] Gagal cek 5m untuk {clean_base}: {_e5m}. Lanjut tanpa 5m check.")
 
             # Re-validasi side dengan data fresh
             fresh_side, fresh_reason, fresh_tech_score = _determine_trade_side(
