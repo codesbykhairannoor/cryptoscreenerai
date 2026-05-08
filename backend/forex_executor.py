@@ -1521,7 +1521,8 @@ class ForexExecutor:
                 # MARKET REGIME FILTER (ADX)
                 adx = self._calc_adx_forex()
                 if adx < 18:
-                    print("[REGIME] XAUUSD ADX=" + str(adx) + " RANGING. Skip entry.")
+                    if do_log:
+                        print("[REGIME] XAUUSD ADX=" + str(adx) + " RANGING. Skip entry.", flush=True)
                     time.sleep(SCAN_INTERVAL)
                     continue
                 regime = "TRENDING" if adx >= 22 else "WEAK_TREND"

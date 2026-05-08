@@ -1184,13 +1184,23 @@ def run_crypto_engine():
                         } for c in top5]
                         print("[DEEPSEEK] Requesting AI analysis...", flush=True)
                         result = analyze_market_data(str(top5_simple))
-                        print("[DEEPSEEK ANALYSIS]", flush=True)
-                        for line in str(result).split("\n"):
-                            if line.strip():
-                                print(f"  {line}", flush=True)
+                        
+                        if "Insufficient Balance" in str(result):
+                            print("[DEEPSEEK ERROR] Insufficient Balance. Please top up your DeepSeek account.", flush=True)
+                            # Suspend DeepSeek analysis for 4 hours to avoid spamming
+                            last_deepseek_report = now + (3600 * 4) - 900
+                        else:
+                            print("[DEEPSEEK ANALYSIS]", flush=True)
+                            for line in str(result).split("\n"):
+                                if line.strip():
+                                    print(f"  {line}", flush=True)
                 except Exception as e:
-                    print(f"[DEEPSEEK ERROR] {e}", flush=True)
-                last_deepseek_report = now
+                    if "Insufficient Balance" in str(e):
+                        print("[DEEPSEEK ERROR] Insufficient Balance. Please top up your DeepSeek account.", flush=True)
+                        last_deepseek_report = now + (3600 * 4) - 900
+                    else:
+                        print(f"[DEEPSEEK ERROR] {e}", flush=True)
+                last_deepseek_report = now if last_deepseek_report < now else last_deepseek_report
 
             #  3. GLOBAL CONTEXT (setiap 5 menit) 
             if now - last_global_report > GLOBAL_REPORT_INTERVAL:

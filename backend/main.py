@@ -83,12 +83,9 @@ def startup_event():
     # 5. Start Heartbeat Monitor (Visual Feedback)
     def system_heartbeat():
         while True:
-            try:
-                now_str = time.strftime("%H:%M:%S")
-                print(f"[HEARTBEAT] {now_str} | Bot is monitoring Crypto & Forex...  ", flush=True)
-                time.sleep(5)
-            except:
-                time.sleep(5)
+            # Heartbeat silent - hanya untuk menjaga thread utama tetap hidup di log kalau perlu
+            time.sleep(60)
+    
     
     hb_thread = threading.Thread(target=system_heartbeat, daemon=True)
     hb_thread.start()
