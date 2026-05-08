@@ -1,7 +1,6 @@
-import psycopg2
-from psycopg2.extras import RealDictCursor
 import os
 import time
+import sqlite3
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,16 +8,30 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_connection():
-    return psycopg2.connect(DATABASE_URL)
+    """Mencoba koneksi ke PostgreSQL, jika gagal fallback ke SQLite (local)."""
+    try:
+        import psycopg2
+        return psycopg2.connect(DATABASE_URL)
+    except Exception:
+        # Fallback ke SQLite jika PostgreSQL tidak tersedia/gagal
+        # database_url di .env mungkin kosong atau tidak valid
+        return sqlite3.connect("trading_bot.db", check_same_thread=False)
+
+def is_sqlite(conn):
+    return isinstance(conn, sqlite3.Connection)
+
 
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
 
     # Tabel utama trades
-    cursor.execute('''
+    id_type = "SERIAL" if not is_sqlite(conn) else "INTEGER"
+    pk_extra = "PRIMARY KEY" if not is_sqlite(conn) else "PRIMARY KEY AUTOINCREMENT"
+    
+    cursor.execute(f'''
         CREATE TABLE IF NOT EXISTS trades (
-            id SERIAL PRIMARY KEY,
+            id {id_type} {pk_extra},
             symbol TEXT NOT NULL,
             entry_price DOUBLE PRECISION,
             tp_price DOUBLE PRECISION,
@@ -85,11 +98,13 @@ def log_trade(symbol, entry, tp, sl, market='crypto', side='buy',
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute('''
+        placeholder = "%s" if not is_sqlite(conn) else "?"
+        
+        cursor.execute(f'''
             INSERT INTO trades
                 (symbol, entry_price, tp_price, sl_price, status, market, side,
                  lot_size, score, reason, session, timestamp)
-            VALUES (%s, %s, %s, %s, 'PENDING', %s, %s, %s, %s, %s, %s, %s)
+            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 'PENDING', {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
         ''', (symbol, entry, tp, sl, market, side,
               float(lot_size), int(score), str(reason)[:200], session,
               int(time.time() * 1000)))
@@ -109,13 +124,15 @@ def close_trade(symbol, exit_price, pnl_usd=0, market='crypto'):
     exit_price = float(exit_price) if exit_price else 0.0
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute('''
+    placeholder = "%s" if not is_sqlite(conn) else "?"
+    
+    cursor.execute(f'''
         UPDATE trades
-        SET exit_price = %s,
-            pnl_usd    = %s,
-            status     = CASE WHEN %s >= 0 THEN 'WIN' ELSE 'LOSS' END,
-            closed_at  = %s
-        WHERE symbol = %s AND market = %s AND status IN ('PENDING', 'RUNNING')
+        SET exit_price = {placeholder},
+            pnl_usd    = {placeholder},
+            status     = CASE WHEN {placeholder} >= 0 THEN 'WIN' ELSE 'LOSS' END,
+            closed_at  = {placeholder}
+        WHERE symbol = {placeholder} AND market = {placeholder} AND status IN ('PENDING', 'RUNNING')
     ''', (exit_price, float(pnl_usd), float(pnl_usd),
           int(time.time() * 1000), symbol, market))
     conn.commit()
@@ -151,7 +168,13 @@ def get_current_price(symbol, market='crypto'):
 
 def check_pending_trades():
     conn = get_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    if is_sqlite(conn):
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+    else:
+        from psycopg2.extras import RealDictCursor
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        
     cursor.execute(
         "SELECT id, symbol, entry_price, tp_price, sl_price, status, market "
         "FROM trades WHERE status IN ('PENDING', 'RUNNING')"
@@ -188,8 +211,9 @@ def check_pending_trades():
 
             if status != current_status:
                 pnl = (current_price - entry) if is_long else (entry - current_price)
+                placeholder = "%s" if not is_sqlite(conn) else "?"
                 cursor.execute(
-                    "UPDATE trades SET status = %s, exit_price = %s, closed_at = %s WHERE id = %s",
+                    f"UPDATE trades SET status = {placeholder}, exit_price = {placeholder}, closed_at = {placeholder} WHERE id = {placeholder}",
                     (status, current_price, int(time.time() * 1000), trade_id)
                 )
                 conn.commit()
@@ -203,7 +227,8 @@ def get_performance_stats(market=None):
     conn = get_connection()
     cursor = conn.cursor()
 
-    q_filter = "AND market = %s" if market else ""
+    placeholder = "%s" if not is_sqlite(conn) else "?"
+    q_filter = f"AND market = {placeholder}" if market else ""
     params   = (market,) if market else ()
 
     def count(where):
@@ -237,16 +262,23 @@ def get_performance_stats(market=None):
 def get_trade_history(market=None, limit=50):
     """Ambil history trade untuk analisis."""
     conn = get_connection()
-    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    
+    if is_sqlite(conn):
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+    else:
+        from psycopg2.extras import RealDictCursor
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
 
+    placeholder = "%s" if not is_sqlite(conn) else "?"
     if market:
         cursor.execute(
-            "SELECT * FROM trades WHERE market = %s ORDER BY timestamp DESC LIMIT %s",
+            f"SELECT * FROM trades WHERE market = {placeholder} ORDER BY timestamp DESC LIMIT {placeholder}",
             (market, limit)
         )
     else:
         cursor.execute(
-            "SELECT * FROM trades ORDER BY timestamp DESC LIMIT %s",
+            f"SELECT * FROM trades ORDER BY timestamp DESC LIMIT {placeholder}",
             (limit,)
         )
 
