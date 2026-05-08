@@ -782,6 +782,17 @@ class ForexExecutor:
         elif mss_bear and vol_spike:
             pump_signal = "BREAKOUT_DOWN"
 
+        # SANITY CHECK: pump_signal harus konsisten dengan HTF trend
+        # Kalau semua trend bullish tapi pump_signal = DUMP_IMMINENT = kontradiksi
+        # Ini bisa terjadi karena candle cache stale atau RSI divergence noise
+        # Dalam kasus ini, reset pump_signal ke NONE agar tidak mislead scoring
+        trend_1h_pre = self._get_htf_trend("1h")
+        trend_4h_pre = self._get_htf_trend("4h")
+        if pump_signal == "DUMP_IMMINENT" and trend == "BULLISH" and trend_1h_pre == "BULLISH" and trend_4h_pre == "BULLISH":
+            pump_signal = "NONE"  # Triple bullish + DUMP_IMMINENT = noise, abaikan
+        if pump_signal == "PUMP_IMMINENT" and trend == "BEARISH" and trend_1h_pre == "BEARISH" and trend_4h_pre == "BEARISH":
+            pump_signal = "NONE"  # Triple bearish + PUMP_IMMINENT = noise, abaikan
+
         # ?????? EXHAUSTION (FOMO) DETECTION ??????????????????????????????????????????????????????????????????????????????????????????????????????????????????
         # Jangan buy hijau panjang di pucuk, jangan sell merah panjang di dasar
         last_body_pct = abs(closes[-1] - float(candles[-1].get("open", closes[-1]))) / (highs[-1] - lows[-1]) if (highs[-1] - lows[-1]) > 0 else 0
@@ -790,9 +801,9 @@ class ForexExecutor:
         # Exhaustion Dump: Candle merah panjang, close dekat low, harga terendah dari 5 candle terakhir
         is_exhaustion_dump = (closes[-1] < float(candles[-1].get("open", closes[-1]))) and (last_body_pct > 0.6) and (lows[-1] <= min(lows[-5:]))
 
-        # HTF trends (1h dan 4h)  bias filter
-        trend_1h = self._get_htf_trend("1h")
-        trend_4h = self._get_htf_trend("4h")
+        # HTF trends (1h dan 4h)  bias filter — pakai hasil yang sudah dihitung di atas
+        trend_1h = trend_1h_pre
+        trend_4h = trend_4h_pre
 
         # Order Book & Whale (via MetaAPI tick/volume)
         ob_data      = self._get_gold_orderbook()

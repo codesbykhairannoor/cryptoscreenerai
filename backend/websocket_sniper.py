@@ -24,7 +24,7 @@ class BitgetPrivateWS:
         self.api_key = os.getenv("BITGET_API_KEY")
         self.secret_key = os.getenv("BITGET_SECRET_KEY")
         self.passphrase = os.getenv("BITGET_PASSPHRASE")
-        self.executor = BitgetExecutor()
+        # executor dihapus — tidak pernah dipakai (sync sudah di-comment out)
         self.is_running = True
 
     def get_signature(self, timestamp):

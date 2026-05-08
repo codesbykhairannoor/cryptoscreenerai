@@ -1035,7 +1035,8 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     # Setup 8: Demand Zone Entry
     # Demand zone = area akumulasi institusi = valid LONG
     # Tapi HANYA kalau harga benar-benar di demand zone (bukan supply)
-    if tech.get('in_demand', False) and not in_supply:
+    # DAN block_buy tidak aktif (tidak ada falling knife, dll)
+    if not block_buy and tech.get('in_demand', False) and not in_supply:
         dz = tech.get('demand_zone', {})
         min_strength = 3 if trend_4h == 'BEARISH' else 1
         if dz.get('strength', 0) >= min_strength:
@@ -1589,8 +1590,11 @@ def run_crypto_engine():
                     zone_info = ""
                     if tech.get('in_demand'):       zone_info += " [DEMAND]"
                     if tech.get('in_supply'):       zone_info += " [SUPPLY]"
-                    if tech.get('still_falling'):   zone_info += " [STILL_FALLING]"
-                    if tech.get('still_rising'):    zone_info += " [STILL_RISING]"
+                    if tech.get('still_falling'):   zone_info += " [STILL_FALLING⚠️BUY_BLOCKED]"
+                    if tech.get('still_rising') and side == "buy":
+                        zone_info += " [STILL_RISING-OK_FOR_BUY]"  # rising = momentum bagus untuk BUY
+                    elif tech.get('still_rising') and side == "sell":
+                        zone_info += " [STILL_RISING⚠️SELL_BLOCKED]"
                     if tech.get('bearish_structure'): zone_info += " [BEAR_STRUCT]"
                     if tech.get('bullish_structure'): zone_info += " [BULL_STRUCT]"
                     cr = tech.get('consec_red', 0)
