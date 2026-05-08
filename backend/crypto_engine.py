@@ -846,6 +846,16 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
     if side == "buy"  and funding > 0.001:  score -= 10  # Longs terlalu mahal
     if side == "sell" and funding < -0.001: score -= 10  # Shorts terlalu mahal
 
+    # 8. Binance Long/Short Ratio (Squeeze / Stop Hunt Predictor)
+    ls_ratio = tech.get('ls_ratio', 1.0)
+    if ls_ratio > 0:
+        if side == "buy":
+            if ls_ratio < 0.6: score += 15    # Retail nge-short parah = Siap-siap Short Squeeze (Pump)
+            elif ls_ratio > 2.5: score -= 15  # Retail terlalu banyak Long = Rawan Dump
+        else:
+            if ls_ratio > 2.5: score += 15    # Retail terlalu banyak Long = Siap-siap Long Squeeze (Dump)
+            elif ls_ratio < 0.6: score -= 15  # Retail nge-short parah = Rawan Pump
+
     return max(0, min(100, score))
 
 

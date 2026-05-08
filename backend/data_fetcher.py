@@ -559,6 +559,28 @@ def get_funding_rate(symbol):
     except: pass
     return 0
 
+def get_binance_ls_ratio(symbol):
+    """
+    Nyontek data Long/Short Ratio dari Binance (Volume terbesar)
+    Berguna untuk melihat apakah retail sedang dominan Long atau Short.
+    Jika LS Ratio > 2.5, artinya retail terlalu banyak Long = Rawan Dump (Stop Hunt).
+    Jika LS Ratio < 0.5, artinya retail terlalu banyak Short = Rawan Pump (Short Squeeze).
+    """
+    try:
+        clean_symbol = symbol.replace("USDT_UMCBL", "USDT").replace("_UMCBL", "")
+        # Fallback to USDT if perp or something else is attached
+        if not clean_symbol.endswith("USDT"):
+            clean_symbol = clean_symbol.split("_")[0] + "USDT"
+            
+        url = f"https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol={clean_symbol}&period=15m&limit=1"
+        r = requests.get(url, timeout=5, verify=False)
+        if r.status_code == 200:
+            data = r.json()
+            if data and isinstance(data, list):
+                return float(data[0].get('longShortRatio', 1.0))
+    except: pass
+    return 1.0
+
 def get_technical_indicators(symbol, interval="15m"):
     """
     ULTIMATE INDICATOR ENGINE v5.1: SMC + Order Flow + Predictive Structure
@@ -758,6 +780,7 @@ def get_technical_indicators(symbol, interval="15m"):
             "ema_50_4h": round(ema_50_4h, 6),
             "open_interest": get_open_interest(symbol),
             "funding_rate": get_funding_rate(symbol),
+            "ls_ratio": get_binance_ls_ratio(symbol),
             "htf": "1h",
             "falling_knife": falling_knife,
             "flying_rocket": flying_rocket

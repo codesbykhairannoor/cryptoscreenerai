@@ -59,15 +59,23 @@ def get_forex_news():
 
 def get_market_news_digest():
     """
-    Summarizes the general market sentiment from all sources.
-    This is what the bot 'thinks' about the current future trend.
+    Summarizes the general market sentiment from CryptoPanic and Forex.
     """
     try:
-        # 1. Crypto Headlines
-        c_url = "https://www.coindesk.com/arc/outboundfeeds/rss/"
-        c_res = requests.get(c_url, timeout=5)
-        c_root = ET.fromstring(c_res.content)
-        c_headlines = [item.find('title').text for item in c_root.findall('.//item')[:3]]
+        api_key = os.getenv("CRYPTOPANIC_API_KEY")
+        c_headlines = []
+        if api_key:
+            # 1. CryptoPanic Top News
+            c_url = f"https://cryptopanic.com/api/v1/posts/?auth_token={api_key}&filter=hot"
+            c_res = requests.get(c_url, timeout=5)
+            if c_res.status_code == 200:
+                posts = c_res.json().get('results', [])[:3]
+                c_headlines = [p.get('title', '') for p in posts]
+        else:
+            c_url = "https://www.coindesk.com/arc/outboundfeeds/rss/"
+            c_res = requests.get(c_url, timeout=5)
+            c_root = ET.fromstring(c_res.content)
+            c_headlines = [item.find('title').text for item in c_root.findall('.//item')[:3]]
         
         # 2. Forex Headlines
         f_url = "https://content.dailyfx.com/feeds/forex_market_news"
@@ -78,9 +86,9 @@ def get_market_news_digest():
         # 3. Analyze Sentiment
         all_news = " ".join(c_headlines + f_headlines).upper()
         sentiment = "NEUTRAL"
-        if any(x in all_news for x in ["BULLISH", "SURGE", "GAINS", "RECOVERY", "ADOPTION", "EASE"]):
+        if any(x in all_news for x in ["BULLISH", "SURGE", "GAINS", "RECOVERY", "ADOPTION", "EASE", "PUMP", "BREAKOUT"]):
             sentiment = "BULLISH"
-        elif any(x in all_news for x in ["BEARISH", "CRASH", "DROP", "INFLATION", "HIKE", "CRACKDOWN"]):
+        elif any(x in all_news for x in ["BEARISH", "CRASH", "DROP", "INFLATION", "HIKE", "CRACKDOWN", "DUMP", "HACK"]):
             sentiment = "BEARISH"
             
         return {
@@ -93,23 +101,46 @@ def get_market_news_digest():
 
 def get_crypto_news(symbol):
     """
-    Fetches real news headlines and checks for symbol mentions.
+    Fetches real news headlines from CryptoPanic specifically for the given symbol.
     """
     try:
-        url = "https://www.coindesk.com/arc/outboundfeeds/rss/"
-        res = requests.get(url, timeout=5)
-        root = ET.fromstring(res.content)
-        
-        headlines = [item.find('title').text for item in root.findall('.//item')]
+        api_key = os.getenv("CRYPTOPANIC_API_KEY")
         clean_symbol = symbol.replace("USDT", "").upper()
-        mentions = [h for h in headlines if clean_symbol in h.upper()]
         
-        if mentions:
-            msg = f"[NEWS] {clean_symbol}: {mentions[0]}"
-            print(msg)
-            return msg
+        if api_key:
+            # Query CryptoPanic API for the specific coin
+            url = f"https://cryptopanic.com/api/v1/posts/?auth_token={api_key}&currencies={clean_symbol}&kind=news"
+            res = requests.get(url, timeout=5)
+            if res.status_code == 200:
+                posts = res.json().get('results', [])
+                if posts:
+                    # Cek sentimen (Bullish/Bearish votes di CryptoPanic)
+                    post = posts[0]
+                    title = post.get('title', '')
+                    votes = post.get('votes', {})
+                    bullish_votes = votes.get('positive', 0) + votes.get('important', 0)
+                    bearish_votes = votes.get('negative', 0) + votes.get('toxic', 0)
+                    
+                    sentiment_tag = ""
+                    if bullish_votes > bearish_votes * 2: sentiment_tag = " [BULLISH SENTIMENT]"
+                    elif bearish_votes > bullish_votes * 2: sentiment_tag = " [BEARISH SENTIMENT]"
+                        
+                    msg = f"[CRYPTOPANIC] {clean_symbol}: {title}{sentiment_tag}"
+                    print(msg)
+                    return msg
+        else:
+            # Fallback RSS
+            url = "https://www.coindesk.com/arc/outboundfeeds/rss/"
+            res = requests.get(url, timeout=5)
+            root = ET.fromstring(res.content)
+            headlines = [item.find('title').text for item in root.findall('.//item')]
+            mentions = [h for h in headlines if clean_symbol in h.upper()]
+            if mentions:
+                msg = f"[NEWS] {clean_symbol}: {mentions[0]}"
+                print(msg)
+                return msg
             
         msg = f"[SENTIMENT] {clean_symbol} following BTC/ETH macro trends."
         return msg
-    except:
+    except Exception as e:
         return "Analyzing market pulse..."
