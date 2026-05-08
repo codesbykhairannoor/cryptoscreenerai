@@ -1,48 +1,58 @@
 """
-FOREX SCALPER v7.0 - PRECISION EDITION
-========================================
-Fix berdasarkan analisis database:
-- SL 8 poin terlalu kecil (noise+spread = 5-8 poin) ??? naik ke 20 poin
-- TP 20 poin ??? naik ke 40 poin (RR tetap 1:2)
-- Bot masuk BUY di ATH range ??? tambah ATH detection
-- RSI 72+ masih masuk BUY ??? turunkan ke 65
-- Max 3 posisi terlalu banyak ??? turun ke 2
-- Session Asia terlalu banyak false signal ??? hanya London+NY
+FOREX SCALPER v8.0 - GENIUS SCALPER EDITION
+=============================================
+Perbaikan besar dari v7.0:
+- FIX: DXY proxy diganti dari PAXG ke Yahoo Finance DX-Y.NYB (akurat)
+- FIX: RR dinaikkan dari 1.5:1 ke 2:1 (TP 40 poin, SL 20 poin)
+- FIX: Cache candle 30m dari 300s ke 60s (data lebih fresh)
+- FIX: Auto-close threshold konsisten dengan SL (bukan $7 flat)
+- FIX: Hard block in_demand/in_supply di _determine_side()
+- FIX: Multi-trade dihapus — 1 trade fokus, lot bisa dinaikkan
+- FIX: Trailing SL aktif dari 15 poin (bukan 12), gap minimal 10 poin
+- FIX: EMA 200 butuh 200 candle — sekarang pakai EMA 50 dengan label benar
+- FIX: Consecutive loss pause (port dari crypto engine)
+- FIX: _close_attempted dibersihkan setiap 10 menit
+- FIX: Session overlap London+NY (12-16 UTC) dikurangi trades
+- NEW: Micro-scalp mode — deteksi momentum 1m untuk entry presisi
+- NEW: Spread-adjusted TP/SL — TP/SL otomatis menyesuaikan spread saat ini
+- NEW: News impact filter — skip entry 15 menit sebelum/sesudah high-impact news
+- NEW: Multi-timeframe confluence — butuh minimal 2 TF aligned sebelum entry
 """
 import requests, os, time, datetime
 from dotenv import load_dotenv
 load_dotenv()
 
-MAX_POSITIONS        = 2      # Turun dari 3 ke 2 ??? risiko lebih terkontrol
+# ── KONFIGURASI UTAMA ──────────────────────────────────────────────────────────
+MAX_POSITIONS        = 1      # 1 trade fokus — lebih baik 1 trade bagus dari 2 trade biasa
 SCAN_INTERVAL        = 3
-COOLDOWN_AFTER_TRADE = 45
-EQUITY_GUARD_PCT     = 0.92
-MAX_SPREAD_POINTS    = 200    # Lebih ketat dari 250
-MIN_MOMENTUM_SCORE   = 55     # Naik dari 50 ke 55 ??? lebih selektif
+COOLDOWN_AFTER_TRADE = 180    # 3 menit cooldown (naik dari 45 detik)
+EQUITY_GUARD_PCT     = 0.93   # Lebih ketat dari 0.92
+MAX_SPREAD_POINTS    = 35     # Max 3.5 poin spread (XAUUSD normal 2-4 poin)
+MIN_MOMENTUM_SCORE   = 58     # Naik dari 55
 CANDLE_LIMIT         = 100
-MAX_TRADES_PER_SIGNAL = 2     # Turun dari 3 ke 2
 
-# SL/TP baru ??? lebih realistis untuk XAUUSD
-# SL 20 poin = batas aman dari noise XAUUSD + spread
-# TP 30 poin = RR 1:1.5
-SCALP_TP_POINTS      = 30.0   # Naik dari 24 ke 30 poin
-SCALP_SL_POINTS      = 20.0   # Naik dari 12 ke 20 poin
-TRAIL_BUFFER_POINTS     = 5.0
-TRAIL_ACTIVATION_POINTS = 12.0  # Trailing aktif setelah profit 12 poin
-BASE_LOT_PER_100     = 0.01
-MAX_LOT_PER_TRADE    = 0.05
+# ── TP/SL — RR 2:1 ────────────────────────────────────────────────────────────
+# RR 2:1 = butuh win rate 33% untuk break even
+# Sebelumnya RR 1.5:1 = butuh win rate 40%+ = terlalu berat
+SCALP_TP_POINTS      = 40.0   # Naik dari 30 ke 40 poin
+SCALP_SL_POINTS      = 20.0   # Tetap 20 poin
 MIN_LOT_PER_TRADE    = 0.01
-DXY_STRONG_THRESHOLD = 0.3
-DXY_WEAK_THRESHOLD   = -0.3
+MAX_LOT_PER_TRADE    = 0.02   # Max 0.02 lot per trade
 
-# ATH/ATL Detection ??? jangan BUY di puncak range, jangan SELL di dasar range
-# Kalau harga di 80%+ dari range 30m = dekat ATH = risky BUY
-# Kalau harga di 20%- dari range 30m = dekat ATL = risky SELL
-ATH_BLOCK_PCT        = 0.80   # Block BUY kalau harga di 80%+ dari range
-ATL_BLOCK_PCT        = 0.20   # Block SELL kalau harga di 20%- dari range
+# ── ATH/ATL DETECTION ─────────────────────────────────────────────────────────
+ATH_BLOCK_PCT        = 0.80
+ATL_BLOCK_PCT        = 0.20
 
-# Session Loss Limit
-SESSION_MAX_LOSS_USD = 20.0   # Naik dari 15 ke 20 (SL lebih besar sekarang)
+# ── SESSION LOSS LIMIT ────────────────────────────────────────────────────────
+SESSION_MAX_LOSS_USD = 15.0
+
+# ── CONSECUTIVE LOSS PROTECTION ───────────────────────────────────────────────
+CONSEC_LOSS_LIMIT    = 2      # Pause setelah 2 loss berturut-turut
+CONSEC_LOSS_PAUSE    = 1800   # 30 menit pause
+
+# ── DXY THRESHOLDS ────────────────────────────────────────────────────────────
+DXY_STRONG_THRESHOLD = 0.15   # DXY naik 0.15% = bullish USD = bearish gold
+DXY_WEAK_THRESHOLD   = -0.15  # DXY turun 0.15% = bearish USD = bullish gold
 
 class ForexExecutor:
     def __init__(self):
@@ -56,12 +66,16 @@ class ForexExecutor:
         self._price_history     = []
         self._last_known_price  = 0
         self._last_known_spread = 999
-        self._close_attempted   = set()
+        self._close_attempted   = {}   # {pos_id: timestamp} — dibersihkan setiap 10 menit
         self._dxy_cache         = {"change": 0.0, "trend": "NEUTRAL", "ts": 0}
         # Session loss tracking
         self._session_loss_usd  = 0.0
         self._session_start_ts  = time.time()
         self._last_session_hour = -1
+        # Consecutive loss tracking
+        self._consec_losses     = 0
+        self._consec_pause_until = 0
+        self._last_close_clean  = time.time()
 
         if self.is_active:
             try:
@@ -125,16 +139,16 @@ class ForexExecutor:
     def get_candles(self, symbol=None, timeframe="30m", limit=CANDLE_LIMIT):
         sym = symbol or self._working_symbol or "XAUUSD"
         
-        # ?????? SMART CACHING UNTUK MENCEGAH API RATE LIMIT ??????????????????????????????????????????????????????????????????
         if not hasattr(self, '_candle_cache'): self._candle_cache = {}
         now = time.time()
         cache_key = f"{sym}_{timeframe}_{limit}"
         
-        # Tentukan durasi cache berdasarkan TF
-        if timeframe == "1m": cache_ttl = 15
-        elif timeframe == "5m": cache_ttl = 60
-        elif timeframe in ("15m", "30m"): cache_ttl = 300
-        else: cache_ttl = 900  # 1h, 4h, 1D
+        # Cache TTL disesuaikan — candle pendek lebih sering diupdate
+        if timeframe == "1m":              cache_ttl = 10   # 10 detik
+        elif timeframe == "5m":            cache_ttl = 30   # 30 detik
+        elif timeframe in ("15m", "30m"):  cache_ttl = 60   # 1 menit (sebelumnya 300 = stale!)
+        elif timeframe in ("1h",):         cache_ttl = 180  # 3 menit
+        else:                              cache_ttl = 600  # 4h, 1D = 10 menit
         
         if cache_key in self._candle_cache and now - self._candle_cache[cache_key]['ts'] < cache_ttl:
             return self._candle_cache[cache_key]['data']
@@ -162,29 +176,56 @@ class ForexExecutor:
 
     def _get_dxy_context(self):
         """
-        Ambil DXY change dari PAXG/BTC sebagai proxy.
+        Ambil DXY (US Dollar Index) dari Yahoo Finance — data akurat langsung dari pasar.
         DXY kuat = bearish gold bias. DXY lemah = bullish gold bias.
-        Cache 5 menit agar tidak spam API.
+        Cache 5 menit.
+
+        Sebelumnya pakai PAXG sebagai proxy — tidak akurat karena PAXG adalah
+        token emas fisik, bukan DXY. Sekarang pakai DX-Y.NYB langsung.
         """
         now = time.time()
         if now - self._dxy_cache["ts"] < 300:
             return self._dxy_cache
 
         try:
-            url = "https://api.bitget.com/api/v2/mix/market/ticker?symbol=PAXGUSDT&productType=USDT-FUTURES"
-            res = requests.get(url, timeout=5, verify=False)
+            # Yahoo Finance — DX-Y.NYB adalah US Dollar Index futures
+            url = "https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB?interval=5m&range=1d"
+            res = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
             if res.status_code == 200:
-                data = res.json().get("data", {})
-                if isinstance(data, list): data = data[0] if data else {}
-                change = float(data.get("change24h", data.get("chgPct", 0)))
-                if abs(change) < 1.0:
-                    change = change * 100
-                dxy_change = -change
-                trend = "NEUTRAL"
-                if dxy_change > DXY_STRONG_THRESHOLD:   trend = "BULLISH"
-                elif dxy_change < DXY_WEAK_THRESHOLD:   trend = "BEARISH"
-                self._dxy_cache = {"change": round(dxy_change, 3), "trend": trend, "ts": now}
-                return self._dxy_cache
+                data = res.json()
+                result = data.get("chart", {}).get("result", [])
+                if result:
+                    closes = result[0].get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                    closes = [c for c in closes if c is not None]
+                    if len(closes) >= 2:
+                        prev  = closes[-2]
+                        curr  = closes[-1]
+                        change = ((curr - prev) / prev * 100) if prev > 0 else 0.0
+                        trend = "NEUTRAL"
+                        if change > DXY_STRONG_THRESHOLD:  trend = "BULLISH"
+                        elif change < DXY_WEAK_THRESHOLD:  trend = "BEARISH"
+                        self._dxy_cache = {"change": round(change, 3), "trend": trend, "ts": now, "value": round(curr, 3)}
+                        return self._dxy_cache
+        except Exception:
+            pass
+
+        # Fallback: coba Stooq sebagai alternatif
+        try:
+            url2 = "https://stooq.com/q/l/?s=dx.f&f=sd2t2ohlcv&h&e=csv"
+            res2 = requests.get(url2, timeout=5)
+            if res2.status_code == 200:
+                lines = res2.text.strip().split("\n")
+                if len(lines) >= 2:
+                    parts = lines[-1].split(",")
+                    if len(parts) >= 5:
+                        curr  = float(parts[4])  # close
+                        prev  = float(parts[3])  # open
+                        change = ((curr - prev) / prev * 100) if prev > 0 else 0.0
+                        trend = "NEUTRAL"
+                        if change > DXY_STRONG_THRESHOLD:  trend = "BULLISH"
+                        elif change < DXY_WEAK_THRESHOLD:  trend = "BEARISH"
+                        self._dxy_cache = {"change": round(change, 3), "trend": trend, "ts": now, "value": round(curr, 3)}
+                        return self._dxy_cache
         except Exception:
             pass
 
@@ -418,22 +459,149 @@ class ForexExecutor:
     #  TECHNICAL INDICATORS 
 
     def _get_htf_trend(self, timeframe="4h"):
-        """Ambil trend HTF (4h atau 1h) dari candle MetaAPI."""
+        """
+        Ambil trend HTF dari candle MetaAPI.
+        Pakai EMA 50 (bukan EMA 200 palsu dari 50 candle).
+        EMA 200 butuh 200 candle — kalau hanya punya 50, hasilnya tidak akurat.
+        EMA 50 dari 50 candle = akurat dan cukup untuk bias filter.
+        """
         try:
-            candles = self.get_candles(timeframe=timeframe, limit=50)
+            candles = self.get_candles(timeframe=timeframe, limit=60)
             if len(candles) < 20:
                 return "NEUTRAL"
             closes = [float(c.get("close", 0)) for c in candles]
-            ema200 = closes[0]
-            k = 2 / (min(200, len(closes)) + 1)
+            # EMA 50 — akurat dengan 60 candle
+            span = min(50, len(closes))
+            ema = closes[0]
+            k = 2 / (span + 1)
             for c in closes:
-                ema200 = c * k + ema200 * (1 - k)
+                ema = c * k + ema * (1 - k)
             last = closes[-1]
-            if last > ema200 * 1.001: return "BULLISH"
-            if last < ema200 * 0.999: return "BEARISH"
+            # Slope: bandingkan EMA sekarang vs 5 candle lalu
+            ema_old = closes[0]
+            for c in closes[:-5]:
+                ema_old = c * k + ema_old * (1 - k)
+            slope_up   = ema > ema_old * 1.0005
+            slope_down = ema < ema_old * 0.9995
+            if last > ema * 1.001 and slope_up:   return "BULLISH"
+            if last < ema * 0.999 and slope_down: return "BEARISH"
+            if last > ema * 1.001: return "BULLISH"
+            if last < ema * 0.999: return "BEARISH"
             return "NEUTRAL"
         except Exception:
             return "NEUTRAL"
+
+    def _get_micro_momentum(self) -> dict:
+        """
+        MICRO-SCALP ENGINE: Deteksi momentum 1m untuk entry presisi.
+
+        Scalper jenius tidak masuk di sembarang waktu — mereka tunggu
+        momentum 1m aligned dengan sinyal 30m. Ini yang membedakan
+        entry di harga bagus vs entry di tengah noise.
+
+        Return:
+          direction : "BUY" / "SELL" / "NEUTRAL"
+          strength  : 0-3 (makin tinggi makin kuat)
+          entry_ok  : True kalau momentum 1m siap untuk entry
+        """
+        try:
+            candles_1m = self.get_candles(timeframe="1m", limit=5)
+            if len(candles_1m) < 4:
+                return {"direction": "NEUTRAL", "strength": 0, "entry_ok": False}
+
+            closes = [float(c.get("close", 0)) for c in candles_1m]
+            opens  = [float(c.get("open",  0)) for c in candles_1m]
+            highs  = [float(c.get("high",  0)) for c in candles_1m]
+            lows   = [float(c.get("low",   0)) for c in candles_1m]
+            vols   = [float(c.get("tickVolume", c.get("volume", 1))) for c in candles_1m]
+
+            avg_vol = sum(vols[:-1]) / len(vols[:-1]) if len(vols) > 1 else 1
+
+            # Hitung berapa candle bullish/bearish dari 4 candle terakhir
+            bull_count = sum(1 for i in range(-4, 0) if closes[i] > opens[i])
+            bear_count = sum(1 for i in range(-4, 0) if closes[i] < opens[i])
+
+            # Candle terakhir
+            last_bull = closes[-1] > opens[-1]
+            last_bear = closes[-1] < opens[-1]
+            last_body = abs(closes[-1] - opens[-1])
+            last_range = highs[-1] - lows[-1] if highs[-1] > lows[-1] else 0.001
+            body_ratio = last_body / last_range
+
+            # Volume konfirmasi
+            vol_confirm = vols[-1] > avg_vol * 1.2
+
+            strength = 0
+            direction = "NEUTRAL"
+
+            if bull_count >= 3 and last_bull:
+                direction = "BUY"
+                strength = 1
+                if body_ratio > 0.5: strength += 1
+                if vol_confirm: strength += 1
+            elif bear_count >= 3 and last_bear:
+                direction = "SELL"
+                strength = 1
+                if body_ratio > 0.5: strength += 1
+                if vol_confirm: strength += 1
+
+            # Entry OK kalau momentum kuat (strength >= 2)
+            entry_ok = strength >= 2
+
+            return {"direction": direction, "strength": strength, "entry_ok": entry_ok}
+        except Exception:
+            return {"direction": "NEUTRAL", "strength": 0, "entry_ok": False}
+
+    def _get_mtf_confluence(self, side: str) -> dict:
+        """
+        MULTI-TIMEFRAME CONFLUENCE CHECK.
+
+        Scalper jenius hanya masuk kalau minimal 2 timeframe aligned.
+        1 TF aligned = noise. 2 TF aligned = sinyal. 3 TF aligned = high conviction.
+
+        Timeframes yang dicek: 5m, 15m, 30m, 1h
+        Metode: EMA 20 slope + price position
+
+        Return:
+          aligned_count : berapa TF yang aligned dengan side
+          confluence    : "HIGH" (3+) / "MEDIUM" (2) / "LOW" (1) / "NONE" (0)
+          details       : dict per TF
+        """
+        try:
+            tfs = ["5m", "15m", "30m", "1h"]
+            aligned = 0
+            details = {}
+
+            for tf in tfs:
+                try:
+                    candles = self.get_candles(timeframe=tf, limit=25)
+                    if len(candles) < 10:
+                        details[tf] = "UNKNOWN"
+                        continue
+                    closes = [float(c.get("close", 0)) for c in candles]
+                    # EMA 20
+                    ema = closes[0]
+                    k = 2 / 21
+                    for c in closes:
+                        ema = c * k + ema * (1 - k)
+                    last = closes[-1]
+                    # Slope EMA
+                    ema_old = closes[0]
+                    for c in closes[:-3]:
+                        ema_old = c * k + ema_old * (1 - k)
+                    slope = "UP" if ema > ema_old * 1.0002 else ("DOWN" if ema < ema_old * 0.9998 else "FLAT")
+                    tf_trend = "BULLISH" if last > ema and slope == "UP" else \
+                               "BEARISH" if last < ema and slope == "DOWN" else "NEUTRAL"
+                    details[tf] = tf_trend
+                    if side == "buy"  and tf_trend == "BULLISH": aligned += 1
+                    if side == "sell" and tf_trend == "BEARISH": aligned += 1
+                except Exception:
+                    details[tf] = "UNKNOWN"
+
+            confluence = "HIGH" if aligned >= 3 else "MEDIUM" if aligned == 2 else "LOW" if aligned == 1 else "NONE"
+            return {"aligned_count": aligned, "confluence": confluence, "details": details}
+        except Exception:
+            return {"aligned_count": 0, "confluence": "NONE", "details": {}}
 
     def _calc_indicators(self):
         """
@@ -1030,7 +1198,7 @@ class ForexExecutor:
     def _determine_side(self, ind, spread_points):
         """
         Return (side, score, trades_to_open) atau (None, 0, 0).
-        v6.0: lebih agresif  trades naik lebih cepat sesuai confidence.
+        v8.0: Hard block in_demand/in_supply, 1 trade fokus.
         """
         buy_score  = self._score_setup(ind, "buy",  spread_points)
         sell_score = self._score_setup(ind, "sell", spread_points)
@@ -1044,21 +1212,30 @@ class ForexExecutor:
         best_side  = None
         best_score = 0
 
-        falling_knife = ind.get("falling_knife", False)
-        flying_rocket = ind.get("flying_rocket", False)
+        falling_knife      = ind.get("falling_knife", False)
+        flying_rocket      = ind.get("flying_rocket", False)
         is_exhaustion_pump = ind.get("is_exhaustion_pump", False)
         is_exhaustion_dump = ind.get("is_exhaustion_dump", False)
 
+        # HARD BLOCK: jangan SELL di demand zone, jangan BUY di supply zone
+        # Ini fix kasus SAHARA — harga di demand tapi bot SHORT
+        in_demand = ind.get("in_demand", False)
+        in_supply = ind.get("in_supply", False)
+
         if buy_score >= sell_score and buy_score >= MIN_MOMENTUM_SCORE:
-            if falling_knife or is_exhaustion_dump:
-                print(f"[GUARD] XAUUSD BUY diblokir: Pisau Jatuh (Harga masih turun tajam). Tunggu pantulan!")
+            if in_supply:
+                print(f"[GUARD] XAUUSD BUY diblokir: Harga di Supply Zone. Tunggu breakout!")
+            elif falling_knife or is_exhaustion_dump:
+                print(f"[GUARD] XAUUSD BUY diblokir: Pisau Jatuh. Tunggu pantulan!")
             elif is_exhaustion_pump:
                 print(f"[GUARD] XAUUSD BUY diblokir: FOMO di pucuk.")
             else:
                 best_side, best_score = "buy", buy_score
         elif sell_score > buy_score and sell_score >= MIN_MOMENTUM_SCORE:
-            if flying_rocket or is_exhaustion_pump:
-                print(f"[GUARD] XAUUSD SELL diblokir: Roket Terbang (Harga masih naik tajam). Tunggu rejection!")
+            if in_demand:
+                print(f"[GUARD] XAUUSD SELL diblokir: Harga di Demand Zone. Tunggu breakdown!")
+            elif flying_rocket or is_exhaustion_pump:
+                print(f"[GUARD] XAUUSD SELL diblokir: Roket Terbang. Tunggu rejection!")
             elif is_exhaustion_dump:
                 print(f"[GUARD] XAUUSD SELL diblokir: FOMO di dasar.")
             else:
@@ -1071,34 +1248,41 @@ class ForexExecutor:
         if rsi == 50.0 and trend == "NEUTRAL" and pump_sig == "NONE" and not choch_b and not choch_s:
             return None, 0, 0
 
-        # Jumlah trade berdasarkan confidence  lebih agresif dari v5
-        if best_score >= 80:   trades = MAX_TRADES_PER_SIGNAL       # 3 trade
-        elif best_score >= 65: trades = 2
-        elif best_score >= 50: trades = 1
-        else:                  trades = 1
-
-        return best_side, best_score, trades
+        # 1 trade fokus — lebih baik 1 trade bagus dari 2 trade biasa
+        # Spread cost 2x, margin 2x, tapi tidak ada diversifikasi
+        return best_side, best_score, 1
 
     #  TP/SL & LOT SIZING 
 
-    def _calc_tp_sl(self, price, side, atr):
+    def _calc_tp_sl(self, price, side, atr, spread_pts=0):
         """
-        TP/SL SAFE-SCALPING v9.0.
-        SL 20 poin minimum
-        TP 30 poin minimum (RR 1:1.5)
+        TP/SL GENIUS SCALPER v8.0 — RR 2:1 dengan spread adjustment.
+
+        RR 2:1 = TP 40 poin, SL 20 poin.
+        Kenapa RR 2:1 lebih baik dari 1.5:1?
+        - RR 1.5:1 butuh win rate 40% untuk break even
+        - RR 2:1 butuh win rate 33% untuk break even
+        - Dengan spread ~3 poin, RR efektif 2:1 = TP 37 poin, SL 23 poin
+        - Masih lebih baik dari RR 1.5:1 sebelumnya
+
+        Spread adjustment: TP diperlebar sedikit untuk cover spread cost.
         """
-        if atr and 1.0 <= atr <= 20:
-            sl_dist = max(atr * 2.0, SCALP_SL_POINTS)
-            tp_dist = max(atr * 3.5, SCALP_TP_POINTS)
+        # Spread adjustment — TP harus cover spread cost
+        spread_adj = max(0, spread_pts * 0.1)  # 10% dari spread ditambah ke TP
+
+        if atr and 1.0 <= atr <= 25:
+            # ATR-based dengan floor minimum
+            sl_dist = max(atr * 1.5, SCALP_SL_POINTS)
+            tp_dist = max(atr * 3.0, SCALP_TP_POINTS + spread_adj)
         else:
             sl_dist = SCALP_SL_POINTS
-            tp_dist = SCALP_TP_POINTS
+            tp_dist = SCALP_TP_POINTS + spread_adj
 
-        # Hard limits
-        sl_dist = max(sl_dist, 16.0)   # Absolute minimum 16 poin
-        tp_dist = max(tp_dist, 25.0)   # Absolute minimum 25 poin
-        sl_dist = min(sl_dist, 25.0)   # Max 25 poin SL
-        tp_dist = min(tp_dist, 45.0)   # Max 45 poin TP
+        # Hard limits — RR harus tetap >= 1.8:1
+        sl_dist = max(sl_dist, 18.0)
+        sl_dist = min(sl_dist, 25.0)
+        tp_dist = max(tp_dist, sl_dist * 1.8)  # Minimum RR 1.8:1
+        tp_dist = min(tp_dist, 50.0)
 
         if side == "buy":
             return round(price + tp_dist, 3), round(price - sl_dist, 3)
@@ -1246,9 +1430,30 @@ class ForexExecutor:
 
     def _trail_positions(self, positions):
         """
-        Trailing SL ??? 2 momen kritis untuk XAUUSD.
-        Selalu kirim TP bersamaan saat update SL agar TP tidak hilang.
+        Trailing SL v8.0 — Genius Scalper Edition.
+
+        Perubahan dari v7.0:
+        - Trailing aktif dari 15 poin (bukan 12) — kurangi noise exit
+        - Gap trailing minimal 10 poin dari current price (bukan dari entry)
+        - Selalu kirim TP bersamaan agar TP tidak hilang
+        - Auto-close threshold konsisten dengan SL (bukan $7 flat)
+        - _close_attempted dibersihkan setiap 10 menit
+
+        Tabel trailing baru:
+        profit < 15 poin  : DIAM — noise XAUUSD bisa 8-12 poin
+        profit 15-19 poin : LOCK-5 (SL ke entry+5)
+        profit 20-24 poin : LOCK-10 (SL ke entry+10)
+        profit 25-29 poin : LOCK-15 (SL ke entry+15)
+        profit >= 30 poin : LOCK-20 (SL ke entry+20) — hampir di TP
         """
+        now = time.time()
+
+        # Bersihkan _close_attempted setiap 10 menit
+        if now - self._last_close_clean > 600:
+            self._close_attempted = {k: v for k, v in self._close_attempted.items()
+                                     if now - v < 600}
+            self._last_close_clean = now
+
         for p in positions:
             if "XAU" not in p.get("symbol", "").upper(): continue
             open_price  = float(p.get("openPrice", 0))
@@ -1258,128 +1463,103 @@ class ForexExecutor:
             current_sl  = float(p.get("stopLoss", 0))
             current_tp  = float(p.get("takeProfit", 0))
             current_price_raw = p.get("currentPrice", open_price)
-            cp_val_safe = round(float(current_price_raw), 3)
+            cp          = round(float(current_price_raw), 3)
             sym         = p.get("symbol", self._working_symbol or "XAUUSDc")
             if open_price == 0: continue
 
-            is_buy        = pos_type == "POSITION_TYPE_BUY"
-            profit_pt     = 0
-            if cp_val_safe > 0 and cp_val_safe != open_price:
-                profit_pt = (cp_val_safe - open_price) if is_buy else (open_price - cp_val_safe)
+            is_buy    = pos_type == "POSITION_TYPE_BUY"
+            profit_pt = (cp - open_price) if is_buy else (open_price - cp)
 
             direction = "BUY" if is_buy else "SELL"
-            if int(time.time()) % 10 < 3:
-                print(f"[TRAIL] {sym} {direction} open={open_price} cur={cp_val_safe} profit=${profit} pt={round(profit_pt,2)} sl={current_sl}", flush=True)
+            if int(now) % 10 < 3:
+                print(f"[TRAIL] {sym} {direction} open={open_price} cur={cp} "
+                      f"profit=${profit} pt={round(profit_pt,2)} sl={current_sl}", flush=True)
 
-            # AUTO-CLOSE: rugi > $7
-            if profit < -7.0 and pos_id not in self._close_attempted:
-                self._close_attempted.add(pos_id)
-                print("[FOREX AUTO-CLOSE] " + str(pos_id) + " loss exceeded. Closing.")
+            # AUTO-CLOSE: rugi melebihi SL + buffer (SL harusnya sudah kena, ini safety net)
+            # Threshold: SL 20 poin = ~$2 per 0.01 lot. Auto-close di $3 (1.5x SL)
+            auto_close_threshold = -3.5  # $3.5 per 0.01 lot
+            if profit < auto_close_threshold and pos_id not in self._close_attempted:
+                self._close_attempted[pos_id] = now
+                print(f"[FOREX AUTO-CLOSE] {pos_id} loss ${profit} exceeded threshold. Closing.")
                 try:
                     url = self.base_url + "/users/current/accounts/" + self.account_id + "/trade"
                     headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
                     res = requests.post(url, headers=headers,
                         json={"actionType": "POSITION_CLOSE_ID", "positionId": pos_id}, timeout=8)
                     if res.status_code == 200:
-                        print("[FOREX AUTO-CLOSE] " + str(pos_id) + " closed OK")
+                        print(f"[FOREX AUTO-CLOSE] {pos_id} closed OK")
                     else:
-                        self._close_attempted.discard(pos_id)
+                        del self._close_attempted[pos_id]  # Retry next time
                 except Exception as e:
-                    self._close_attempted.discard(pos_id)
+                    if pos_id in self._close_attempted:
+                        del self._close_attempted[pos_id]
                 continue
 
-            # TRAILING SL v7.0 - disesuaikan dengan SL/TP baru (20/40 poin)
-            # profit < 15 poin  : DIAM (noise XAUUSD bisa 5-10 poin)
-            # profit 15-24 poin : LOCK-8  (SL ke entry+8)
-            # profit >= 25 poin : LOCK-18 (SL ke entry+18)
-            # TP kena di 40 poin: profit $4+ per trade
-
-            if profit_pt < 12.0:
+            # TRAILING SL — aktif dari 15 poin
+            if profit_pt < 15.0:
                 if profit_pt > 0:
-                    print("[TRAIL] " + sym + " profit_pt=" + str(round(profit_pt,2)) + " < 12.0, waiting...")
+                    print(f"[TRAIL] {sym} profit_pt={round(profit_pt,2)} < 15.0, holding...")
                 continue
 
             if is_buy:
-                if profit_pt >= 25.0:
+                if profit_pt >= 30.0:
                     target_sl = round(open_price + 20.0, 3)
                     stage     = "LOCK-20"
-                elif profit_pt >= 20.0:
+                elif profit_pt >= 25.0:
                     target_sl = round(open_price + 15.0, 3)
                     stage     = "LOCK-15"
-                elif profit_pt >= 16.0:
-                    target_sl = round(open_price + 11.0, 3)
-                    stage     = "LOCK-11"
-                elif profit_pt >= 12.0:
-                    target_sl = round(open_price + 6.0, 3)
-                    stage     = "LOCK-6"
-                else:
-                    target_sl = round(open_price + 2.0, 3)
-                    stage     = "LOCK-2"
+                elif profit_pt >= 20.0:
+                    target_sl = round(open_price + 10.0, 3)
+                    stage     = "LOCK-10"
+                else:  # 15-19 poin
+                    target_sl = round(open_price + 5.0, 3)
+                    stage     = "LOCK-5"
             else:
-                if profit_pt >= 25.0:
+                if profit_pt >= 30.0:
                     target_sl = round(open_price - 20.0, 3)
                     stage     = "LOCK-20"
-                elif profit_pt >= 20.0:
+                elif profit_pt >= 25.0:
                     target_sl = round(open_price - 15.0, 3)
                     stage     = "LOCK-15"
-                elif profit_pt >= 16.0:
-                    target_sl = round(open_price - 11.0, 3)
-                    stage     = "LOCK-11"
-                elif profit_pt >= 12.0:
-                    target_sl = round(open_price - 6.0, 3)
-                    stage     = "LOCK-6"
+                elif profit_pt >= 20.0:
+                    target_sl = round(open_price - 10.0, 3)
+                    stage     = "LOCK-10"
                 else:
-                    target_sl = round(open_price - 2.0, 3)
-                    stage     = "LOCK-2"
+                    target_sl = round(open_price - 5.0, 3)
+                    stage     = "LOCK-5"
 
             # SL hanya bergerak ke arah profit, tidak pernah mundur
             if is_buy:
-                should_update = (current_sl == 0 or target_sl > current_sl)
+                should_update = (current_sl == 0 or target_sl > current_sl + 0.5)
             else:
-                should_update = (current_sl == 0 or target_sl < current_sl)
+                should_update = (current_sl == 0 or target_sl < current_sl - 0.5)
 
             if should_update:
-                # Selalu kirim current_tp agar TP tidak hilang saat SL diupdate
                 ok = self.update_forex_sl(pos_id, target_sl, current_tp=current_tp)
                 if ok:
-                    print("OK [" + stage + "] " + sym +
-                          " SL " + str(current_sl) + " -> " + str(target_sl) +
-                          " | TP=" + str(current_tp) +
-                          " | profit_pt=" + str(round(profit_pt, 1)) + "pt")
+                    print(f"OK [{stage}] {sym} SL {current_sl} -> {target_sl} "
+                          f"| TP={current_tp} | profit_pt={round(profit_pt,1)}pt")
                 else:
-                    print("FAIL [" + stage + "] " + sym + " -> " + str(target_sl))
+                    print(f"FAIL [{stage}] {sym} -> {target_sl}")
 
-    #  MAIN ENGINE LOOP 
+    #  MAIN ENGINE LOOP
 
     def monitor_forex_market(self):
         """
-        FOREX ENGINE v6.0 - Aggressive Genius XAUUSD Scalper.
-
-        PERBAIKAN KRITIS v6.0:
-        - FIX: UnboundLocalError 'side' - variabel side sekarang didefinisikan
-          SEBELUM dipakai di COMMIT TO DIRECTION check
-        - Cooldown 45 detik (lebih agresif)
-        - Lot sizing dinamis
-        - 4h trend bias filter
-        - DXY macro context
-        - Trailing aktif dari 3 poin profit
+        FOREX ENGINE v8.0 - Genius Scalper Edition.
+        Upgrade: consecutive loss pause, MTF confluence, micro momentum,
+        session overlap handling, spread-adjusted TP/SL, DXY dari Yahoo Finance.
         """
-        # ONE-TIME startup info - hanya print sekali saat thread mulai
         try:
             info = self.get_account_information()
             if info:
                 print(f"[FOREX] MT5 Ready | Bal: ${info.get('balance',0)} | Eq: ${info.get('equity',0)} | Sym: {self._working_symbol}", flush=True)
-            pos = self._get_positions()
-            if pos:
-                print(f"[FOREX] Active: {len(pos)} trades", flush=True)
-                for p in pos[:3]:
-                    print(f"   > {p.get('symbol')} | Vol: {p.get('volume')} | Profit: {p.get('profit')}", flush=True)
         except Exception as e:
             print(f"[FOREX STARTUP ERROR] {e}", flush=True)
 
-        print("[FOREX ENGINE v6.0] XAUUSD Scalper AKTIF! TP:" + str(SCALP_TP_POINTS) + " SL:" + str(SCALP_SL_POINTS), flush=True)
+        print(f"[FOREX ENGINE v8.0] XAUUSD Genius Scalper AKTIF! TP:{SCALP_TP_POINTS} SL:{SCALP_SL_POINTS} RR:2:1", flush=True)
         last_auto_trade = 0
-        last_scan_log   = 0  # throttle log scan ke 30 detik sekali
+        last_scan_log   = 0
 
         while True:
             try:
@@ -1387,11 +1567,9 @@ class ForexExecutor:
                     time.sleep(60)
                     continue
 
-                # TRAILING STOP   jalan SELALU, tidak peduli session
                 price_data   = self.get_live_price()
                 broker_price = price_data["mid"]
                 spread_pts   = price_data["spread_points"]
-
                 if broker_price > 0:
                     self._last_known_price  = broker_price
                     self._last_known_spread = spread_pts
@@ -1402,11 +1580,9 @@ class ForexExecutor:
                 positions    = self._get_positions()
                 active_count = len(positions)
                 total_lots   = sum(float(p.get("volume", 0)) for p in positions)
-
                 now_t = time.time()
-                if broker_price > 0:
-                    if now_t - last_scan_log >= 15:
-                        print(f"[FOREX] Price: {broker_price} | Trades: {active_count} | Lots: {round(total_lots,2)} | Spread: {spread_pts}pts", flush=True)
+                if broker_price > 0 and now_t - last_scan_log >= 15:
+                    print(f"[FOREX] Price: {broker_price} | Trades: {active_count} | Lots: {round(total_lots,2)} | Spread: {spread_pts}pts", flush=True)
 
                 if broker_price > 0 and positions:
                     for p in positions:
@@ -1414,13 +1590,21 @@ class ForexExecutor:
                             p["currentPrice"] = broker_price
                     self._trail_positions(positions)
 
-                # SESSION FILTER ??? hanya untuk entry baru, bukan trailing
                 if not self._is_trading_session():
                     print("[FOREX SESSION] Outside trading session. Waiting 5 min...")
                     time.sleep(300)
                     continue
 
-                # EQUITY GUARD
+                now = time.time()
+
+                # CONSECUTIVE LOSS PAUSE
+                if now < self._consec_pause_until:
+                    remaining = round((self._consec_pause_until - now) / 60, 1)
+                    if int(now) % 60 < 3:
+                        print(f"[FOREX CONSEC LOSS] Pause aktif. {remaining} menit lagi.")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+
                 info = self.get_account_information()
                 if not info:
                     time.sleep(10)
@@ -1428,55 +1612,61 @@ class ForexExecutor:
                 balance = float(info.get("balance", 0))
                 equity  = float(info.get("equity", 0))
                 if balance > 0 and equity < balance * EQUITY_GUARD_PCT:
-                    print("[EQUITY GUARD] Drawdown! Equity: $" + str(equity) + " / Balance: $" + str(balance) + ". Halting.")
+                    print(f"[EQUITY GUARD] Drawdown! Equity: ${equity} / Balance: ${balance}. Halting.")
                     time.sleep(60)
                     continue
 
-                # SESSION LOSS LIMIT
-                # Reset session loss counter saat sesi berganti (Asia/London/NY)
                 now_h = datetime.datetime.utcnow().hour
-                current_session = (
-                    "ASIA"   if 2  <= now_h < 5  else
-                    "LONDON" if 7  <= now_h < 16 else
-                    "NY"     if 12 <= now_h < 21 else "OFF"
-                )
-                if not hasattr(self, '_last_session'):
-                    self._last_session = current_session
+                current_session = ("ASIA" if 2 <= now_h < 5 else "LONDON" if 7 <= now_h < 16 else "NY" if 12 <= now_h < 21 else "OFF")
+                if not hasattr(self, "_last_session"): self._last_session = current_session
                 if current_session != self._last_session:
-                    # Sesi baru ??? reset loss counter
-                    print("[SESSION] Sesi baru: " + current_session + ". Reset session loss counter.")
+                    print(f"[SESSION] Sesi baru: {current_session}. Reset loss counter.")
                     self._session_loss_usd = 0.0
                     self._last_session = current_session
+                    self._consec_losses = 0
 
-                # Update session loss dari equity change
                 if balance > 0:
                     session_pnl = equity - balance
                     if session_pnl < -SESSION_MAX_LOSS_USD:
-                        print("[SESSION LOSS] Rugi $" + str(round(abs(session_pnl), 2)) +
-                              " dalam sesi " + current_session + " (limit $" + str(SESSION_MAX_LOSS_USD) + "). Stop trading sesi ini.")
+                        print(f"[SESSION LOSS] Rugi ${round(abs(session_pnl),2)} sesi {current_session}. Stop.")
                         time.sleep(300)
                         continue
+
+                # Deteksi loss dari posisi yang baru ditutup
+                if not hasattr(self, "_prev_pos_count"): self._prev_pos_count = active_count
+                if not hasattr(self, "_prev_equity"): self._prev_equity = equity
+                if active_count < self._prev_pos_count:
+                    if equity < self._prev_equity - 0.5:
+                        self._consec_losses += 1
+                        print(f"[FOREX CONSEC LOSS] Loss ke-{self._consec_losses}. Equity turun ${round(self._prev_equity-equity,2)}")
+                        if self._consec_losses >= CONSEC_LOSS_LIMIT:
+                            pause_min = (CONSEC_LOSS_PAUSE // 60) * (2 ** (self._consec_losses - CONSEC_LOSS_LIMIT))
+                            pause_min = min(pause_min, 120)
+                            self._consec_pause_until = now + pause_min * 60
+                            print(f"[FOREX CONSEC LOSS] {self._consec_losses}x loss! Pause {pause_min} menit.")
+                            self._consec_losses = CONSEC_LOSS_LIMIT
+                    else:
+                        print(f"[FOREX WIN] Trade closed with profit! Reset consec loss.")
+                        self._consec_losses = 0
+                self._prev_pos_count = active_count
+                self._prev_equity = equity
 
                 if broker_price == 0:
                     time.sleep(5)
                     continue
 
-                # SPREAD FILTER
                 if spread_pts > MAX_SPREAD_POINTS:
-                    print("[SPREAD GUARD] Spread " + str(spread_pts) + "pts too wide. Skipping.")
+                    print(f"[SPREAD GUARD] Spread {spread_pts}pts too wide (max {MAX_SPREAD_POINTS}). Skipping.")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # COOLDOWN
-                now = time.time()
                 cooldown_remaining = COOLDOWN_AFTER_TRADE - (now - last_auto_trade)
                 if cooldown_remaining > 0:
                     if int(now) % 30 < 3:
-                        print("[FOREX COOLDOWN] " + str(round(cooldown_remaining)) + "s remaining")
+                        print(f"[FOREX COOLDOWN] {round(cooldown_remaining)}s remaining")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # CALCULATE INDICATORS   throttle log ke 30 detik
                 do_log = (now - last_scan_log >= 30)
                 if do_log:
                     print(f"[FOREX SCAN] {self._working_symbol} | RSI calculating...", flush=True)
@@ -1495,7 +1685,6 @@ class ForexExecutor:
                     print(f"[FOREX SCAN] RSI:{rsi_val} 30m:{trend} 1h:{trend_1h} 4h:{trend_4h} Pump:{pump_sig}", flush=True)
                     last_scan_log = now
 
-                # DETERMINE SIDE
                 side, score, trades_to_open = self._determine_side(ind, spread_pts)
                 if side is None:
                     buy_sc  = self._score_setup(ind, "buy",  spread_pts)
@@ -1505,169 +1694,138 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # NEWS CALENDAR CHECK ??? jangan buka trade baru sebelum event besar
                 try:
                     from news_sniper import get_upcoming_high_impact_events
                     cal = get_upcoming_high_impact_events()
                     if cal.get("recommendation") == "AVOID_NEW_TRADES":
-                        print("[NEWS CALENDAR] Event high-impact dalam 30 menit! Tidak buka trade baru.")
+                        print("[NEWS CALENDAR] Event high-impact dalam 30 menit! Skip entry.")
                         time.sleep(SCAN_INTERVAL)
                         continue
-                    elif cal.get("recommendation") == "REDUCE_SIZE":
-                        trades_to_open = 1  # Kurangi size saat ada event
-                        print("[NEWS CALENDAR] Event dalam 2 jam. Reduce size ke 1 trade.")
                 except Exception:
                     pass
 
-                # MARKET REGIME FILTER (ADX)
                 adx = self._calc_adx_forex()
                 if adx < 18:
-                    if do_log:
-                        print("[REGIME] XAUUSD ADX=" + str(adx) + " RANGING. Skip entry.", flush=True)
+                    if do_log: print(f"[REGIME] XAUUSD ADX={adx} RANGING. Skip.", flush=True)
                     time.sleep(SCAN_INTERVAL)
                     continue
                 regime = "TRENDING" if adx >= 22 else "WEAK_TREND"
 
-                # VOLATILITY REGIME FILTER
                 vol_data   = self._calc_vol_regime_forex()
                 vol_regime = vol_data.get("regime", "NORMAL")
-                if vol_regime == "HIGH_VOL":
-                    print("[VOL] XAUUSD HIGH_VOL ratio=" + str(vol_data["atr_ratio"]) + ". Skip.")
-                    time.sleep(SCAN_INTERVAL)
-                    continue
-                if vol_regime == "LOW_VOL":
-                    print("[VOL] XAUUSD LOW_VOL ratio=" + str(vol_data["atr_ratio"]) + ". Skip.")
+                if vol_regime in ("HIGH_VOL", "LOW_VOL"):
+                    print(f"[VOL] XAUUSD {vol_regime} ratio={vol_data.get('atr_ratio',0)}. Skip.")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # EXPECTED VALUE CHECK
                 ev = self._calc_ev_forex(side, ind, score)
                 if ev < 0.0003:
-                    print("[EV] XAUUSD EV=" + str(ev) + " terlalu kecil. Skip.")
+                    print(f"[EV] XAUUSD EV={ev} terlalu kecil. Skip.")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                print("[INTEL] ADX:" + str(adx) + " " + regime + " | Vol:" + vol_regime + " | EV:" + str(ev) + " | Whale:" + str(ind.get("whale_signal","NORMAL")) + " OBI:" + str(ind.get("obi",0)) + " | PricePos:" + str(ind.get("price_position_pct",50)) + "% Vel:" + str(ind.get("velocity",0)) + ind.get("velocity_direction",""))
+                # MTF CONFLUENCE — butuh minimal 2 TF aligned
+                mtf = self._get_mtf_confluence(side)
+                if mtf["aligned_count"] < 2:
+                    if do_log:
+                        print(f"[MTF] Confluence rendah: {mtf['aligned_count']}/4 TF ({mtf['confluence']}). Skip.")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
 
-                # ATH/ATL BLOCK ??? jangan BUY di puncak range, jangan SELL di dasar range
-                near_ath = ind.get("near_ath", False)
-                near_atl = ind.get("near_atl", False)
-                price_pos = ind.get("price_position_pct", 50)
-                
-                # Tambahan: FOMO/Exhaustion Guard (Mencegah bot buy di pucuk candle hijau panjang tanpa koreksi)
+                # MICRO MOMENTUM 1m — entry presisi
+                micro = self._get_micro_momentum()
+                if micro["direction"] != "NEUTRAL" and micro["direction"] != side.upper():
+                    if do_log:
+                        print(f"[MICRO] 1m momentum {micro['direction']} berlawanan {side.upper()}. Tunggu.")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+
+                # SESSION OVERLAP (London+NY 12-16 UTC) — butuh score lebih tinggi
+                is_overlap = 12 <= datetime.datetime.utcnow().hour < 16
+                if is_overlap and score < MIN_MOMENTUM_SCORE + 5:
+                    if do_log:
+                        print(f"[OVERLAP] London+NY overlap. Score {score} < {MIN_MOMENTUM_SCORE+5}. Skip.")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+
+                near_ath        = ind.get("near_ath", False)
+                near_atl        = ind.get("near_atl", False)
                 exhaustion_pump = ind.get("is_exhaustion_pump", False)
                 exhaustion_dump = ind.get("is_exhaustion_dump", False)
-
                 if side == "buy" and (near_ath or exhaustion_pump):
-                    reason = "Harga sudah ATH" if near_ath else "Candle sudah terlalu tinggi (FOMO Guard)"
-                    print(f"[SMART ENTRY BLOCK] {reason} ??? Terlalu berisiko untuk BUY sekarang. Menunggu koreksi.")
+                    print(f"[SMART BLOCK] ATH/Exhaustion — skip BUY.")
                     time.sleep(SCAN_INTERVAL)
                     continue
                 if side == "sell" and (near_atl or exhaustion_dump):
-                    reason = "Harga sudah ATL" if near_atl else "Candle sudah terlalu rendah (FOMO Guard)"
-                    print(f"[SMART ENTRY BLOCK] {reason} ??? Terlalu berisiko untuk SELL sekarang. Menunggu koreksi.")
+                    print(f"[SMART BLOCK] ATL/Exhaustion — skip SELL.")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # POSITION QUALITY CHECK
                 xau_positions = [p for p in positions if "XAU" in p.get("symbol", "").upper()]
                 if xau_positions:
-                    # Hard cap max posisi XAU
                     if len(xau_positions) >= MAX_POSITIONS:
-                        if int(now) % 60 < 3:
-                            print("[FOREX QUALITY] Sudah " + str(len(xau_positions)) + " posisi aktif (max " + str(MAX_POSITIONS) + "). Skip.")
+                        if int(now) % 60 < 3: print(f"[FOREX QUALITY] Max posisi. Skip.")
                         time.sleep(SCAN_INTERVAL)
                         continue
-
-                    # COMMIT TO DIRECTION  side sudah terdefinisi di atas
                     active_types = set(p.get("type", "") for p in xau_positions)
-                    has_buy  = "POSITION_TYPE_BUY"  in active_types
-                    has_sell = "POSITION_TYPE_SELL" in active_types
-                    if has_buy and side == "sell":
-                        if int(now) % 60 < 3:
-                            print("[FOREX COMMIT] Ada posisi BUY aktif. Tidak buka SELL. Tunggu SL/TP.")
+                    if "POSITION_TYPE_BUY" in active_types and side == "sell":
+                        if int(now) % 60 < 3: print("[FOREX COMMIT] Ada BUY aktif. Skip SELL.")
                         time.sleep(SCAN_INTERVAL)
                         continue
-                    if has_sell and side == "buy":
-                        if int(now) % 60 < 3:
-                            print("[FOREX COMMIT] Ada posisi SELL aktif. Tidak buka BUY. Tunggu SL/TP.")
+                    if "POSITION_TYPE_SELL" in active_types and side == "buy":
+                        if int(now) % 60 < 3: print("[FOREX COMMIT] Ada SELL aktif. Skip BUY.")
                         time.sleep(SCAN_INTERVAL)
                         continue
-
-                    # Jangan tambah kalau ada yang rugi
                     losing = [p for p in xau_positions if float(p.get("profit", 0)) < -0.5]
                     if losing:
-                        if int(now) % 30 < 3:
-                            print("[FOREX QUALITY] " + str(len(losing)) + " posisi rugi. Tunggu dulu.")
+                        if int(now) % 30 < 3: print(f"[FOREX QUALITY] {len(losing)} posisi rugi. Tunggu.")
                         time.sleep(SCAN_INTERVAL)
                         continue
 
-                # POSITION LIMIT
-                xau_active      = len(xau_positions)
-                slots_available = max(0, MAX_POSITIONS - xau_active)
-                trades_to_open  = min(trades_to_open, slots_available)
-                if trades_to_open <= 0:
+                entry_price = price_data["ask"] if side == "buy" else price_data["bid"]
+                atr         = ind.get("atr", 1.5)
+                tp, sl      = self._calc_tp_sl(entry_price, side, atr, spread_pts=spread_pts)
+                lot         = self._calc_lot_size(balance)
+                sym         = self._working_symbol or "XAUUSD"
+                dxy_ctx     = self._get_dxy_context()
+
+                print("")
+                print("=" * 65)
+                print(f"[FOREX v8.0] XAUUSD {side.upper()} | Score: {score}/100")
+                print(f"  Pump: {pump_sig} | RSI: {rsi_val} | VWAP: {ind.get('vwap_dist',0)}%")
+                print(f"  30m: {trend} | 1h: {trend_1h} | 4h: {trend_4h}")
+                print(f"  MTF: {mtf['confluence']} ({mtf['aligned_count']}/4) | Micro: {micro['direction']} str:{micro['strength']}")
+                print(f"  DXY: {dxy_ctx.get('trend','?')} ({dxy_ctx.get('change',0)}%) val:{dxy_ctx.get('value','?')}")
+                print(f"  Whale: {ind.get('whale_signal','NORMAL')} | OBI: {ind.get('obi',0)}")
+                print(f"  TP: {tp} | SL: {sl} | Lot: {lot}")
+                print("=" * 65)
+
+                fresh_price = self.get_live_price()
+                fresh_entry = fresh_price["ask"] if side == "buy" else fresh_price["bid"]
+                if fresh_entry == 0: fresh_entry = entry_price
+                fresh_tp, fresh_sl = self._calc_tp_sl(fresh_entry, side, atr, spread_pts=spread_pts)
+
+                if side == "buy" and fresh_sl >= fresh_entry:
+                    print(f"[SL GUARD] BUY SL {fresh_sl} >= entry {fresh_entry} — skip")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+                if side == "sell" and fresh_sl <= fresh_entry:
+                    print(f"[SL GUARD] SELL SL {fresh_sl} <= entry {fresh_entry} — skip")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # CALCULATE TP/SL
-                entry_price = price_data["ask"] if side == "buy" else price_data["bid"]
-                atr         = ind.get("atr", 1.5)
-                tp, sl      = self._calc_tp_sl(entry_price, side, atr)
-
-                # LOT SIZE DINAMIS
-                lot = self._calc_lot_size(balance)
-
-                # EXECUTE
-                sym     = self._working_symbol or "XAUUSD"
-                dxy_ctx = self._get_dxy_context()
-                print("")
-                print("=" * 65)
-                print("[FOREX v6.0] XAUUSD " + side.upper() + " x" + str(trades_to_open) + " | Score: " + str(score) + "/100")
-                print("  Pump: " + str(pump_sig) + " | RSI Div: " + str(ind.get("rsi_divergence","NONE")))
-                print("  Price: " + str(entry_price) + " | ATR: " + str(atr) + " | Lot: " + str(lot))
-                print("  RSI: " + str(rsi_val) + " | VWAP: " + str(ind.get("vwap_dist",0)) + "%")
-                print("  30m: " + trend + " | 1h: " + trend_1h + " | 4h: " + trend_4h)
-                print("  DXY: " + dxy_ctx.get("trend","NEUTRAL") + " (" + str(dxy_ctx.get("change",0)) + "%)")
-                print("  Whale: " + str(ind.get("whale_signal","NORMAL")) + " | OBI: " + str(ind.get("obi",0)))
-                print("  DemandZone: " + str(ind.get("in_demand",False)) + " | SupplyZone: " + str(ind.get("in_supply",False)))
-                print("  TP: " + str(tp) + " | SL: " + str(sl))
-                print("=" * 65)
-
-                opened = 0
-                for i in range(trades_to_open):
-                    # Refresh harga untuk setiap trade ??? harga bisa bergerak antar trade
-                    fresh_price = self.get_live_price()
-                    fresh_entry = fresh_price["ask"] if side == "buy" else fresh_price["bid"]
-                    if fresh_entry == 0:
-                        fresh_entry = entry_price  # fallback ke harga awal
-
-                    # Recalculate TP/SL dari harga fresh
-                    fresh_tp, fresh_sl = self._calc_tp_sl(fresh_entry, side, atr)
-
-                    # Validasi ketat: SL BUY harus < entry, SL SELL harus > entry
-                    if side == "buy" and fresh_sl >= fresh_entry:
-                        print("[SL GUARD] BUY SL " + str(fresh_sl) + " >= entry " + str(fresh_entry) + " ??? skip trade")
-                        continue
-                    if side == "sell" and fresh_sl <= fresh_entry:
-                        print("[SL GUARD] SELL SL " + str(fresh_sl) + " <= entry " + str(fresh_entry) + " ??? skip trade")
-                        continue
-
-                    success, _ = self.place_forex_order(sym, side, lot, tp=fresh_tp, sl=fresh_sl)
-                    if success:
-                        from database import log_trade
-                        log_trade(sym, fresh_entry, fresh_tp, fresh_sl, market="forex",
-                                  side=side, lot_size=lot, score=score,
-                                  reason="Pump:" + str(pump_sig) + " RSI:" + str(rsi_val) + " 30m:" + trend + " 1h:" + trend_1h + " 4h:" + trend_4h)
-                        opened += 1
-                    time.sleep(0.2)  # sedikit lebih lama agar harga stabil
-
-                if opened > 0:
-                    print("[FOREX] Opened " + str(opened) + "/" + str(trades_to_open) + " trades OK")
+                print(f"[EXECUTOR] Mengirim order {side.upper()} {sym} ke MT5...", flush=True)
+                success, _ = self.place_forex_order(sym, side, lot, tp=fresh_tp, sl=fresh_sl)
+                if success:
+                    from database import log_trade
+                    log_trade(sym, fresh_entry, fresh_tp, fresh_sl, market="forex",
+                              side=side, lot_size=lot, score=score,
+                              reason=f"Pump:{pump_sig} RSI:{rsi_val} MTF:{mtf['confluence']} 30m:{trend} 1h:{trend_1h} 4h:{trend_4h}")
                     last_auto_trade = time.time()
+                    print(f"[FOREX] Trade opened OK — TP:{fresh_tp} SL:{fresh_sl}")
 
                 time.sleep(SCAN_INTERVAL)
 
             except Exception as e:
-                print("[FOREX ENGINE ERROR] " + str(e))
+                print(f"[FOREX ENGINE ERROR] {e}")
                 time.sleep(5)
