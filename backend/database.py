@@ -8,14 +8,18 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 def get_connection():
-    """Mencoba koneksi ke PostgreSQL, jika gagal fallback ke SQLite (local)."""
+    """Mencoba koneksi ke PostgreSQL hanya jika URL tersedia, jika tidak langsung ke SQLite."""
+    if not DATABASE_URL:
+        # Langsung ke SQLite jika tidak ada URL (VPS mode)
+        return sqlite3.connect("trading_bot.db", check_same_thread=False)
+        
     try:
         import psycopg2
         return psycopg2.connect(DATABASE_URL)
     except Exception:
-        # Fallback ke SQLite jika PostgreSQL tidak tersedia/gagal
-        # database_url di .env mungkin kosong atau tidak valid
+        # Fallback jika URL ada tapi koneksi gagal
         return sqlite3.connect("trading_bot.db", check_same_thread=False)
+
 
 def is_sqlite(conn):
     return isinstance(conn, sqlite3.Connection)
