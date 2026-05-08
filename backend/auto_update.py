@@ -43,34 +43,26 @@ def run_watcher():
 
     while True:
         try:
-            # 1. Fetch dari GitHub
-            subprocess.run(
-                ["git", "fetch", "origin", "main"],
-                cwd=repo_root, capture_output=True, timeout=30
-            )
+            # 1. Fetch terbaru
+            subprocess.run(["git", "fetch", "origin", "main"], cwd=repo_root, capture_output=True, timeout=30)
 
-            # 2. Cek apakah lokal tertinggal dari remote
-            status = subprocess.run(
-                ["git", "status", "-uno"],
-                cwd=repo_root, capture_output=True, text=True, timeout=10
-            ).stdout
+            # 2. Bandingkan Hash Local vs Remote (Cara paling akurat)
+            local_hash = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True).stdout.strip()
+            remote_hash = subprocess.run(["git", "rev-parse", "origin/main"], cwd=repo_root, capture_output=True, text=True).stdout.strip()
 
-            if "Your branch is behind" in status or "can be fast-forwarded" in status:
-                print(f"[WATCHER] Update ditemukan! Menarik kode terbaru...", flush=True)
+            if local_hash != remote_hash:
+                print(f"[WATCHER] Update ditemukan! {local_hash[:7]} -> {remote_hash[:7]}", flush=True)
 
                 # 3. Pull
-                pull = subprocess.run(
-                    ["git", "pull", "origin", "main"],
-                    cwd=repo_root, capture_output=True, text=True, timeout=60
-                )
-                print(f"[WATCHER] Git pull: {pull.stdout.strip()}", flush=True)
+                pull = subprocess.run(["git", "pull", "origin", "main"], cwd=repo_root, capture_output=True, text=True, timeout=60)
+                print(f"[WATCHER] Git pull sukses.", flush=True)
 
                 # 4. Restart bot
                 print(f"[WATCHER] Merestart MyTradingBot...", flush=True)
                 subprocess.run([PM2, "restart", "MyTradingBot"], timeout=30)
                 print(f"[WATCHER] Bot berhasil diperbarui dan direstart!", flush=True)
             else:
-                # Tidak ada update — diam saja
+                # Up to date
                 pass
 
         except subprocess.TimeoutExpired:
