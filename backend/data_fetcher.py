@@ -581,13 +581,90 @@ def get_binance_ls_ratio(symbol):
     except: pass
     return 1.0
 
+def get_volume_profile(symbol):
+    try:
+        url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=1h&limit=24&productType=USDT-FUTURES"
+        r = requests.get(url, timeout=3, verify=False)
+        if r.status_code != 200: return {}
+        data = r.json().get('data', [])
+        if not data: return {}
+        prices = {}
+        for c in data:
+            p = round(float(c[4]), 4)
+            v = float(c[5])
+            prices[p] = prices.get(p, 0) + v
+        poc = max(prices, key=prices.get)
+        last_p = float(data[-1][4])
+        return {
+            "poc": poc,
+            "price_vs_poc": "ABOVE" if last_p > poc else "BELOW",
+            "poc_distance_pct": round(abs(last_p - poc) / (poc or 1) * 100, 2)
+        }
+    except: return {}
+
+def get_htf_key_levels(symbol):
+    try:
+        url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=4h&limit=42&productType=USDT-FUTURES"
+        r = requests.get(url, timeout=3, verify=False)
+        if r.status_code != 200: return {}
+        data = r.json().get('data', [])
+        if not data: return {}
+        highs = [float(c[2]) for c in data]
+        lows = [float(c[3]) for c in data]
+        d_high = max(highs[-6:]) 
+        d_low = min(lows[-6:])
+        w_high = max(highs)
+        w_low = min(lows)
+        last_p = float(data[-1][4])
+        return {
+            "daily_high": d_high,
+            "daily_low": d_low,
+            "weekly_high": w_high,
+            "weekly_low": w_low,
+            "near_daily_level": abs(last_p - d_high)/(d_high or 1) < 0.005 or abs(last_p - d_low)/(d_low or 1) < 0.005,
+            "level_bias": "RESISTANCE" if abs(last_p - d_high)/(d_high or 1) < 0.01 else ("SUPPORT" if abs(last_p - d_low)/(d_low or 1) < 0.01 else "NEUTRAL")
+        }
+    except: return {}
+
+def get_fibonacci_levels(symbol):
+    try:
+        url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=1h&limit=100&productType=USDT-FUTURES"
+        r = requests.get(url, timeout=3, verify=False)
+        if r.status_code != 200: return {}
+        data = r.json().get('data', [])
+        if not data: return {}
+        high = max(float(c[2]) for c in data)
+        low = min(float(c[3]) for c in data)
+        last_p = float(data[-1][4])
+        diff = high - low
+        fib618 = high - (diff * 0.618)
+        return {
+            "fib_618": fib618,
+            "at_fib_support": abs(last_p - fib618)/(fib618 or 1) < 0.005,
+            "current_fib_level": "0.618" if abs(last_p - fib618)/(fib618 or 1) < 0.01 else "NONE"
+        }
+    except: return {}
+
+def detect_stop_hunt(symbol):
+    try:
+        url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=15m&limit=10&productType=USDT-FUTURES"
+        r = requests.get(url, timeout=3, verify=False)
+        if r.status_code != 200: return {}
+        data = r.json().get('data', [])
+        if len(data) < 3: return {}
+        last = data[-1]
+        prev = data[-2]
+        bull_hunt = float(last[3]) < float(prev[3]) and float(last[4]) > float(prev[3])
+        return {"bull_stop_hunt": bull_hunt, "hunt_strength": 1.0 if bull_hunt else 0}
+    except: return {}
+
 def get_technical_indicators(symbol, interval="15m"):
     """
     ULTIMATE INDICATOR ENGINE v5.1: SMC + Order Flow + Predictive Structure
     """
     try:
         url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity={interval}&limit=100&productType=USDT-FUTURES"
-        r = requests.get(url, timeout=10, verify=False)
+        r = requests.get(url, timeout=3, verify=False)
         if r.status_code != 200: return {}
         
         data = r.json().get('data', [])
@@ -902,7 +979,7 @@ def get_dune_macro_metrics():
         query_id = 3403
         url = f"https://api.dune.com/api/v1/query/{query_id}/results/latest"
         headers = {"X-Dune-API-Key": api_key}
-        r = requests.get(url, headers=headers, timeout=10)
+        r = requests.get(url, headers=headers, timeout=3)
         if r.status_code == 200:
             data = r.json()
             rows = data.get('result', {}).get('rows', [])
