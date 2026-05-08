@@ -44,6 +44,12 @@ from sentiment import get_crypto_news, get_global_market_data
 from ai_model import analyze_and_sort
 from database import log_trade
 from bitget_executor import BitgetExecutor
+from data_fetcher import (
+    get_technical_indicators, fetch_all_tickers, _calc_rsi, _calc_adx,
+    _calc_volatility_regime, _calc_expected_value, _get_btc_context,
+    get_volume_profile, get_htf_key_levels, get_fibonacci_levels, 
+    detect_stop_hunt, detect_institutional_liquidity_grab
+)
 
 #  KONFIGURASI 
 MAX_POSITIONS        = 1      # FOKUS: 1 trade saja
@@ -1579,12 +1585,8 @@ def run_crypto_engine():
                 tech = fresh_tech  # Pakai data fresh untuk eksekusi
 
             # Tambahkan Volume Profile, HTF Levels, Fibonacci, Stop Hunt
-            # Hanya dipanggil saat entry  tidak saat scan (terlalu banyak API call)
+            # Menggunakan fungsi yang sudah di-import di atas
             try:
-                from data_fetcher import (
-                    get_volume_profile, get_htf_key_levels,
-                    get_fibonacci_levels, detect_stop_hunt
-                )
                 vp   = get_volume_profile(symbol)
                 htf  = get_htf_key_levels(symbol)
                 fib  = get_fibonacci_levels(symbol)
@@ -1673,6 +1675,9 @@ def run_crypto_engine():
             print(f"  Leverage    : {LEVERAGE}x | Sentiment: {market_sentiment}")
             print(f"{'='*65}\n")
 
+            #  EKSEKUSI 
+            print(f"[EXECUTOR] Mengirim order {side.upper()} {symbol} ke Bitget...", flush=True)
+            
             success, order = executor.place_order(
                 symbol, side, amount, tp=tp, sl=sl, leverage=LEVERAGE
             )
