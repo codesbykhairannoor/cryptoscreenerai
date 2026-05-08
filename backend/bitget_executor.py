@@ -133,15 +133,15 @@ class BitgetExecutor:
         """
         Hitung size berdasarkan FIXED MARGIN per trade.
         
-        Default: $2.5 margin per trade (fixed, tidak berubah)
-        Notional = $2.5 x 10x = $25
-        SL 15% PnL = -$0.375 per loss
-        TP 80% PnL = +$2.00 per win
+        Default: $3 margin per trade (fixed, tidak berubah)
+        Notional = $3 x 10x = $30
+        SL 15% PnL = -$0.45 per loss
+        TP 80% PnL = +$2.40 per win
         1 win = 5.3 loss — konsisten tidak peduli balance berapa
         
-        Kalau balance < $2.5, pakai semua yang tersedia (minimum $5 notional).
+        Kalau balance < $3, pakai semua yang tersedia (minimum $5 notional).
         """
-        FIXED_MARGIN = 2.5  # $2.5 margin per trade — FIXED (turun dari $7)
+        FIXED_MARGIN = 3.0  # $3 margin per trade — FIXED
 
         try:
             balance    = self.get_balance()

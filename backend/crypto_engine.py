@@ -48,20 +48,20 @@ from bitget_executor import BitgetExecutor
 #  KONFIGURASI 
 MAX_POSITIONS        = 1      # FOKUS: 1 trade saja
 SCAN_INTERVAL        = 10     # Scan setiap 10 detik
-COOLDOWN_AFTER_TRADE = 60     # INSTANT SNIPER: Hanya 1 menit cooldown setelah trade tutup
+COOLDOWN_AFTER_TRADE = 120    # 2 menit cooldown — versi profit May 5
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 60     # Minimum combined score untuk masuk watchlist
-MIN_TECH_SCORE       = 55     # NAIK dari 45 ke 55 — tech score harus kuat, bukan cuma pump score yang angkat
-MIN_PUMP_SCORE       = 35
+MIN_MOMENTUM_SCORE   = 40     # Threshold versi profit setelah session filter ditambahkan
+MIN_TECH_SCORE       = 30     # Tech score minimum — tidak terlalu ketat
+MIN_PUMP_SCORE       = 25     # Pump score minimum untuk masuk scan
 
 #  WHALE OBSERVER CONFIG 
-MIN_APPEARANCES      = 3      # Minimal 3x muncul dalam observasi (sebelumnya 1 = tidak ada observasi)
-MIN_AVG_SCORE        = 60     # NAIK DRASTIS
+MIN_APPEARANCES      = 3      # Minimal 3x muncul dalam observasi
+MIN_AVG_SCORE        = 42     # Rata-rata combined score minimum — versi profit May 6
 CONSISTENCY_BONUS    = 1.15
 MOMENTUM_BONUS       = 1.10
-REPEAT_LOSS_BLACKLIST_HOURS = 8   # Fix: 8 jam (sebelumnya 4 jam terlalu pendek)
+REPEAT_LOSS_BLACKLIST_HOURS = 8
 REPEAT_LOSS_MAX_COUNT       = 2
 
 # OI & Funding thresholds
@@ -1316,31 +1316,27 @@ def run_crypto_engine():
                 pass
 
 
-            #  4b. SESSION FILTER  off-hours diperketat, bukan di-skip 
+            #  4b. SESSION FILTER — HARD STOP off-hours
+            # DATA: 13 trade jam 01:00-08:00 WIB, 9 loss 3 win (commit e97e2ab May 6)
+            # Solusi terbukti: stop total di jam sepi, bukan soft filter
             import datetime as _dt
             utc_hour = _dt.datetime.utcnow().hour
             wib_hour = (utc_hour + 7) % 24
             _is_active_session = (CRYPTO_SESSION_START_UTC <= utc_hour < CRYPTO_SESSION_END_UTC)
 
-            if _is_active_session:
-                # JAM AKTIF (08:00-22:00 WIB): syarat normal
-                _session_min_score    = MIN_MOMENTUM_SCORE
-                _session_min_avg      = MIN_AVG_SCORE
-                _session_min_ev       = MIN_EXPECTED_VALUE
-                _session_need_signal  = True                     # WAJIB ada sinyal institusi (Whale/OBI/Funding)
-                _session_min_appear   = MIN_APPEARANCES          # 3x
-            else:
-                # JAM OFF-HOURS (22:00-08:00 WIB): syarat SANGAT KETAT
-                # Volume rendah, spread tinggi, sinyal palsu banyak
-                _session_min_score    = 70    # Sangat ketat
-                _session_min_avg      = 70    # Sangat ketat
-                _session_min_ev       = 0.025 # EV harus sangat tinggi
-                _session_need_signal  = True  # WAJIB ada whale/OI/funding signal
-                _session_min_appear   = 5     # Fix: 5x muncul (sebelumnya 1 = tidak ada observasi)
+            if not _is_active_session:
                 if int(now) % 300 < 10:
                     print(f"[CRYPTO SESSION] Off-hours ({wib_hour:02d}:xx WIB). "
-                          f"Syarat diperketat: score>={_session_min_score} "
-                          f"EV>={_session_min_ev} min_appear={_session_min_appear}x")
+                          f"Aktif jam 08:00-22:00 WIB.")
+                time.sleep(60)
+                continue
+
+            # JAM AKTIF: pakai threshold normal
+            _session_min_score    = MIN_MOMENTUM_SCORE
+            _session_min_avg      = MIN_AVG_SCORE
+            _session_min_ev       = MIN_EXPECTED_VALUE
+            _session_need_signal  = False
+            _session_min_appear   = MIN_APPEARANCES
 
             #  5. POSITION CHECK 
             positions  = executor.get_all_positions()
@@ -1513,13 +1509,10 @@ def run_crypto_engine():
                 )
 
                 combined_score = round(
-                    ((dump_sc if side == "sell" else pump_sc) * 0.3) + (tech_score * 0.7)
+                    ((dump_sc if side == "sell" else pump_sc) * 0.5) + (tech_score * 0.5)
                 )
-                # Penjelasan bobot baru:
-                # Sebelumnya: pump 50% + tech 50% → pump score 80 bisa angkat tech score 51 jadi 65 (lolos)
-                # Sekarang:   pump 30% + tech 70% → pump score 80 + tech score 51 = 59.7 (tidak lolos MIN_TECH_SCORE 55)
-                # Tech score harus dominan karena dia yang tahu apakah harga di area yang tepat
-                # Pump score hanya sebagai filter awal, bukan penentu entry
+                # Bobot 50/50 seperti versi profit May 6
+                # 30/70 terlalu ketat — bot jadi jarang masuk
                 if side is None or combined_score < MIN_MOMENTUM_SCORE or tech_score < MIN_TECH_SCORE:
                     skip_reasons['low_score'] = skip_reasons.get('low_score', 0) + 1
 
@@ -1573,21 +1566,10 @@ def run_crypto_engine():
 
                 # Lolos semua filter - catat ke observer
                 if side is not None and combined_score >= _session_min_score and tech_score >= MIN_TECH_SCORE:
-                    # Off-hours: cek EV lebih ketat
+                    # Cek EV minimum
                     if ev < _session_min_ev:
                         skip_reasons['low_ev'] = skip_reasons.get('low_ev', 0) + 1
                         continue
-                    # Off-hours: wajib ada sinyal prediktif (whale/OI/funding) saat scan
-                    # Ini mencegah entry lemah di jam sepi — filter diterapkan di sini, bukan hanya di entry
-                    if _session_need_signal and not _is_active_session:
-                        has_signal_now = (
-                            tech.get('whale_signal') in ('WHALE_BUY', 'WHALE_SELL') or
-                            abs(tech.get('funding_rate', 0)) > 0.0002 or
-                            tech.get('open_interest', 0) > 0
-                        )
-                        if not has_signal_now:
-                            skip_reasons['no_signal_offhours'] = skip_reasons.get('no_signal_offhours', 0) + 1
-                            continue
                     observer.record(clean_base, combined_score, tech_score, side, tech,
                                     adx=adx, ev=ev, vol_regime=vol_regime)
                     scan_count += 1
