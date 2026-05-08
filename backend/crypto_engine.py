@@ -48,17 +48,17 @@ from bitget_executor import BitgetExecutor
 #  KONFIGURASI 
 MAX_POSITIONS        = 1      # FOKUS: 1 trade saja
 SCAN_INTERVAL        = 10     # Scan setiap 10 detik
-COOLDOWN_AFTER_TRADE = 60     # INSTANT SNIPER: Hanya 1 menit cooldown setelah trade tutup
+COOLDOWN_AFTER_TRADE = 10     # SUPER AGRESIF: Cuma 10 detik cooldown
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 60     # NAIK DRASTIS: Hanya ambil setup A+
-MIN_TECH_SCORE       = 45     # NAIK DRASTIS
-MIN_PUMP_SCORE       = 35     # NAIK DRASTIS
+MIN_MOMENTUM_SCORE   = 40     # TURUN: Biar lebih lincah
+MIN_TECH_SCORE       = 35     # TURUN
+MIN_PUMP_SCORE       = 25     # TURUN
 
 #  WHALE OBSERVER CONFIG 
-MIN_APPEARANCES      = 1      # EKSEKUSI INSTAN: Begitu lolos filter ketat, langsung sikat
-MIN_AVG_SCORE        = 60     # NAIK DRASTIS
+MIN_APPEARANCES      = 1      
+MIN_AVG_SCORE        = 45     # TURUN: Dari 60 ke 45 biar sering masuk trade
 CONSISTENCY_BONUS    = 1.15
 MOMENTUM_BONUS       = 1.10
 REPEAT_LOSS_BLACKLIST_HOURS = 4
@@ -86,8 +86,8 @@ DAILY_LOSS_LIMIT_PCT = -40
 
 #  MARKET INTELLIGENCE CONFIG 
 # ADX Market Regime: hanya trade di trending market
-ADX_TRENDING_THRESHOLD  = 22
-ADX_RANGING_THRESHOLD   = 18
+ADX_TRENDING_THRESHOLD  = 20
+ADX_RANGING_THRESHOLD   = 15  # TURUN: Biar tidak skip di market sideways tipis
 ADX_PERIOD              = 14
 
 # Volatility Regime
