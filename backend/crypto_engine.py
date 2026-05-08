@@ -37,7 +37,8 @@ from collections import defaultdict
 
 from data_fetcher import (
     fetch_all_tickers, get_technical_indicators,
-    get_retail_sentiment, detect_institutional_flow
+    get_retail_sentiment, detect_institutional_flow,
+    detect_institutional_liquidity_grab
 )
 from sentiment import get_crypto_news, get_global_market_data
 from ai_model import analyze_and_sort
@@ -797,6 +798,14 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
         score += 10 + min(5, hunt_strength * 2)  # max 15 poin
     if side == "sell" and tech.get('bear_stop_hunt', False):
         score += 10 + min(5, hunt_strength * 2)
+
+    # 3g. INSTITUTIONAL LIQUIDITY GRAB (max 15 poin)
+    # Rejection wick panjang = BlackRock style liquidity hunter footprint
+    liq = tech.get('liquidity_grab', {})
+    if side == "buy" and liq.get('bullish_grab'):
+        score += 15
+    if side == "sell" and liq.get('bearish_grab'):
+        score += 15
 
     # 3e. VOLUME PROFILE / POC (max 10 poin, penalti -8)
     # Harga di bawah POC = discount zone (bagus untuk BUY)

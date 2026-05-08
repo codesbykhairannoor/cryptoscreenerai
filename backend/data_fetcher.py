@@ -678,6 +678,7 @@ def get_technical_indicators(symbol, interval="15m"):
         smc = detect_smart_money_concepts(df_cur)
         inst_flow = detect_institutional_flow(df_cur)
         dsz = detect_demand_supply_zones(df_cur)  # Demand/Supply Zones
+        liq_grab = detect_institutional_liquidity_grab(df_cur) # BlackRock Liquidity Hunter
 
         # Volume Profile, HTF Key Levels, Fibonacci, Stop Hunt
         # CATATAN: Fungsi-fungsi ini dipanggil hanya saat entry (bukan saat scan)
@@ -777,6 +778,7 @@ def get_technical_indicators(symbol, interval="15m"):
             "ema_200_htf": round(ema_200_htf_val, 2),
             "trend_1h": trend_1h,
             "trend_4h": trend_4h,
+            "liquidity_grab": liq_grab,
             "ema_50_4h": round(ema_50_4h, 6),
             "open_interest": get_open_interest(symbol),
             "funding_rate": get_funding_rate(symbol),
@@ -912,6 +914,34 @@ def get_dune_macro_metrics():
                 }
     except: pass
     return {"macro_sentiment": "NEUTRAL"}
+
+def detect_institutional_liquidity_grab(df):
+    """
+    BLACKROCK SMART LIQUIDITY HUNTER
+    Detects long-wick rejections (pin bars) at key levels.
+    These often indicate institutional liquidity sweeps.
+    """
+    if len(df) < 5: return {"bullish_grab": False, "bearish_grab": False}
+    
+    last = df.iloc[-1]
+    body = abs(last['close'] - last['open'])
+    wick_top = last['high'] - max(last['close'], last['open'])
+    wick_bottom = min(last['close'], last['open']) - last['low']
+    total_range = last['high'] - last['low']
+    
+    if total_range == 0: return {"bullish_grab": False, "bearish_grab": False}
+    
+    # 1. Bullish Grab: Long lower wick, small body (Stop hunt below)
+    bullish_grab = (wick_bottom > body * 2) and (wick_bottom > total_range * 0.6)
+    
+    # 2. Bearish Grab: Long upper wick, small body (Liquidity sweep above)
+    bearish_grab = (wick_top > body * 2) and (wick_top > total_range * 0.6)
+    
+    return {
+        "bullish_grab": bullish_grab,
+        "bearish_grab": bearish_grab,
+        "grab_strength": round(total_range, 4)
+    }
 
 if __name__ == "__main__":
     print(get_technical_indicators("BTCUSDT"))
