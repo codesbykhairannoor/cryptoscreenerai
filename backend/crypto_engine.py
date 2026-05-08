@@ -36,20 +36,14 @@ import requests
 from collections import defaultdict
 
 from data_fetcher import (
-    fetch_all_tickers, get_technical_indicators,
-    get_retail_sentiment, detect_institutional_flow,
-    detect_institutional_liquidity_grab
+    get_technical_indicators, fetch_all_tickers,
+    get_volume_profile, get_htf_key_levels, get_fibonacci_levels, 
+    detect_stop_hunt, detect_institutional_liquidity_grab
 )
 from sentiment import get_crypto_news, get_global_market_data
 from ai_model import analyze_and_sort
 from database import log_trade
 from bitget_executor import BitgetExecutor
-from data_fetcher import (
-    get_technical_indicators, fetch_all_tickers, _calc_rsi, _calc_adx,
-    _calc_volatility_regime, _calc_expected_value, _get_btc_context,
-    get_volume_profile, get_htf_key_levels, get_fibonacci_levels, 
-    detect_stop_hunt, detect_institutional_liquidity_grab
-)
 
 #  KONFIGURASI 
 MAX_POSITIONS        = 1      # FOKUS: 1 trade saja
