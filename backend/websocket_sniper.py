@@ -7,6 +7,7 @@ import websockets
 import os
 import time
 import requests
+import ssl
 from dotenv import load_dotenv
 from bitget_executor import BitgetExecutor
 from database import log_trade
@@ -67,10 +68,13 @@ class BitgetPrivateWS:
         await ws.send(json.dumps(subs))
         print("[PRIVATE WS] Subscribed to Order, Algo (SL/TP), Account, and Positions!")
 
-    async def listen(self):
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        
         while self.is_running:
             try:
-                async with websockets.connect(self.url) as ws:
+                async with websockets.connect(self.url, ssl=ssl_context) as ws:
                     asyncio.create_task(self.heartbeat(ws))
                     await self.login(ws)
                     resp = await ws.recv()
@@ -173,9 +177,14 @@ class BitgetPublicWS:
 
     async def listen(self):
         from shared_state import state
+        
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        
         while self.is_running:
             try:
-                async with websockets.connect(self.url) as ws:
+                async with websockets.connect(self.url, ssl=ssl_context) as ws:
                     asyncio.create_task(self.heartbeat(ws))
                     await self.subscribe(ws)
                     
@@ -248,9 +257,14 @@ class FinnhubWS:
 
     async def listen(self):
         from shared_state import state
+        
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
+        
         while self.is_running:
             try:
-                async with websockets.connect(self.url) as ws:
+                async with websockets.connect(self.url, ssl=ssl_context) as ws:
                     await self.subscribe(ws)
                     while True:
                         msg = await ws.recv()
