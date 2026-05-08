@@ -603,22 +603,21 @@ class BitgetExecutor:
                 # peak 40-49% : lock 20% PnL
                 # peak 50-59% : lock 30% PnL
                 # peak >= 60% : lock 40% PnL
+                # peak >= 20% : lock (peak_rounded_down - 10)%
                 LEVERAGE_FACTOR = 10.0
                 new_sl = 0
-                if side in ['long', 'buy']:
-                    if peak_pnl >= 50:   new_sl = entry * (1 + 0.40/LEVERAGE_FACTOR)  # lock 40%
-                    elif peak_pnl >= 40: new_sl = entry * (1 + 0.30/LEVERAGE_FACTOR)  # lock 30%
-                    elif peak_pnl >= 30: new_sl = entry * (1 + 0.20/LEVERAGE_FACTOR)  # lock 20%
-                    elif peak_pnl >= 20: new_sl = entry * (1 + 0.10/LEVERAGE_FACTOR)  # lock 10%
-                    elif peak_pnl >= 10: new_sl = entry * 1.002                       # lock 2% (nutup fee)
-                    # peak < 10%: DIAM — SL awal di -15% sudah cukup
-                else:
-                    if peak_pnl >= 50:   new_sl = entry * (1 - 0.40/LEVERAGE_FACTOR)
-                    elif peak_pnl >= 40: new_sl = entry * (1 - 0.30/LEVERAGE_FACTOR)
-                    elif peak_pnl >= 30: new_sl = entry * (1 - 0.20/LEVERAGE_FACTOR)
-                    elif peak_pnl >= 20: new_sl = entry * (1 - 0.10/LEVERAGE_FACTOR)
-                    elif peak_pnl >= 10: new_sl = entry * 0.998                       # lock 2%
-                    # peak < 10%: DIAM
+                
+                if peak_pnl >= 20:
+                    locked_pnl = float(int(peak_pnl / 10) * 10 - 10)
+                    if side in ['long', 'buy']:
+                        new_sl = entry * (1 + (locked_pnl / 100.0) / LEVERAGE_FACTOR)
+                    else:
+                        new_sl = entry * (1 - (locked_pnl / 100.0) / LEVERAGE_FACTOR)
+                elif peak_pnl >= 10:
+                    if side in ['long', 'buy']:
+                        new_sl = entry * 1.002  # lock 2%
+                    else:
+                        new_sl = entry * 0.998  # lock 2%
 
                 if new_sl > 0:
                     # SL hanya boleh naik (long) atau turun (short) — tidak pernah mundur
