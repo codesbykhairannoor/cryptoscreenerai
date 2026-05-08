@@ -1301,6 +1301,8 @@ def run_crypto_engine():
             candidates = analyze_and_sort(raw_data)
 
             if not candidates:
+                if int(now) % 60 < 10:
+                    print(f"[CRYPTO WARNING] Tidak ada kandidat (API Bitget rate limit/kosong). Retrying...")
                 time.sleep(SCAN_INTERVAL)
                 continue
 

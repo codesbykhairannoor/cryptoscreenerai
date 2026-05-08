@@ -23,12 +23,12 @@ CANDLE_LIMIT         = 100
 MAX_TRADES_PER_SIGNAL = 2     # Turun dari 3 ke 2
 
 # SL/TP baru — lebih realistis untuk XAUUSD
-# SL 12 poin = sangat ketat untuk scalping XAUUSD (termasuk spread)
-# TP 24 poin = RR 1:2
-SCALP_TP_POINTS      = 24.0   # Turun dari 40 ke 24 poin
-SCALP_SL_POINTS      = 12.0   # Turun dari 20 ke 12 poin
+# SL 20 poin = batas aman dari noise XAUUSD + spread
+# TP 30 poin = RR 1:1.5
+SCALP_TP_POINTS      = 30.0   # Naik dari 24 ke 30 poin
+SCALP_SL_POINTS      = 20.0   # Naik dari 12 ke 20 poin
 TRAIL_BUFFER_POINTS     = 5.0
-TRAIL_ACTIVATION_POINTS = 8.0  # Trailing aktif setelah profit 8 poin (sesuai logika ultra-scalper)
+TRAIL_ACTIVATION_POINTS = 12.0  # Trailing aktif setelah profit 12 poin
 BASE_LOT_PER_100     = 0.01
 MAX_LOT_PER_TRADE    = 0.05
 MIN_LOT_PER_TRADE    = 0.01
@@ -1078,22 +1078,22 @@ class ForexExecutor:
 
     def _calc_tp_sl(self, price, side, atr):
         """
-        TP/SL ULTRA-SCALPING v8.0.
-        SL 12 poin minimum
-        TP 24 poin minimum (RR 1:2)
+        TP/SL SAFE-SCALPING v9.0.
+        SL 20 poin minimum
+        TP 30 poin minimum (RR 1:1.5)
         """
         if atr and 1.0 <= atr <= 20:
-            sl_dist = max(atr * 1.5, SCALP_SL_POINTS)
-            tp_dist = max(atr * 3.0, SCALP_TP_POINTS)
+            sl_dist = max(atr * 2.0, SCALP_SL_POINTS)
+            tp_dist = max(atr * 3.5, SCALP_TP_POINTS)
         else:
             sl_dist = SCALP_SL_POINTS
             tp_dist = SCALP_TP_POINTS
 
         # Hard limits
-        sl_dist = max(sl_dist, 10.0)   # Absolute minimum 10 poin
-        tp_dist = max(tp_dist, 20.0)   # Absolute minimum 20 poin (RR 1:2)
-        sl_dist = min(sl_dist, 15.0)   # Max 15 poin SL
-        tp_dist = min(tp_dist, 35.0)   # Max 35 poin TP
+        sl_dist = max(sl_dist, 16.0)   # Absolute minimum 16 poin
+        tp_dist = max(tp_dist, 25.0)   # Absolute minimum 25 poin
+        sl_dist = min(sl_dist, 25.0)   # Max 25 poin SL
+        tp_dist = min(tp_dist, 45.0)   # Max 45 poin TP
 
         if side == "buy":
             return round(price + tp_dist, 3), round(price - sl_dist, 3)
@@ -1287,43 +1287,43 @@ class ForexExecutor:
             # profit >= 25 poin : LOCK-18 (SL ke entry+18)
             # TP kena di 40 poin: profit $4+ per trade
 
-            if profit_pt < 8.0:
+            if profit_pt < 12.0:
                 if profit_pt > 0:
-                    print("[TRAIL] " + sym + " profit_pt=" + str(round(profit_pt,2)) + " < 8.0, waiting...")
+                    print("[TRAIL] " + sym + " profit_pt=" + str(round(profit_pt,2)) + " < 12.0, waiting...")
                 continue
 
             if is_buy:
-                if profit_pt >= 20.0:
+                if profit_pt >= 25.0:
+                    target_sl = round(open_price + 20.0, 3)
+                    stage     = "LOCK-20"
+                elif profit_pt >= 20.0:
                     target_sl = round(open_price + 15.0, 3)
                     stage     = "LOCK-15"
                 elif profit_pt >= 16.0:
                     target_sl = round(open_price + 11.0, 3)
                     stage     = "LOCK-11"
                 elif profit_pt >= 12.0:
-                    target_sl = round(open_price + 7.0, 3)
-                    stage     = "LOCK-7"
-                elif profit_pt >= 8.0:
-                    target_sl = round(open_price + 3.0, 3)
-                    stage     = "LOCK-3"
+                    target_sl = round(open_price + 6.0, 3)
+                    stage     = "LOCK-6"
                 else:
-                    target_sl = round(open_price + 1.0, 3)
-                    stage     = "LOCK-1"
+                    target_sl = round(open_price + 2.0, 3)
+                    stage     = "LOCK-2"
             else:
-                if profit_pt >= 20.0:
+                if profit_pt >= 25.0:
+                    target_sl = round(open_price - 20.0, 3)
+                    stage     = "LOCK-20"
+                elif profit_pt >= 20.0:
                     target_sl = round(open_price - 15.0, 3)
                     stage     = "LOCK-15"
                 elif profit_pt >= 16.0:
                     target_sl = round(open_price - 11.0, 3)
                     stage     = "LOCK-11"
                 elif profit_pt >= 12.0:
-                    target_sl = round(open_price - 7.0, 3)
-                    stage     = "LOCK-7"
-                elif profit_pt >= 8.0:
-                    target_sl = round(open_price - 3.0, 3)
-                    stage     = "LOCK-3"
+                    target_sl = round(open_price - 6.0, 3)
+                    stage     = "LOCK-6"
                 else:
-                    target_sl = round(open_price - 1.0, 3)
-                    stage     = "LOCK-1"
+                    target_sl = round(open_price - 2.0, 3)
+                    stage     = "LOCK-2"
 
             # SL hanya bergerak ke arah profit, tidak pernah mundur
             if is_buy:
