@@ -68,6 +68,7 @@ class BitgetPrivateWS:
         await ws.send(json.dumps(subs))
         print("[PRIVATE WS] Subscribed to Order, Algo (SL/TP), Account, and Positions!")
 
+    async def listen(self):
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
