@@ -233,6 +233,15 @@ class FinnhubWS:
         self.url = f"wss://ws.finnhub.io?token={self.api_key}"
         self.is_running = True
 
+    async def heartbeat(self, ws):
+        """Kirim ping manual untuk memastikan Finnhub tidak timeout."""
+        while self.is_running:
+            try:
+                await ws.ping()
+                await asyncio.sleep(25)
+            except:
+                break
+
     async def subscribe(self, ws):
         # Subscribe to News and Major Asset prices
         targets = ["BINANCE:BTCUSDT", "BINANCE:ETHUSDT", "IC MARKETS:1"] # 1 is Gold on some feeds
@@ -265,10 +274,24 @@ class FinnhubWS:
         
         while self.is_running:
             try:
-                async with websockets.connect(self.url, ssl=ssl_context) as ws:
+                # Tambahkan ping_interval & ping_timeout untuk stabilitas lebih tinggi
+                async with websockets.connect(
+                    self.url, 
+                    ssl=ssl_context,
+                    ping_interval=20,
+                    ping_timeout=20,
+                    close_timeout=10
+                ) as ws:
+                    asyncio.create_task(self.heartbeat(ws))
                     await self.subscribe(ws)
                     while True:
-                        msg = await ws.recv()
+                        try:
+                            msg = await asyncio.wait_for(ws.recv(), timeout=60)
+                        except asyncio.TimeoutError:
+                            # Jika 60 detik tidak ada data, kirim ping manual
+                            await ws.ping()
+                            continue
+                            
                         data = json.loads(msg)
                         m_type = data.get("type")
                         
