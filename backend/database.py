@@ -69,7 +69,17 @@ def init_db():
     ]
     for col_name, col_def in new_columns:
         try:
-            cursor.execute(f"ALTER TABLE trades ADD COLUMN IF NOT EXISTS {col_name} {col_def}")
+            if is_sqlite(conn):
+                # SQLite tidak support IF NOT EXISTS pada ALTER TABLE
+                # Cek dulu apakah kolom sudah ada
+                cursor.execute(f"PRAGMA table_info(trades)")
+                existing_cols = [row[1] for row in cursor.fetchall()]
+                if col_name not in existing_cols:
+                    # SQLite hanya support tipe sederhana, strip PostgreSQL-specific syntax
+                    sqlite_def = col_def.replace("DOUBLE PRECISION", "REAL").replace("BIGINT", "INTEGER")
+                    cursor.execute(f"ALTER TABLE trades ADD COLUMN {col_name} {sqlite_def}")
+            else:
+                cursor.execute(f"ALTER TABLE trades ADD COLUMN IF NOT EXISTS {col_name} {col_def}")
         except Exception:
             pass
 

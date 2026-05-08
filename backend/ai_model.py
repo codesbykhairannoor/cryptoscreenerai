@@ -197,9 +197,9 @@ def analyze_and_sort(raw_data):
         if high > low and price > 0:
             pos = (price - low) / (high - low) * 100
             if 65 <= pos <= 90:   score += 25   # Dekat puncak, ideal short
-            elif 50 <= pos < 65:  score += 18   # Di atas tengah
-            elif 35 <= pos < 50:  score += 10   # Di tengah
-            elif pos < 15:        score -= 5    # Dekat bottom, risky short
+            elif 50 <= pos < 65:  score += 10   # Di atas tengah, masih ok
+            elif 35 <= pos < 50:  score -= 5    # Di tengah, tidak ideal short
+            elif pos < 35:        score -= 15   # Dekat bottom, JANGAN short
 
         # 4. MOMENTUM - koin yang sudah naik banyak = reversal candidate
         if 6 < pct <= 15:    score += 20   # Sudah naik banyak, ripe for reversal

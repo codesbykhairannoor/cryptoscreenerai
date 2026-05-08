@@ -27,6 +27,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Singleton executor — dibuat sekali, dipakai ulang untuk semua request
+# Mencegah pembuatan koneksi baru + API call balance/positions setiap request
+_bitget_executor: BitgetExecutor = None
+_forex_executor: ForexExecutor = None
+
+def get_bitget_executor() -> BitgetExecutor:
+    global _bitget_executor
+    if _bitget_executor is None:
+        _bitget_executor = BitgetExecutor()
+    return _bitget_executor
+
+def get_forex_executor() -> ForexExecutor:
+    global _forex_executor
+    if _forex_executor is None:
+        _forex_executor = ForexExecutor()
+    return _forex_executor
+
 @app.on_event("startup")
 def startup_event():
     # 0. Database migration   tambah kolom baru kalau belum ada
@@ -38,7 +55,7 @@ def startup_event():
 
     # 1. Sync State Memory (Anti-Amnesia Pillar)
     try:
-        executor = BitgetExecutor()
+        executor = get_bitget_executor()
         executor.sync_state_with_exchange()
     except Exception as e:
         print(f"[SYSTEM] Gagal sinkronisasi state: {e}", flush=True)
@@ -64,7 +81,7 @@ def startup_event():
 
     # 4. Start Forex Engine (Isolated)
     try:
-        fx = ForexExecutor()
+        fx = get_forex_executor()
         fx_thread = threading.Thread(target=fx.monitor_forex_market, daemon=True)
         fx_thread.start()
         print("[SYSTEM] Forex Engine AKTIF!")
@@ -98,7 +115,7 @@ def read_root():
 @app.get("/api/bitget-status")
 def get_bitget_status():
     try:
-        executor = BitgetExecutor()
+        executor = get_bitget_executor()
         success, message = executor.test_connection()
         return {"connected": success, "message": message}
     except Exception as e:
@@ -107,7 +124,7 @@ def get_bitget_status():
 @app.get("/api/forex-status")
 def get_forex_status():
     try:
-        executor = ForexExecutor()
+        executor = get_forex_executor()
         success, message = executor.test_connection()
         return {"connected": success, "message": message}
     except Exception as e:
@@ -224,13 +241,13 @@ def execute_now(trade: dict):
         side = trade.get('side', 'buy')
         
         if market == 'crypto':
-            executor = BitgetExecutor()
+            executor = get_bitget_executor()
             # Small randomized TP/SL for manual stealth test
             tp = float(trade.get('tp', 0))
             sl = float(trade.get('sl', 0))
             success, res = executor.place_futures_order(symbol, side, tp_price=tp, sl_price=sl)
         else:
-            executor = ForexExecutor()
+            executor = get_forex_executor()
             # Manual batch for Forex (3 trades for 'pinter' scaling test)
             tp = float(trade.get('tp', 0))
             sl = float(trade.get('sl', 0))

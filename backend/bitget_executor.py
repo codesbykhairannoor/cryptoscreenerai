@@ -439,20 +439,27 @@ class BitgetExecutor:
         try:
             if not hasattr(self, '_last_sl_check'): self._last_sl_check = {}
             if not hasattr(self, '_last_sl_set'):   self._last_sl_set = {}
-            if not hasattr(self, '_peak_pnl'):      self._peak_pnl = {}  # Track PnL tertinggi per symbol
             if not hasattr(self, '_tracked_positions'): self._tracked_positions = {}
+
+            # Peak PnL disimpan di shared_state agar persist saat restart
+            # Kalau bot restart saat trade jalan, peak PnL tidak hilang
+            from shared_state import state
+            if not hasattr(state, 'peak_pnl'): state.peak_pnl = {}
+            self._peak_pnl = state.peak_pnl  # Reference ke shared state
 
             positions = self.get_all_positions()
             now = time.time()
             from shared_state import state
 
-            current_symbols = {p['symbol']: p.get('pnl', 0) for p in positions}
+            # Normalisasi semua symbol ke format clean (tanpa /USDT:USDT, dll)
+            # Ini mencegah duplikat tracking karena WS dan REST pakai format berbeda
+            # Contoh: "SAHARA/USDT:USDT" dan "SAHARAUSDT" keduanya jadi "SAHARA"
+            current_symbols = {self._clean_symbol(p['symbol']): p.get('pnl', 0) for p in positions}
             
             # Detect ANY position that was closed (TP hit, SL hit, manual close)
             closed_symbols = set(self._tracked_positions.keys()) - set(current_symbols.keys())
-            for sym in closed_symbols:
-                clean = self._clean_symbol(sym)
-                last_pnl = self._tracked_positions[sym]
+            for clean in closed_symbols:
+                last_pnl = self._tracked_positions[clean]
                 
                 if not hasattr(state, 'recently_exited'): state.recently_exited = {}
                 state.recently_exited[clean] = now
@@ -460,7 +467,7 @@ class BitgetExecutor:
                 if not hasattr(state, 'exit_pnl'): state.exit_pnl = {}
                 state.exit_pnl[clean] = last_pnl
                 
-                print(f"[TRACKER] Trade {sym} closed with PnL {last_pnl}%. Cooldown initiated.")
+                print(f"[TRACKER] Trade {clean} closed with PnL {last_pnl}%. Cooldown initiated.")
             
             self._tracked_positions = current_symbols
 

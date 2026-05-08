@@ -295,10 +295,11 @@ class ForexExecutor:
         p_win  = min(0.75, max(0.20, base_p_win + adj))
         p_loss = 1.0 - p_win
 
-        # XAUUSD: TP 20 poin / entry ~4700 = ~0.43%, SL 8 poin = ~0.17%
+        # XAUUSD: TP 30 poin / entry ~4700 = ~0.64%, SL 20 poin = ~0.43%
+        # Sesuai konstanta SCALP_TP_POINTS=30 dan SCALP_SL_POINTS=20
         entry_approx = self._last_known_price if self._last_known_price > 0 else 4700
-        tp_pct = 20.0 / entry_approx
-        sl_pct = 8.0  / entry_approx
+        tp_pct = SCALP_TP_POINTS / entry_approx
+        sl_pct = SCALP_SL_POINTS / entry_approx
 
         # Spread cost: 2.8 poin / entry = biaya masuk + keluar
         spread_cost = 2.8 / entry_approx

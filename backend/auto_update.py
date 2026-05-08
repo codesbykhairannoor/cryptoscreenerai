@@ -54,13 +54,39 @@ def run_watcher():
                 print(f"[WATCHER] Update ditemukan! {local_hash[:7]} -> {remote_hash[:7]}", flush=True)
 
                 # 3. Pull
-                pull = subprocess.run(["git", "pull", "origin", "main"], cwd=repo_root, capture_output=True, text=True, timeout=60)
-                print(f"[WATCHER] Git pull sukses.", flush=True)
+                pull = subprocess.run(
+                    ["git", "pull", "origin", "main"],
+                    cwd=repo_root, capture_output=True, text=True, timeout=60
+                )
+
+                # Cek apakah pull berhasil sebelum restart
+                if pull.returncode != 0:
+                    print(f"[WATCHER] Git pull GAGAL! Tidak restart.", flush=True)
+                    print(f"[WATCHER] Error: {pull.stderr.strip()}", flush=True)
+                    # Jangan restart — kode lama lebih baik dari kode rusak
+                    time.sleep(60)
+                    continue
+
+                # Verifikasi hash setelah pull — pastikan benar-benar terupdate
+                new_hash = subprocess.run(
+                    ["git", "rev-parse", "HEAD"],
+                    cwd=repo_root, capture_output=True, text=True
+                ).stdout.strip()
+
+                if new_hash != remote_hash:
+                    print(f"[WATCHER] Hash tidak cocok setelah pull. Abort restart.", flush=True)
+                    time.sleep(60)
+                    continue
+
+                print(f"[WATCHER] Git pull sukses. Hash: {new_hash[:7]}", flush=True)
 
                 # 4. Restart bot
                 print(f"[WATCHER] Merestart MyTradingBot...", flush=True)
-                subprocess.run([PM2, "restart", "MyTradingBot"], timeout=30)
-                print(f"[WATCHER] Bot berhasil diperbarui dan direstart!", flush=True)
+                restart_result = subprocess.run([PM2, "restart", "MyTradingBot"], timeout=30)
+                if restart_result.returncode == 0:
+                    print(f"[WATCHER] Bot berhasil diperbarui dan direstart!", flush=True)
+                else:
+                    print(f"[WATCHER] PM2 restart gagal (code {restart_result.returncode}).", flush=True)
             else:
                 # Up to date
                 pass

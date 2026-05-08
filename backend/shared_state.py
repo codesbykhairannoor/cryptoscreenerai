@@ -1,11 +1,14 @@
 import time
+import threading
 
 class SharedState:
     _instance = None
+    _lock = threading.Lock()
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(SharedState, cls).__new__(cls)
+            cls._instance._rw_lock = threading.RLock()
             cls._instance.positions = []
             cls._instance.orders = []
             cls._instance.balances = {}
@@ -25,18 +28,26 @@ class SharedState:
             # NEWS SENTIMENT (Finnhub)
             cls._instance.news_sentiment = {} # Symbol -> score (-1 to 1)
             cls._instance.rt_news = [] # List of recent headlines
+            
+            # PERSISTENT TRADE STATE (survives bot restart)
+            cls._instance.peak_pnl = {}       # Symbol -> peak PnL% (untuk trailing SL)
+            cls._instance.recently_exited = {} # Symbol -> exit timestamp
+            cls._instance.exit_pnl = {}        # Symbol -> exit PnL%
         return cls._instance
 
     def update_positions(self, positions):
-        self.positions = positions
-        self.last_update = time.time()
+        with self._rw_lock:
+            self.positions = positions
+            self.last_update = time.time()
 
     def update_orders(self, orders):
-        self.orders = orders
-        self.last_update = time.time()
+        with self._rw_lock:
+            self.orders = orders
+            self.last_update = time.time()
 
     def update_balance(self, coin, data):
-        self.balances[coin] = data
-        self.last_update = time.time()
+        with self._rw_lock:
+            self.balances[coin] = data
+            self.last_update = time.time()
 
 state = SharedState()

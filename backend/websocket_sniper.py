@@ -320,7 +320,16 @@ class FinnhubWS:
             except Exception as e:
                 # Finnhub sangat ketat dengan Rate Limit (429), kita tunggu lebih lama
                 print(f"[FINNHUB WS ERROR] {e}")
-                await asyncio.sleep(30)
+                # Exponential backoff: mulai 30 detik, max 5 menit
+                if not hasattr(self, '_finnhub_retry_count'):
+                    self._finnhub_retry_count = 0
+                self._finnhub_retry_count += 1
+                wait = min(300, 30 * (2 ** min(self._finnhub_retry_count - 1, 3)))
+                print(f"[FINNHUB WS] Reconnect dalam {wait}s (attempt #{self._finnhub_retry_count})...")
+                await asyncio.sleep(wait)
+            else:
+                # Koneksi sukses, reset retry counter
+                self._finnhub_retry_count = 0
 
 async def main():
     private_ws = BitgetPrivateWS()
