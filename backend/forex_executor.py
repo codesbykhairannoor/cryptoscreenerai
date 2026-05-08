@@ -1267,18 +1267,19 @@ class ForexExecutor:
             profit      = round(float(p.get("profit", 0)), 2)
             current_sl  = float(p.get("stopLoss", 0))
             current_tp  = float(p.get("takeProfit", 0))
-            current_price = round(float(p.get("currentPrice", open_price)), 3)
+            current_price_raw = p.get("currentPrice", open_price)
+            cp_val_safe = round(float(current_price_raw), 3)
             sym         = p.get("symbol", self._working_symbol or "XAUUSDc")
             if open_price == 0: continue
 
             is_buy        = pos_type == "POSITION_TYPE_BUY"
             profit_pt     = 0
-            if current_price > 0 and current_price != open_price:
-                profit_pt = (current_price - open_price) if is_buy else (open_price - current_price)
+            if cp_val_safe > 0 and cp_val_safe != open_price:
+                profit_pt = (cp_val_safe - open_price) if is_buy else (open_price - cp_val_safe)
 
             direction = "BUY" if is_buy else "SELL"
             if int(time.time()) % 10 < 3:
-                print("[TRAIL] " + sym + " " + direction + " open=" + str(open_price) + " cur=" + str(current_price) + " profit=$" + str(round(profit,2)) + " pt=" + str(round(profit_pt,2)) + " sl=" + str(current_sl))
+                print(f"[TRAIL] {sym} {direction} open={open_price} cur={cp_val_safe} profit=${profit} pt={round(profit_pt,2)} sl={current_sl}", flush=True)
 
             # AUTO-CLOSE: rugi > $7
             if profit < -7.0 and pos_id not in self._close_attempted:
