@@ -41,12 +41,12 @@ def startup_event():
         executor = BitgetExecutor()
         executor.sync_state_with_exchange()
     except Exception as e:
-        print(f"[SYSTEM] Gagal sinkronisasi state: {e}")
+        print(f"[SYSTEM] Gagal sinkronisasi state: {e}", flush=True)
 
     # 2. Start Crypto Engine (Isolated)
     crypto_thread = threading.Thread(target=run_crypto_engine, daemon=True)
     crypto_thread.start()
-    print("[SYSTEM] Crypto Engine AKTIF!")
+    print("[SYSTEM] Crypto Engine AKTIF!", flush=True)
     
     # 3. Start WebSocket Sniper (Isolated)
     try:

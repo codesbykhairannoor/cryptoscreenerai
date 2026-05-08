@@ -1116,10 +1116,10 @@ def run_crypto_engine():
     from database import check_pending_trades, get_performance_stats
     from sentiment import get_market_news_digest
 
-    print("[CRYPTO SCALPER v9.0] Whale Observer Mode AKTIF!")
-    print(f"  Strategy : 1 trade terbaik | {LEVERAGE}x leverage")
-    print(f"  Cooldown : {COOLDOWN_AFTER_TRADE//60} menit observasi aktif")
-    print(f"  Min appear: {MIN_APPEARANCES}x dalam cooldown window")
+    print("[CRYPTO SCALPER v9.0] Whale Observer Mode AKTIF!", flush=True)
+    print(f"  Strategy : 1 trade terbaik | {LEVERAGE}x leverage", flush=True)
+    print(f"  Cooldown : {COOLDOWN_AFTER_TRADE//60} menit observasi aktif", flush=True)
+    print(f"  Min appear: {MIN_APPEARANCES}x dalam cooldown window", flush=True)
 
     last_exec_time     = 0
     last_news_report   = 0
