@@ -14,14 +14,14 @@ Sinyal pump yang valid (berdasarkan market microstructure):
 """
 
 import os
-from google import genai
+from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# Gemini client (opsional, tidak dipakai untuk coin selection)
-api_key = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=api_key) if api_key else None
+# DeepSeek client
+api_key = os.getenv("DEEPSEEK_API_KEY")
+client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com") if api_key else None
 
 
 def analyze_and_sort(raw_data):
@@ -255,18 +255,25 @@ def smart_trade_decision(symbol, technicals, news):
 
 
 def analyze_market_data(data_json):
-    """Untuk frontend dashboard — tetap pakai Gemini kalau tersedia."""
+    """Untuk frontend dashboard — menggunakan DeepSeek."""
     if not client:
-        return "Gemini API Key tidak tersedia."
+        return "DeepSeek API Key tidak tersedia."
     try:
         prompt = f"""
         Analyze this crypto/market data and provide 3 hot trading recommendations.
         Focus on whale activity, RSI momentum, and MTF trend confirmation.
         Data: {data_json}
-        Format your response in professional Indonesian, use emojis, and be concise.
+        Format your response in professional Indonesian, use emojis, and be highly creative.
         Include Entry, TP, and SL for each recommendation.
         """
-        response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
-        return response.text
+        response = client.chat.completions.create(
+            model="deepseek-v4-pro",
+            messages=[
+                {"role": "system", "content": "You are a brilliant, creative, and highly accurate institutional trading analyst assistant."},
+                {"role": "user", "content": prompt},
+            ],
+            stream=False
+        )
+        return response.choices[0].message.content
     except Exception as e:
         return f"Gagal analisis: {e}"
