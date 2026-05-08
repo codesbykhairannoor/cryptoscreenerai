@@ -1134,10 +1134,20 @@ def run_crypto_engine():
     from database import check_pending_trades, get_performance_stats
     from sentiment import get_market_news_digest
 
-    print("[CRYPTO SCALPER v9.0] Whale Observer Mode AKTIF!", flush=True)
+    print("[SYSTEM] Memulai Crypto Scalper v9.0...", flush=True)
     print(f"  Strategy : 1 trade terbaik | {LEVERAGE}x leverage", flush=True)
     print(f"  Cooldown : {COOLDOWN_AFTER_TRADE//60} menit observasi aktif", flush=True)
     print(f"  Min appear: {MIN_APPEARANCES}x dalam cooldown window", flush=True)
+    
+    # Pre-warm connection
+    try:
+        print("[SYSTEM] Sinkronisasi awal dengan Bitget...", flush=True)
+        executor.sync_state_with_exchange()
+        print("[SYSTEM] Sinkronisasi Bitget SUKSES.", flush=True)
+    except Exception as e:
+        print(f"[SYSTEM WARNING] Gagal sinkronisasi awal: {e}. Bot akan mencoba lagi di loop.", flush=True)
+
+    print("[CRYPTO SCALPER v9.0] Whale Observer Mode AKTIF!", flush=True)
 
     last_exec_time      = 0
     last_news_report    = 0
@@ -1155,10 +1165,11 @@ def run_crypto_engine():
     while True:
         try:
             #  1. MANAGE EXISTING POSITIONS 
-            executor.manage_open_positions()
-            check_pending_trades()
-
             now = time.time()
+            if int(now) % 60 < 10:
+                print("[CRYPTO ENGINE] Heartbeat: Loop is running...", flush=True)
+            
+            executor.manage_open_positions()
 
             #  2. NEWS VELOCITY (setiap 10 menit) 
             if now - last_news_report > NEWS_REPORT_INTERVAL:
