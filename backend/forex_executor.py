@@ -1267,7 +1267,7 @@ class ForexExecutor:
             profit      = round(float(p.get("profit", 0)), 2)
             current_sl  = float(p.get("stopLoss", 0))
             current_tp  = float(p.get("takeProfit", 0))
-            cur_price   = round(float(p.get("currentPrice", open_price)), 3)
+            current_price = round(float(p.get("currentPrice", open_price)), 3)
             sym         = p.get("symbol", self._working_symbol or "XAUUSDc")
             if open_price == 0: continue
 
