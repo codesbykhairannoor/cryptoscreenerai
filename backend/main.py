@@ -29,7 +29,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup_event():
-    # 0. Database migration — tambah kolom baru kalau belum ada
+    # 0. Database migration   tambah kolom baru kalau belum ada
     try:
         init_db()
         print("[DB] Database migration selesai.")
@@ -72,7 +72,7 @@ def startup_event():
         print(f"[SYSTEM] Gagal memulai Forex Engine: {e}")
 
     # 4. Start News Sniper (Sub-millisecond Execution)
-    # Pakai singleton — ForexExecutor sudah pre-initialized
+    # Pakai singleton   ForexExecutor sudah pre-initialized
     try:
         news_sniper = get_sniper_instance()
         news_sniper.start()
@@ -85,7 +85,7 @@ def startup_event():
         while True:
             try:
                 now_str = time.strftime("%H:%M:%S")
-                print(f"[HEARTBEAT] {now_str} | Bot is monitoring Crypto & Forex... 🚀", flush=True)
+                print(f"[HEARTBEAT] {now_str} | Bot is monitoring Crypto & Forex...  ", flush=True)
                 time.sleep(5)
             except:
                 time.sleep(5)
