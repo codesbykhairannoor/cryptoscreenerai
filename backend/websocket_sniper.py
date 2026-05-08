@@ -278,7 +278,7 @@ class FinnhubWS:
                                 score = self.analyze_sentiment(headline)
                                 state.rt_news.append({"headline": headline, "score": score, "time": time.time()})
                                 if len(state.rt_news) > 50: state.rt_news.pop(0)
-                                print(f"📰 [NEWS] {headline[:60]}... | Sentiment: {score}")
+                                print(f"[NEWS] {headline[:60]}... | Sentiment: {score}")
 
                                 # TRIGGER NEWS SNIPER kalau sentiment kuat
                                 if abs(score) >= 0.2:
@@ -295,8 +295,9 @@ class FinnhubWS:
                                 price = float(t.get("p", 0))
                                 state.rt_price[f"FINNHUB:{sym}"] = price
             except Exception as e:
+                # Finnhub sangat ketat dengan Rate Limit (429), kita tunggu lebih lama
                 print(f"[FINNHUB WS ERROR] {e}")
-                await asyncio.sleep(5)
+                await asyncio.sleep(30)
 
 async def main():
     private_ws = BitgetPrivateWS()
