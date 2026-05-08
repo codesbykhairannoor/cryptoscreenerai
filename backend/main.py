@@ -76,9 +76,23 @@ def startup_event():
     try:
         news_sniper = get_sniper_instance()
         news_sniper.start()
-        print("[SYSTEM] News Sniper Engine AKTIF (Sub-millisecond Ready)!")
+        print("[SYSTEM] News Sniper Engine AKTIF (Sub-millisecond Ready)!", flush=True)
     except Exception as e:
-        print(f"[SYSTEM] Gagal memulai News Sniper: {e}")
+        print(f"[SYSTEM] Gagal memulai News Sniper: {e}", flush=True)
+
+    # 5. Start Heartbeat Monitor (Visual Feedback)
+    def system_heartbeat():
+        while True:
+            try:
+                now_str = time.strftime("%H:%M:%S")
+                print(f"[HEARTBEAT] {now_str} | Bot is monitoring Crypto & Forex... 🚀", flush=True)
+                time.sleep(5)
+            except:
+                time.sleep(5)
+    
+    hb_thread = threading.Thread(target=system_heartbeat, daemon=True)
+    hb_thread.start()
+    print("[SYSTEM] Heartbeat Monitor AKTIF!", flush=True)
 
 @app.get("/")
 def read_root():
