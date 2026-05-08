@@ -3,6 +3,11 @@ import pandas as pd
 import numpy as np
 import time
 import os
+import threading
+
+# Global cache for HTF indicators to reduce API load
+_htf_cache = {}
+_htf_lock = threading.Lock()
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -340,54 +345,69 @@ def get_technical_indicators(symbol, interval="15m"):
         df_cur = pd.DataFrame(data, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd'])
         df_cur[['open', 'high', 'low', 'close', 'vol']] = df_cur[['open', 'high', 'low', 'close', 'vol']].astype(float)
         
-        # 1. EMA & TREND
-        mark_price = df_cur['close'].iloc[-1]
-        ema_200_cur = df_cur['close'].ewm(span=200, adjust=False).mean()
+        # --- THREAD-SAFE CACHE FOR HTF ---
+        now = time.time()
+        cache_key = f"{symbol}_{interval}"
         
-        # 2. HTF CONTEXT (1H + 4H)
-        url_htf = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=1h&limit=100&productType=USDT-FUTURES"
-        r_htf = requests.get(url_htf, timeout=5, verify=False)
-        ema_200_htf_val = 0
-        trend_1h = "NEUTRAL"
-        if r_htf.status_code == 200:
-            data_htf = r_htf.json().get('data', [])
-            df_htf = pd.DataFrame(data_htf, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd'])
-            df_htf['close'] = df_htf['close'].astype(float)
-            ema_htf = df_htf['close'].ewm(span=200, adjust=False).mean()
-            ema_200_htf_val = ema_htf.iloc[-1] if len(ema_htf) > 0 else 0
-            last_1h = df_htf['close'].iloc[-1]
-            if ema_200_htf_val > 0:
-                trend_1h = "BULLISH" if last_1h > ema_200_htf_val * 1.001 else \
-                           "BEARISH" if last_1h < ema_200_htf_val * 0.999 else "NEUTRAL"
+        with _htf_lock:
+            cached = _htf_cache.get(cache_key)
+            
+        if cached and (now - cached['ts'] < 300):
+            htf_data = cached['data']
+            trend_1h = htf_data['trend_1h']
+            trend_4h = htf_data['trend_4h']
+            ema_200_htf_val = htf_data['ema_200_htf']
+            ema_50_4h = htf_data['ema_50_4h']
+        else:
+            # 2. HTF CONTEXT (1H + 4H)
+            url_htf = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=1h&limit=100&productType=USDT-FUTURES"
+            r_htf = requests.get(url_htf, timeout=5, verify=False)
+            ema_200_htf_val = 0
+            trend_1h = "NEUTRAL"
+            if r_htf.status_code == 200:
+                data_htf = r_htf.json().get('data', [])
+                df_htf = pd.DataFrame(data_htf, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd'])
+                df_htf['close'] = df_htf['close'].astype(float)
+                ema_htf = df_htf['close'].ewm(span=200, adjust=False).mean()
+                ema_200_htf_val = ema_htf.iloc[-1] if len(ema_htf) > 0 else 0
+                last_1h = df_htf['close'].iloc[-1]
+                if ema_200_htf_val > 0:
+                    trend_1h = "BULLISH" if last_1h > ema_200_htf_val * 1.001 else \
+                               "BEARISH" if last_1h < ema_200_htf_val * 0.999 else "NEUTRAL"
 
-        # 4H TREND — penting untuk filter falling knife
-        url_4h = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=4h&limit=50&productType=USDT-FUTURES"
-        r_4h = requests.get(url_4h, timeout=5, verify=False)
-        trend_4h = "NEUTRAL"
-        ema_50_4h = 0
-        if r_4h.status_code == 200:
-            data_4h = r_4h.json().get('data', [])
-            if len(data_4h) >= 10:
-                closes_4h = [float(c[4]) for c in data_4h]
-                # EMA 50 pada 4h = trend medium term
-                ema_4h = closes_4h[0]
-                k_4h = 2 / (50 + 1)
-                for c in closes_4h:
-                    ema_4h = c * k_4h + ema_4h * (1 - k_4h)
-                ema_50_4h = ema_4h
-                last_4h = closes_4h[-1]
-                trend_4h = "BULLISH" if last_4h > ema_4h * 1.001 else \
-                           "BEARISH" if last_4h < ema_4h * 0.999 else "NEUTRAL"
+            # 4H TREND
+            url_4h = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=4h&limit=50&productType=USDT-FUTURES"
+            r_4h = requests.get(url_4h, timeout=5, verify=False)
+            trend_4h = "NEUTRAL"
+            ema_50_4h = 0
+            if r_4h.status_code == 200:
+                data_4h = r_4h.json().get('data', [])
+                if len(data_4h) >= 10:
+                    closes_4h = [float(c[4]) for c in data_4h]
+                    ema_4h = closes_4h[0]
+                    k_4h = 2 / (50 + 1)
+                    for c in closes_4h:
+                        ema_4h = c * k_4h + ema_4h * (1 - k_4h)
+                    ema_50_4h = ema_4h
+                    last_4h = closes_4h[-1]
+                    trend_4h = "BULLISH" if last_4h > ema_4h * 1.001 else \
+                               "BEARISH" if last_4h < ema_4h * 0.999 else "NEUTRAL"
+                    if len(closes_4h) >= 20:
+                        ema_old = closes_4h[0]
+                        for c in closes_4h[:-10]:
+                            ema_old = c * k_4h + ema_old * (1 - k_4h)
+                        if ema_4h < ema_old * 0.998: trend_4h = "BEARISH"
 
-                # Slope 4h: apakah trend sedang naik atau turun?
-                # Bandingkan EMA 10 candle lalu vs sekarang
-                if len(closes_4h) >= 20:
-                    ema_old = closes_4h[0]
-                    for c in closes_4h[:-10]:
-                        ema_old = c * k_4h + ema_old * (1 - k_4h)
-                    # Kalau EMA sekarang < EMA 10 candle lalu = downtrend
-                    if ema_4h < ema_old * 0.998:
-                        trend_4h = "BEARISH"  # Override: EMA turun = bearish
+            with _htf_lock:
+                _htf_cache[cache_key] = {
+                    'ts': now,
+                    'data': {
+                        'trend_1h': trend_1h,
+                        'trend_4h': trend_4h,
+                        'ema_200_htf': ema_200_htf_val,
+                        'ema_50_4h': ema_50_4h
+                    }
+                }
 
         # 3. LIQUIDITY SWEEPS
         last_candle = df_cur.iloc[-1]
@@ -437,15 +457,33 @@ def get_technical_indicators(symbol, interval="15m"):
         fib  = {}
         hunt = {"bull_stop_hunt": False, "bear_stop_hunt": False, "hunt_strength": 0}
 
-        # 7. ATR 14 (True Range)
+        vp   = {"poc": 0, "value_area_high": 0, "value_area_low": 0,
+                "price_vs_poc": "UNKNOWN", "poc_distance_pct": 0}
+        htf  = {"daily_high": 0, "daily_low": 0, "weekly_high": 0, "weekly_low": 0,
+                "near_daily_level": False, "near_weekly_level": False, "level_bias": "NEUTRAL"}
+        fib  = {}
+        hunt = {"bull_stop_hunt": False, "bear_stop_hunt": False, "hunt_strength": 0}
+
+        # 7. ATR 14 (True Range) & EMA
+        mark_price = df_cur['close'].iloc[-1]
+        ema_200_cur = df_cur['close'].ewm(span=200, adjust=False).mean()
         trs = []
         for i in range(1, len(df_cur)):
-            high_i  = df_cur['high'].iloc[i]
-            low_i   = df_cur['low'].iloc[i]
-            close_p = df_cur['close'].iloc[i - 1]
-            tr = max(high_i - low_i, abs(high_i - close_p), abs(low_i - close_p))
-            trs.append(tr)
+            h, l, cp = df_cur['high'].iloc[i], df_cur['low'].iloc[i], df_cur['close'].iloc[i-1]
+            trs.append(max(h-l, abs(h-cp), abs(l-cp)))
         atr_val = round(sum(trs[-14:]) / 14, 6) if len(trs) >= 14 else round(mark_price * 0.015, 6)
+
+
+        # 7c. INTRADAY VWAP (last 32 candles)
+        cum_pv = 0.0
+        cum_v = 0.0
+        vwap_candles = df_cur.tail(32)
+        for _, row in vwap_candles.iterrows():
+            typical = (row['high'] + row['low'] + row['close']) / 3
+            cum_pv += typical * row['vol']
+            cum_v += row['vol']
+        vwap = cum_pv / cum_v if cum_v > 0 else mark_price
+        vwap_dist = round((mark_price - vwap) / vwap * 100, 4) if vwap > 0 else 0.0
 
         # 7b. FALLING KNIFE / FLYING ROCKET (Anti-Premature Entry)
         # Deteksi apakah candle saat ini masih bergerak kuat melawan arah pantulan
@@ -570,6 +608,7 @@ def get_technical_indicators(symbol, interval="15m"):
             "choch_bullish": choch_bullish,
             "choch_bearish": choch_bearish,
             "fib_ext": round(fib_ext, 4),
+            "vwap_dist": vwap_dist,
             "obi": obi,
             "whale_signal": whale_sig,
             "order_block": smc["ob"],

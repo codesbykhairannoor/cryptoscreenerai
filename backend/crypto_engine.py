@@ -34,6 +34,7 @@ MATEMATIKA:
 import time
 import requests
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from data_fetcher import (
     get_technical_indicators, fetch_all_tickers,
@@ -52,12 +53,12 @@ COOLDOWN_AFTER_TRADE = 120    # 2 menit cooldown — versi profit May 5
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 40     # Threshold versi profit setelah session filter ditambahkan
-MIN_TECH_SCORE       = 30     # Tech score minimum — tidak terlalu ketat
+MIN_MOMENTUM_SCORE   = 40     # Threshold versi profit May 6
+MIN_TECH_SCORE       = 30     # Tech score minimum
 MIN_PUMP_SCORE       = 25     # Pump score minimum untuk masuk scan
 
-#  WHALE OBSERVER CONFIG 
-MIN_APPEARANCES      = 3      # Minimal 3x muncul dalam observasi
+#  WHALE OBSERVER CONFIG (Legacy/Reference)
+MIN_APPEARANCES      = 3      
 MIN_AVG_SCORE        = 42     # Rata-rata combined score minimum — versi profit May 6
 CONSISTENCY_BONUS    = 1.15
 MOMENTUM_BONUS       = 1.10
@@ -915,218 +916,85 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     trend_1h = tech.get('trend_1h', 'NEUTRAL')
     trend_4h = tech.get('trend_4h', 'NEUTRAL')
 
-    # Anti-falling-knife: jangan BUY kalau 4h bearish KECUALI ada reversal signal kuat
-    # Reversal signal kuat = stop hunt + demand zone + whale buy
-    has_strong_reversal_buy = (
-        tech.get('bull_stop_hunt', False) or
-        tech.get('in_demand', False) or
-        whale == 'WHALE_BUY'
-    )
-    has_strong_reversal_sell = (
-        tech.get('bear_stop_hunt', False) or
-        tech.get('in_supply', False) or
-        whale == 'WHALE_SELL'
-    )
-
-    # Cek Kondisi Candle Saat Ini (Mencegah beli di tengah terjun bebas)
-    falling_knife = tech.get('falling_knife', False)
-    flying_rocket = tech.get('flying_rocket', False)
-
-    # ── MOMENTUM EXHAUSTION CHECK ──────────────────────────────────────────────
-    # Ini yang menjawab pertanyaan: "Apakah harga sudah selesai turun/naik?"
-    # Kalau masih turun (still_falling) = HARAM BUY, tunggu reversal konfirmasi
-    # Kalau masih naik (still_rising)   = HARAM SELL, tunggu reversal konfirmasi
-    still_falling = tech.get('still_falling', False)
-    still_rising  = tech.get('still_rising', False)
-    bearish_exhausted = tech.get('bearish_momentum_exhausted', True)
-    bullish_exhausted = tech.get('bullish_momentum_exhausted', True)
-    consec_red    = tech.get('consec_red', 0)
-    consec_green  = tech.get('consec_green', 0)
-
-    #  SMC PROTECTION (HARAM RULE) 
-    # Jangan pernah ngeshort di area Demand (Support) karena pasti mantul
-    # Jangan pernah ngelong di area Supply (Resistance) karena pasti rontok
-    in_demand = tech.get('in_demand', False)
-    in_supply = tech.get('in_supply', False)
-
-    # Kalau 4h bearish dan tidak ada reversal signal = skip BUY
-    # ATAU kalau harga masih terjun bebas (pisau jatuh) = HARAM BUY!
-    # ATAU harga nyentuh Supply Zone = HARAM BUY!
-    # ATAU harga masih dalam struktur turun = TUNGGU REVERSAL DULU
-    block_buy  = (
-        (trend_4h == 'BEARISH' and not has_strong_reversal_buy) or
-        falling_knife or
-        in_supply or
-        still_falling   # ← masih turun, belum ada konfirmasi reversal
-    )
-
-    # Kalau 4h bullish dan tidak ada reversal signal = skip SELL
-    # ATAU kalau harga masih meroket = HARAM SELL!
-    # ATAU harga nyentuh Demand Zone = HARAM SELL MUTLAK
-    # ATAU harga masih dalam struktur naik = TUNGGU REVERSAL DULU
-    block_sell = (
-        (trend_4h == 'BULLISH' and not has_strong_reversal_sell) or
-        flying_rocket or
-        in_demand or
-        still_rising    # ← masih naik, belum ada konfirmasi reversal
-    )
-
-    # Kalau 1h juga berlawanan = block lebih ketat
-    if trend_1h == 'BEARISH' and trend_4h == 'BEARISH':
-        block_buy = True   # Double bearish = tidak ada BUY sama sekali
-    if trend_1h == 'BULLISH' and trend_4h == 'BULLISH':
-        block_sell = True  # Double bullish = tidak ada SELL sama sekali
-
-    # EXTRA GUARD: kalau 1h BULLISH dan harga di demand zone = HARAM SELL apapun
-    if trend_1h == 'BULLISH' and in_demand:
-        block_sell = True
-    # Sebaliknya: kalau 1h BEARISH dan harga di supply zone = HARAM BUY apapun
-    if trend_1h == 'BEARISH' and in_supply:
-        block_buy = True
-
     #  LONG SETUPS 
     long_candidates = []
 
-    if block_buy:
-        # Skip semua long setup kalau 4h bearish tanpa reversal signal
-        pass
-    else:
-        # Setup 1: Whale Accumulation + Discount Zone
-        if whale == 'WHALE_BUY' and vwap_dist < 0.5:
-            s = _score_candidate(tech, rsi, vwap_dist, "buy")
-            long_candidates.append((s, "WHALE ACCUMULATION + DISCOUNT ZONE"))
-
-    # Setup 2: Bullish FVG Re-entry
-    # WAJIB: harga di bawah VWAP (discount zone) DAN tidak di supply zone
-    if not block_buy and fvg == 'BULLISH_FVG' and rsi < 60 and vwap_dist < 0.0:
+    # Setup 1: Whale Accumulation
+    if whale == 'WHALE_BUY' and vwap_dist < 0.5:
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "BULLISH FVG RE-ENTRY"))
+        long_candidates.append((s, "WHALE ACCUMULATION"))
 
-    # Setup 3: MSS Bullish Breakout
-    # WAJIB: OBI positif (buyer dominance)
-    if not block_buy and mss_b and obi > 0.05:
+    # Setup 2: Bullish FVG
+    if fvg == 'BULLISH_FVG' and rsi < 65 and vwap_dist < 0.5:
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "MSS BULLISH BREAKOUT"))
+        long_candidates.append((s, "BULLISH FVG"))
+
+    # Setup 3: MSS Bullish
+    if mss_b and (obi > 0 or rsi < 50):
+        s = _score_candidate(tech, rsi, vwap_dist, "buy")
+        long_candidates.append((s, "MSS BULLISH"))
 
     # Setup 4: CHoCH + Liquidity Sweep
-    # WAJIB: RSI tidak overbought (<55) DAN harga di discount zone
-    if not block_buy and choch_b and liq and rsi < 55 and vwap_dist < 0.5:
+    if choch_b and liq:
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "CHoCH REVERSAL + LIQUIDITY SWEEP"))
+        long_candidates.append((s, "CHoCH REVERSAL"))
 
-    # Setup 5: Bullish OB + Oversold RSI
-    # WAJIB: RSI benar-benar oversold (<45)
-    if not block_buy and ob == 'BULLISH_OB' and rsi < 45:
+    # Setup 5: Bullish OB
+    if ob == 'BULLISH_OB' and rsi < 55:
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "BULLISH ORDER BLOCK + OVERSOLD RSI"))
+        long_candidates.append((s, "BULLISH ORDER BLOCK"))
 
-    # Setup 6: RSI Oversold Recovery
-    # WAJIB: 1h tidak bearish DAN harga di discount zone
-    if not block_buy and 28 <= rsi <= 42 and vwap_dist < 2.0 and trend_1h != 'BEARISH':
+    # Setup 6: RSI Oversold
+    if rsi <= 35 and vwap_dist < 1.0:
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "RSI OVERSOLD RECOVERY"))
-
-    # Setup 7: Momentum Breakout
-    # WAJIB: harga di discount zone yang signifikan
-    if not block_buy and -3.0 <= vwap_dist <= -0.3 and (choch_b or mss_b or fvg == 'BULLISH_FVG'):
-        s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "MOMENTUM BREAKOUT FROM DISCOUNT"))
-
-    # Setup 8: Demand Zone Entry
-    # Demand zone = area akumulasi institusi = valid LONG
-    # Tapi HANYA kalau harga benar-benar di demand zone (bukan supply)
-    # DAN block_buy tidak aktif (tidak ada falling knife, dll)
-    if not block_buy and tech.get('in_demand', False) and not in_supply:
-        dz = tech.get('demand_zone', {})
-        min_strength = 3 if trend_4h == 'BEARISH' else 1
-        if dz.get('strength', 0) >= min_strength:
-            s = _score_candidate(tech, rsi, vwap_dist, "buy")
-            long_candidates.append((s, f"DEMAND ZONE ENTRY (strength:{dz.get('strength',0)})"))
+        long_candidates.append((s, "RSI OVERSOLD"))
 
     #  SHORT SETUPS 
     short_candidates = []
 
-    # Setup 1: Whale Distribution + Premium Zone
-    if not block_sell and whale == 'WHALE_SELL' and vwap_dist > 0.5:
+    # Setup 1: Whale Distribution
+    if whale == 'WHALE_SELL' and vwap_dist > 0.5:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "WHALE DISTRIBUTION + PREMIUM ZONE"))
+        short_candidates.append((s, "WHALE DISTRIBUTION"))
 
-    # Setup 2: Bearish FVG Rejection
-    # WAJIB: harga di atas VWAP (premium zone) DAN tidak di demand zone
-    # Kasus SAHARA: FVG bearish tapi harga di demand = SKIP
-    if not block_sell and fvg == 'BEARISH_FVG' and rsi > 45 and vwap_dist > 0.0:
+    # Setup 2: Bearish FVG
+    if fvg == 'BEARISH_FVG' and rsi > 35 and vwap_dist > -0.5:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "BEARISH FVG REJECTION"))
+        short_candidates.append((s, "BEARISH FVG"))
 
-    # Setup 3: MSS Bearish Breakdown
-    # WAJIB: OBI negatif (seller dominance) DAN harga di atas VWAP
-    if not block_sell and mss_s and obi < -0.05 and vwap_dist > -0.5:
+    # Setup 3: MSS Bearish
+    if mss_s and (obi < 0 or rsi > 50):
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "MSS BEARISH BREAKDOWN"))
+        short_candidates.append((s, "MSS BEARISH"))
 
-    # Setup 4: CHoCH + Liquidity Sweep Bearish
-    # WAJIB: RSI overbought (>55) DAN harga di premium zone
-    if not block_sell and choch_s and liq and rsi > 55 and vwap_dist > 0.3:
+    # Setup 4: CHoCH + Liquidity Sweep
+    if choch_s and liq:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "CHoCH BEARISH + LIQUIDITY SWEEP"))
+        short_candidates.append((s, "CHoCH BEARISH"))
 
-    # Setup 5: Bearish OB + Overbought RSI
-    # WAJIB: RSI benar-benar overbought (>65) bukan cuma >60
-    if not block_sell and ob == 'BEARISH_OB' and rsi > 65 and vwap_dist > 0.5:
+    # Setup 5: Bearish OB
+    if ob == 'BEARISH_OB' and rsi > 45:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "BEARISH ORDER BLOCK + OVERBOUGHT RSI"))
+        short_candidates.append((s, "BEARISH ORDER BLOCK"))
 
-    # Setup 6: RSI Overbought Rejection
-    # WAJIB: 1h tidak bullish DAN harga di premium zone (vwap_dist > 1.5)
-    if not block_sell and 68 <= rsi <= 85 and vwap_dist > 1.5 and trend_1h != 'BULLISH':
+    # Setup 6: RSI Overbought
+    if rsi >= 65 and vwap_dist > -1.0:
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "RSI OVERBOUGHT REJECTION"))
-
-    # Setup 7: Bearish Momentum
-    # WAJIB: harga di premium zone yang signifikan (>1.5%) DAN ada struktur bearish
-    if not block_sell and vwap_dist > 1.5 and (choch_s or mss_s or fvg == 'BEARISH_FVG'):
-        s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "BEARISH MOMENTUM FROM PREMIUM"))
-
-    # Setup 8: Supply Zone Entry
-    # Supply zone = area distribusi institusi = valid SHORT
-    # Tapi HANYA kalau harga benar-benar di supply zone (bukan demand)
-    if tech.get('in_supply', False) and not in_demand:
-        sz = tech.get('supply_zone', {})
-        min_strength = 3 if trend_4h == 'BULLISH' else 1
-        if sz.get('strength', 0) >= min_strength:
-            s = _score_candidate(tech, rsi, vwap_dist, "sell")
-            short_candidates.append((s, f"SUPPLY ZONE ENTRY (strength:{sz.get('strength',0)})"))
+        short_candidates.append((s, "RSI OVERBOUGHT"))
 
     #  PILIH SETUP TERBAIK 
     all_candidates = [("buy", s, r) for s, r in long_candidates] + \
                      [("sell", s, r) for s, r in short_candidates]
 
     if not all_candidates:
-        # Log kenapa tidak ada setup
-        if block_buy and block_sell:
-            pass  # Kedua arah di-block
-        elif block_buy:
-            pass  # BUY di-block karena 4h bearish
-        elif block_sell:
-            pass  # SELL di-block karena 4h bullish
         return None, "", 0
 
-    # Sort by score descending
     all_candidates.sort(key=lambda x: x[1], reverse=True)
     best_side, best_score, best_reason = all_candidates[0]
 
-    # Sentiment alignment bonus/penalty
-    if best_side == "buy"  and market_sentiment == "BULLISH":  best_score = min(100, best_score + 5)
-    if best_side == "sell" and market_sentiment == "BEARISH":  best_score = min(100, best_score + 5)
-    if best_side == "buy"  and market_sentiment == "BEARISH":  best_score = max(0,   best_score - 8)
-    if best_side == "sell" and market_sentiment == "BULLISH":  best_score = max(0,   best_score - 8)
-
     # HTF alignment bonus
-    if best_side == "buy"  and trend_4h == "BULLISH": best_score = min(100, best_score + 8)
-    if best_side == "sell" and trend_4h == "BEARISH": best_score = min(100, best_score + 8)
-    if best_side == "buy"  and trend_1h == "BULLISH": best_score = min(100, best_score + 5)
-    if best_side == "sell" and trend_1h == "BEARISH": best_score = min(100, best_score + 5)
+    if best_side == "buy"  and trend_4h == "BULLISH": best_score = min(100, best_score + 10)
+    if best_side == "sell" and trend_4h == "BEARISH": best_score = min(100, best_score + 10)
 
     return best_side, best_reason, best_score
 
@@ -1176,169 +1044,93 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]
 #  MAIN ENGINE 
 def run_crypto_engine():
     """
-    [CRYPTO SCALPER v9.0] - Whale Observer Mode.
-
-    FLOW:
-    
-      FASE OBSERVASI (15 menit setelah trade / startup)      
-       Setiap 10 detik:                                     
-        - Scan top 20 koin                                   
-        - Evaluasi setiap koin (pump + SMC + future signals) 
-        - Catat ke WhaleObserver watchlist                   
-       Di akhir 15 menit:                                   
-        - Pilih koin dengan final_score tertinggi            
-        - Eksekusi dengan full confidence                    
-    
+    CRYPTO SCALPER v5.1 - Direct Execution Mode
+    =============================================
+    Restored to profitable May 5 logic:
+    - Scan top 20 coins every 10 seconds
+    - If coin passes filters -> execute immediately (no 15-min observation)
+    - Session filter: 08:00-22:00 WIB only (hard stop off-hours)
+    - Cooldown: 120 seconds between trades
     """
     executor = BitgetExecutor()
-    observer  = WhaleObserver()
 
     from database import check_pending_trades, get_performance_stats
     from sentiment import get_market_news_digest
 
-    print("[SYSTEM] Memulai Crypto Scalper v9.0...", flush=True)
+    print("[CRYPTO SCALPER v5.1] Direct Execution Mode AKTIF!", flush=True)
     print(f"  Strategy : 1 trade terbaik | {LEVERAGE}x leverage", flush=True)
-    print(f"  Cooldown : {COOLDOWN_AFTER_TRADE//60} menit observasi aktif", flush=True)
-    print(f"  Min appear: {MIN_APPEARANCES}x dalam cooldown window", flush=True)
-    
-    # Pre-warm connection
+    print(f"  Cooldown : {COOLDOWN_AFTER_TRADE}s antara trade", flush=True)
+    print(f"  Session  : 08:00-22:00 WIB (01:00-15:00 UTC)", flush=True)
+
     try:
         print("[SYSTEM] Sinkronisasi awal dengan Bitget...", flush=True)
         executor.sync_state_with_exchange()
         print("[SYSTEM] Sinkronisasi Bitget SUKSES.", flush=True)
     except Exception as e:
-        print(f"[SYSTEM WARNING] Gagal sinkronisasi awal: {e}. Bot akan mencoba lagi di loop.", flush=True)
-
-    print("[CRYPTO SCALPER v9.0] Whale Observer Mode AKTIF!", flush=True)
+        print(f"[SYSTEM WARNING] Gagal sinkronisasi awal: {e}", flush=True)
 
     last_exec_time      = 0
     last_news_report    = 0
     last_global_report  = 0
-    last_deepseek_report = 0   # DeepSeek analysis setiap 15 menit
+    last_deepseek_report = 0
     _dxy_cache          = {"trend": "NEUTRAL", "ts": 0}
-    _recently_exited    = {}  # {clean_base: exit_timestamp}
-    _loss_tracker       = {}  # {clean_base: [timestamps]}
+    _recently_exited    = {}
+    _loss_tracker       = {}
     _consec_losses      = 0
     _consec_pause_until = 0
 
-    # Mulai observasi langsung dari startup
-    observer.reset()
-
     while True:
         try:
-            #  1. MANAGE EXISTING POSITIONS 
             now = time.time()
             if int(now) % 60 < 10:
                 print("[CRYPTO ENGINE] Heartbeat: Loop is running...", flush=True)
-            
-            executor.manage_open_positions()
 
-            #  2. NEWS VELOCITY (setiap 10 menit) 
+            #  1. MANAGE EXISTING POSITIONS
+            executor.manage_open_positions()
+            check_pending_trades()
+
+            #  2. NEWS VELOCITY (setiap 10 menit)
             if now - last_news_report > NEWS_REPORT_INTERVAL:
                 digest = get_market_news_digest()
-                print(f"[NEWS VELOCITY] Sentiment: {digest['sentiment']} | "
-                      f"Top: {digest['crypto_top']}", flush=True)
+                print(f"[NEWS VELOCITY] Sentiment: {digest['sentiment']} | Top: {digest['crypto_top']}", flush=True)
                 last_news_report = now
 
-            #  2b. DEEPSEEK AI ANALYSIS (setiap 15 menit) 
-            if now - last_deepseek_report > 900:
-                try:
-                    from ai_model import analyze_market_data
-                    raw_data    = fetch_all_tickers()
-                    candidates  = analyze_and_sort(raw_data)
-                    top5        = candidates[:5] if candidates else []
-                    if top5:
-                        top5_simple = [{
-                            "symbol":  c.get("symbol"),
-                            "change":  round(float(c.get("priceChangePercent", 0)), 2),
-                            "volume":  round(float(c.get("quoteVolume", 0)) / 1_000_000, 1),
-                            "pump":    round(float(c.get("pump_score", 0)), 1),
-                            "dump":    round(float(c.get("dump_score", 0)), 1),
-                        } for c in top5]
-                        print("[DEEPSEEK] Requesting AI analysis...", flush=True)
-                        result = analyze_market_data(str(top5_simple))
-                        
-                        if "Insufficient Balance" in str(result):
-                            print("[DEEPSEEK ERROR] Insufficient Balance. Please top up your DeepSeek account.", flush=True)
-                            # Suspend DeepSeek analysis for 4 hours to avoid spamming
-                            last_deepseek_report = now + (3600 * 4) - 900
-                        else:
-                            print("[DEEPSEEK ANALYSIS]", flush=True)
-                            for line in str(result).split("\n"):
-                                if line.strip():
-                                    print(f"  {line}", flush=True)
-                except Exception as e:
-                    if "Insufficient Balance" in str(e):
-                        print("[DEEPSEEK ERROR] Insufficient Balance. Please top up your DeepSeek account.", flush=True)
-                        last_deepseek_report = now + (3600 * 4) - 900
-                    else:
-                        print(f"[DEEPSEEK ERROR] {e}", flush=True)
-                last_deepseek_report = now if last_deepseek_report < now else last_deepseek_report
-
-            #  3. GLOBAL CONTEXT (setiap 5 menit) 
+            #  3. GLOBAL CONTEXT (setiap 5 menit)
             if now - last_global_report > GLOBAL_REPORT_INTERVAL:
                 global_ctx = get_global_market_data()
                 print(f"[GLOBAL] {global_ctx}")
                 last_global_report = now
 
-            #  4. CIRCUIT BREAKER 
+            #  4. CIRCUIT BREAKER
             stats     = get_performance_stats('crypto')
             daily_pnl = stats.get('daily_pnl', 0)
             if daily_pnl < DAILY_LOSS_LIMIT_PCT:
-                print(f"[CIRCUIT BREAKER] Daily loss {daily_pnl}% melewati limit "
-                      f"{DAILY_LOSS_LIMIT_PCT}%. Standby 30 menit.")
+                print(f"[CIRCUIT BREAKER] Daily loss {daily_pnl}% melewati limit. Standby 30 menit.")
                 time.sleep(1800)
                 continue
 
-            #  4c. CONSECUTIVE LOSS PAUSE 
-            # Kalau kalah 2x berturut-turut, pause 30 menit
-            # Ini mencegah bot terus masuk saat kondisi market sedang tidak favorable
+            #  4b. CONSECUTIVE LOSS PAUSE
             if now < _consec_pause_until:
                 remaining = round((_consec_pause_until - now) / 60, 1)
                 if int(now) % 60 < 10:
-                    print(f"[CONSEC LOSS] Pause aktif. {remaining} menit lagi. "
-                          f"({_consec_losses}x loss berturut-turut)")
+                    print(f"[CONSEC LOSS] Pause aktif. {remaining} menit lagi.")
                 time.sleep(SCAN_INTERVAL)
                 continue
 
-            # NEWS CALENDAR CHECK
-            _news_cal_block = False
-            try:
-                from news_sniper import get_upcoming_high_impact_events
-                cal = get_upcoming_high_impact_events()
-                if cal.get("recommendation") == "AVOID_NEW_TRADES":
-                    _news_cal_block = True
-                    if int(now) % 60 < 10:
-                        events = cal.get("events", [])
-                        ev_str = events[0]["title"] if events else "Unknown"
-                        print(f"[NEWS CALENDAR] '{ev_str}' dalam 30 menit! Observasi jalan, eksekusi di-block.", flush=True)
-            except Exception:
-                pass
-
-
-            #  4b. SESSION FILTER — HARD STOP off-hours
-            # DATA: 13 trade jam 01:00-08:00 WIB, 9 loss 3 win (commit e97e2ab May 6)
-            # Solusi terbukti: stop total di jam sepi, bukan soft filter
+            #  4c. SESSION FILTER — OFF-HOURS REQUIREMENT (Strict Mode)
+            # DATA: Jam 22:00-08:00 WIB volume rendah. Kita izinkan trade hanya jika sinyal SANGAT KUAT.
             import datetime as _dt
             utc_hour = _dt.datetime.utcnow().hour
-            wib_hour = (utc_hour + 7) % 24
-            _is_active_session = (CRYPTO_SESSION_START_UTC <= utc_hour < CRYPTO_SESSION_END_UTC)
-
-            if not _is_active_session:
+            is_off_hours = not (CRYPTO_SESSION_START_UTC <= utc_hour < CRYPTO_SESSION_END_UTC)
+            
+            if is_off_hours:
                 if int(now) % 300 < 10:
-                    print(f"[CRYPTO SESSION] Off-hours ({wib_hour:02d}:xx WIB). "
-                          f"Aktif jam 08:00-22:00 WIB.")
-                time.sleep(60)
-                continue
+                    wib_hour = (utc_hour + 7) % 24
+                    print(f"[CRYPTO SESSION] Off-hours ({wib_hour:02d}:xx WIB). Strict mode active.")
+            
+            # Pass is_off_hours to the evaluator
 
-            # JAM AKTIF: pakai threshold normal
-            _session_min_score    = MIN_MOMENTUM_SCORE
-            _session_min_avg      = MIN_AVG_SCORE
-            _session_min_ev       = MIN_EXPECTED_VALUE
-            _session_need_signal  = False
-            _session_min_appear   = MIN_APPEARANCES
-
-            #  5. POSITION CHECK 
+            #  5. POSITION CHECK
             positions  = executor.get_all_positions()
             open_count = len(positions) if isinstance(positions, list) else 0
             open_bases = [executor._clean_symbol(p['symbol']) for p in positions] \
@@ -1349,78 +1141,46 @@ def run_crypto_engine():
                 time.sleep(SCAN_INTERVAL)
                 continue
 
-            #  6. COOLDOWN CHECK 
+            #  6. COOLDOWN CHECK
             elapsed_since_trade = now - last_exec_time
-            # ADAPTIVE COOLDOWN: lebih PANJANG saat volatile, lebih pendek saat calm
-            # Logika: volatile = butuh lebih banyak observasi untuk konfirmasi
-            #         calm = sinyal lebih reliable, bisa entry lebih cepat
-            try:
-                btc_ctx_now = _get_btc_context()
-                btc_change  = abs(btc_ctx_now.get('change_1h', 0))
-                if btc_change > 3.0:
-                    adaptive_cooldown = 180  # Sangat volatile: 3 menit observasi
-                elif btc_change > 1.5:
-                    adaptive_cooldown = 120  # Volatile: 2 menit observasi
-                else:
-                    adaptive_cooldown = 60   # Calm: 1 menit observasi
-            except Exception:
-                btc_ctx_now = {"trend": "NEUTRAL", "change_1h": 0, "signal": "NEUTRAL"}
-                adaptive_cooldown = COOLDOWN_AFTER_TRADE
+            cooldown_remaining  = COOLDOWN_AFTER_TRADE - elapsed_since_trade
+            if cooldown_remaining > 0:
+                if int(now) % 30 < 10:
+                    print(f"[COOLDOWN] {round(cooldown_remaining)}s remaining")
+                time.sleep(SCAN_INTERVAL)
+                continue
 
-            cooldown_remaining  = adaptive_cooldown - elapsed_since_trade
-            in_cooldown         = cooldown_remaining > 0
-
-            if in_cooldown and int(now) % 60 < 10:
-                print(f"[COOLDOWN] {round(cooldown_remaining/60,1)} menit lagi "
-                      f"(adaptive: {adaptive_cooldown//60} menit | BTC: {btc_ctx_now.get('change_1h',0):+.1f}%/1h)")
-
-            #  7. BERSIHKAN recently_exited + TRACK LOSSES 
-            _recently_exited = {k: v for k, v in _recently_exited.items()
-                                 if now - v < 1800}
+            #  7. BERSIHKAN recently_exited + TRACK LOSSES
+            _recently_exited = {k: v for k, v in _recently_exited.items() if now - v < 1800}
             try:
                 from shared_state import state as _state
                 if hasattr(_state, 'recently_exited'):
                     for k, v in list(_state.recently_exited.items()):
                         if now - v < 1800:
-                            # Koin baru di-exit - cek apakah profit atau loss
                             if k not in _recently_exited:
                                 last_pnl = getattr(_state, 'exit_pnl', {}).get(k, -1.0)
-                                
                                 if last_pnl < 0:
                                     if k not in _loss_tracker:
                                         _loss_tracker[k] = []
                                     _loss_tracker[k].append(v)
-                                    loss_count = len([t for t in _loss_tracker[k]
-                                                      if t > now - REPEAT_LOSS_BLACKLIST_HOURS * 3600])
-                                    if loss_count >= REPEAT_LOSS_MAX_COUNT:
-                                        print(f"[LOSS TRACKER] {k} kena SL {loss_count}x dalam "
-                                              f"{REPEAT_LOSS_BLACKLIST_HOURS}h. Blacklist sementara.")
-
-                                    #  CONSECUTIVE LOSS TRACKING 
                                     _consec_losses += 1
-                                    print(f"[CONSEC LOSS] Loss ke-{_consec_losses} ({k}) | PnL: {last_pnl}%. "
-                                          f"Limit: {CONSEC_LOSS_LIMIT}x")
+                                    print(f"[CONSEC LOSS] Loss ke-{_consec_losses} ({k}) | PnL: {last_pnl}%")
                                     if _consec_losses >= CONSEC_LOSS_LIMIT:
-                                        # Exponential backoff: loss ke-2 = 30 menit, ke-3 = 60 menit, ke-4 = 120 menit
                                         pause_minutes = CONSEC_LOSS_PAUSE_MIN * (2 ** (_consec_losses - CONSEC_LOSS_LIMIT))
-                                        pause_minutes = min(pause_minutes, 240)  # Max 4 jam
+                                        pause_minutes = min(pause_minutes, 240)
                                         _consec_pause_until = now + (pause_minutes * 60)
-                                        print(f"[CONSEC LOSS] {_consec_losses}x loss berturut-turut! "
-                                              f"Pause {pause_minutes} menit (escalating). "
-                                              f"Market sedang tidak favorable.")
-                                        # JANGAN reset ke 0 — reset ke CONSEC_LOSS_LIMIT agar eskalasi tetap jalan
+                                        print(f"[CONSEC LOSS] {_consec_losses}x loss! Pause {pause_minutes} menit.")
                                         _consec_losses = CONSEC_LOSS_LIMIT
                                 else:
                                     print(f"[WIN TRACKER] {k} take profit ({last_pnl}%)! Reset consec loss.")
                                     _consec_losses = 0
-
                             _recently_exited[k] = v
                         else:
                             del _state.recently_exited[k]
             except Exception:
                 pass
 
-            #  8. MARKET SENTIMENT & DXY 
+            #  8. MARKET SENTIMENT & DXY
             digest           = get_market_news_digest()
             market_sentiment = digest.get('sentiment', 'NEUTRAL')
 
@@ -1436,451 +1196,135 @@ def run_crypto_engine():
             dxy_trend  = _dxy_cache.get("trend", "NEUTRAL")
             dxy_change = _dxy_cache.get("change", 0)
 
-            #  9. SCAN & OBSERVASI 
+            #  9. SCAN & EVALUATE CANDIDATES PARALLEL (DIRECT MODE)
             raw_data   = fetch_all_tickers()
             candidates = analyze_and_sort(raw_data)
 
             if not candidates:
                 if int(now) % 60 < 10:
-                    print(f"[CRYPTO WARNING] Tidak ada kandidat (API Bitget rate limit/kosong). Retrying...")
+                    print("[CRYPTO WARNING] Tidak ada kandidat. Retrying...")
                 time.sleep(SCAN_INTERVAL)
                 continue
 
-            # Bersihkan loss tracker yang sudah expired
+            # Bersihkan loss tracker
             cutoff = now - (REPEAT_LOSS_BLACKLIST_HOURS * 3600)
             for base in list(_loss_tracker.keys()):
                 _loss_tracker[base] = [t for t in _loss_tracker[base] if t > cutoff]
                 if not _loss_tracker[base]:
                     del _loss_tracker[base]
+            _repeat_losers = {b for b, ts in _loss_tracker.items() if len(ts) >= REPEAT_LOSS_MAX_COUNT}
 
-            # Koin yang kena SL 2x+ dalam 4 jam = blacklist sementara
-            _repeat_losers = {b for b, ts in _loss_tracker.items()
-                              if len(ts) >= REPEAT_LOSS_MAX_COUNT}
-            if _repeat_losers:
-                print(f"[BLACKLIST] Koin blacklist sementara: {_repeat_losers}")
-
-            # Kalau baru mulai observasi (setelah trade atau startup), reset observer
-            if last_exec_time > 0 and elapsed_since_trade < SCAN_INTERVAL + 5:
-                observer.reset()
-
-            #  9a. SCAN SEMUA KANDIDAT & CATAT KE OBSERVER 
-            # Log ringkas: berapa koin yang di-scan dan berapa yang lolos
-            top_candidates = candidates[:20]
             btc_ctx = _get_btc_context()
-            print(f"[CRYPTO ENGINE] Scan {len(top_candidates)} koin | "
-                  f"Watchlist: {len(observer._watchlist)} | "
-                  f"Obs: {round((now - observer._obs_start)/60, 1)}m | "
+            print(f"[CRYPTO ENGINE] Scan {min(20, len(candidates))} koin | "
                   f"Sentiment: {market_sentiment} | DXY: {dxy_trend} | "
-                  f"BTC: {btc_ctx['trend']} ({btc_ctx['change_1h']:+.1f}%/1h)")
+                  f"BTC: {btc_ctx['trend']} ({btc_ctx['change_1h']:+.1f}%/1h)", flush=True)
 
-            scan_count   = 0
-            skip_reasons = {}  # track kenapa koin di-skip
-            for coin in top_candidates:
-                symbol     = coin.get('symbol', '')
+            #  SUB-FUNCTION FOR PARALLEL EVALUATION
+            def evaluate_coin(coin, off_hours=False):
+                symbol = coin.get('symbol', '')
                 clean_base = executor._clean_symbol(symbol)
 
-                # Filter dasar
-                if clean_base in open_bases:                          continue
-                if clean_base in ('BTC', 'ETH'):                      continue
-                if any(x in clean_base for x in ('USD','DAI','BUSD','TUSD','WBTC','WETH')): continue
-                if clean_base in _recently_exited:                    continue
-                if clean_base in _repeat_losers:                      continue
+                # Fast filters
+                if clean_base in open_bases:                                          return None
+                if clean_base in ('BTC', 'ETH'):                                      return None
+                if any(x in clean_base for x in ('USD','DAI','BUSD','TUSD','WBTC','WETH')): return None
+                if clean_base in _recently_exited:                                    return None
+                if clean_base in _repeat_losers:                                      return None
 
                 pump_sc = float(coin.get('pump_score', 0))
                 dump_sc = float(coin.get('dump_score', 0))
                 best_sc = max(pump_sc, dump_sc)
                 if best_sc < MIN_PUMP_SCORE:
-                    skip_reasons['low_pump'] = skip_reasons.get('low_pump', 0) + 1
-                    continue
-                # Ambil indikator teknikal
+                    return None
+
+                # Heavy indicators (API calls)
                 tech = get_technical_indicators(symbol)
-                if not tech:
-                    skip_reasons['no_tech'] = skip_reasons.get('no_tech', 0) + 1
-                    continue
+                if not tech: return None
 
                 mark_price = tech.get('mark_price', 0) or float(coin.get('lastPrice', 0))
-                if mark_price == 0:                                    continue
+                rsi       = tech.get('rsi', 50)
+                vwap_dist = tech.get('vwap_dist', 0.0)
 
-                rsi       = tech.get('rsi', _calc_rsi(symbol))
-                vwap_dist = _calc_vwap_dist(mark_price, symbol)
+                side, reason, tech_score = _determine_trade_side(tech, rsi, vwap_dist, market_sentiment)
+                combined_score = round((pump_sc * 0.5) + (tech_score * 0.5))
 
-                side, reason, tech_score = _determine_trade_side(
-                    tech, rsi, vwap_dist, market_sentiment
-                )
+                # APPLY STRICT OFF-HOURS LOGIC
+                current_min_momentum = MIN_MOMENTUM_SCORE
+                current_min_tech = MIN_TECH_SCORE
+                
+                if off_hours:
+                    current_min_momentum = 65  # Sangat ketat (Mei 6: 60)
+                    current_min_tech = 45      # Tech harus solid
+                    
+                    # Syarat tambahan: Harus ada sinyal institusi yang kuat
+                    has_whale = tech.get('whale_signal') in ('WHALE_BUY', 'WHALE_SELL')
+                    has_liq = tech.get('liquidity_grab', {}).get('bullish_grab') or tech.get('liquidity_grab', {}).get('bearish_grab')
+                    has_hunt = tech.get('bull_stop_hunt') or tech.get('bear_stop_hunt')
+                    
+                    if not (has_whale or has_liq or has_hunt):
+                        return None
 
-                combined_score = round(
-                    ((dump_sc if side == "sell" else pump_sc) * 0.5) + (tech_score * 0.5)
-                )
-                # Bobot 50/50 seperti versi profit May 6
-                # 30/70 terlalu ketat — bot jadi jarang masuk
-                if side is None or combined_score < MIN_MOMENTUM_SCORE or tech_score < MIN_TECH_SCORE:
-                    skip_reasons['low_score'] = skip_reasons.get('low_score', 0) + 1
+                if side is None or combined_score < current_min_momentum or tech_score < current_min_tech:
+                    return None
 
-                #  MARKET REGIME FILTER (ADX) 
-                adx = _calc_adx(symbol)
-                if adx < ADX_RANGING_THRESHOLD:
-                    skip_reasons['ranging'] = skip_reasons.get('ranging', 0) + 1
-                    continue
-                regime_label = "TRENDING" if adx >= ADX_TRENDING_THRESHOLD else "WEAK_TREND"
-
-                #  VOLATILITY REGIME FILTER 
-                vol_data = _calc_volatility_regime(symbol)
-                vol_regime = vol_data.get("regime", "NORMAL")
-                if vol_regime == "HIGH_VOL":
-                    skip_reasons['high_vol'] = skip_reasons.get('high_vol', 0) + 1
-                    continue
-                if vol_regime == "LOW_VOL":
-                    skip_reasons['low_vol'] = skip_reasons.get('low_vol', 0) + 1
-                    continue
-
-                #  EXPECTED VALUE CHECK 
-                # Hitung EV sebelum entry. Kalau EV terlalu kecil, tidak worth it.
-                ev = _calc_expected_value(side, tech, combined_score) if side else 0
-                if ev < MIN_EXPECTED_VALUE:
-                    skip_reasons['low_ev'] = skip_reasons.get('low_ev', 0) + 1
-                    continue
-
-                # DXY override
-                is_dxy_active = abs(dxy_change) > 0.0001
-                if is_dxy_active and side == "buy" and dxy_trend == "BULLISH" and dxy_change > 0.2:
-                    continue
-
-                #  BTC CORRELATION FILTER 
-                # BTC adalah market leader. Kalau BTC bearish kuat, jangan LONG altcoin.
-                # Kalau BTC bullish kuat, jangan SHORT altcoin.
-                btc_ctx = _get_btc_context()
+                # BTC correlation filter
                 btc_signal = btc_ctx.get("signal", "NEUTRAL")
-                if btc_signal == "AVOID_LONG" and side == "buy":
-                    skip_reasons['btc_bear'] = skip_reasons.get('btc_bear', 0) + 1
-                    continue
-                if btc_signal == "AVOID_SHORT" and side == "sell":
-                    skip_reasons['btc_bull'] = skip_reasons.get('btc_bull', 0) + 1
-                    continue
+                if (btc_signal == "AVOID_LONG" and side == "buy") or (btc_signal == "AVOID_SHORT" and side == "sell"):
+                    return None
 
-                # Order book confirmation
-                from data_fetcher import get_order_book_details
-                ob_data  = get_order_book_details(symbol)
-                ob_ratio = ob_data.get('ratio', 0)
-                if side == "buy"  and ob_ratio < -0.1: continue
-                if side == "sell" and ob_ratio > 0.1:  continue
+                return {
+                    "symbol": symbol, "clean_base": clean_base, "side": side,
+                    "reason": reason, "score": combined_score, "tech": tech,
+                    "mark_price": mark_price, "rsi": rsi, "vwap_dist": vwap_dist
+                }
 
-                # Lolos semua filter - catat ke observer
-                if side is not None and combined_score >= _session_min_score and tech_score >= MIN_TECH_SCORE:
-                    # Cek EV minimum
-                    if ev < _session_min_ev:
-                        skip_reasons['low_ev'] = skip_reasons.get('low_ev', 0) + 1
-                        continue
-                    observer.record(clean_base, combined_score, tech_score, side, tech,
-                                    adx=adx, ev=ev, vol_regime=vol_regime)
-                    scan_count += 1
-                    # Log dengan info zone dan momentum agar mudah debug
-                    zone_info = ""
-                    if tech.get('in_demand'):       zone_info += " [DEMAND]"
-                    if tech.get('in_supply'):       zone_info += " [SUPPLY]"
-                    if tech.get('still_falling'):   zone_info += " [STILL_FALLING⚠️BUY_BLOCKED]"
-                    if tech.get('still_rising') and side == "buy":
-                        zone_info += " [STILL_RISING-OK_FOR_BUY]"  # rising = momentum bagus untuk BUY
-                    elif tech.get('still_rising') and side == "sell":
-                        zone_info += " [STILL_RISING⚠️SELL_BLOCKED]"
-                    if tech.get('bearish_structure'): zone_info += " [BEAR_STRUCT]"
-                    if tech.get('bullish_structure'): zone_info += " [BULL_STRUCT]"
-                    cr = tech.get('consec_red', 0)
-                    cg = tech.get('consec_green', 0)
-                    candle_info = f" R{cr}" if cr > 0 else (f" G{cg}" if cg > 0 else "")
-                    print(f"[OBS] {clean_base:8s} {side:4s} | Pump:{pump_sc:.0f} Dump:{dump_sc:.0f} "
-                          f"Tech:{tech_score} Combined:{combined_score} | "
-                          f"RSI:{rsi} VWAP:{vwap_dist}% | "
-                          f"1h:{tech.get('trend_1h','?')} 4h:{tech.get('trend_4h','?')} | "
-                          f"ADX:{adx} {regime_label} | Vol:{vol_regime} | EV:{ev:.3f} | "
-                          f"OI:{tech.get('open_interest',0):.0f} "
-                          f"Fund:{tech.get('funding_rate',0):.4f}{zone_info}{candle_info}")
+            # Run parallel evaluation
+            results = []
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                futures = [pool.submit(evaluate_coin, c, is_off_hours) for c in candidates[:20]]
+                for f in as_completed(futures):
+                    res = f.result()
+                    if res: results.append(res)
 
-            # Summary scan cycle
-            skip_str = " | ".join(f"{k}:{v}" for k, v in skip_reasons.items()) if skip_reasons else "none"
-            print(f"[SCAN] {scan_count} masuk watchlist | Skip: {skip_str} | "
-                  f"Cooldown: {'YA ' + str(round(cooldown_remaining))+'s' if in_cooldown else 'TIDAK - SIAP ENTRY'}", flush=True)
+            # Sort by score and execute the best one
+            if results:
+                results.sort(key=lambda x: x['score'], reverse=True)
+                top = results[0]
+                
+                clean_base = top['clean_base']
+                symbol     = top['symbol']
+                side       = top['side']
+                combined_score = top['score']
+                reason     = top['reason']
+                mark_price = top['mark_price']
+                tech       = top['tech']
+                rsi        = top['rsi']
+                vwap_dist  = top['vwap_dist']
 
-            #  10. KEPUTUSAN ENTRY 
-            if in_cooldown:
-                # Masih dalam cooldown - terus observasi, jangan entry
-                mins_left = round(cooldown_remaining / 60, 1)
-                print(f"[OBSERVER] Observasi aktif. {mins_left} menit lagi sebelum entry. "
-                      f"Watchlist: {len(observer._watchlist)} koin.")
-                time.sleep(SCAN_INTERVAL)
-                continue
+                # Hitung TP/SL
+                tp, sl = _calc_tp_sl(mark_price, side, tech)
 
-            # Cooldown selesai - pilih kandidat terbaik dari observasi
-            # Tapi kalau ada event high-impact dalam 30 menit, tunda eksekusi
-            if _news_cal_block:
-                print(f"[NEWS CALENDAR] Cooldown selesai tapi ada event high-impact. "
-                      f"Tunda eksekusi, lanjut observasi.")
-                time.sleep(SCAN_INTERVAL)
-                continue
+                # Hitung size
+                amount = executor.get_max_available(symbol, leverage=LEVERAGE)
+                if amount > 0:
+                    print(f"\n{'='*60}")
+                    print(f"[SCALPER v5.1] {clean_base} {side.upper()} | Score: {combined_score}/100")
+                    print(f"  Reason : {reason}")
+                    print(f"  Price  : {mark_price} | RSI: {rsi} | VWAP: {vwap_dist}%")
+                    print(f"  TP: {tp} | SL: {sl} | Amount: {amount}")
+                    print(f"{'='*60}\n")
 
-            best = observer.get_best_candidate(
-                open_bases, _recently_exited,
-                min_appearances=_session_min_appear,
-                require_signal=_session_need_signal,
-                min_avg_score=_session_min_avg,
-            )
-
-            if best is None:
-                # Tidak ada kandidat yang cukup kuat dari observasi
-                obs_duration = time.time() - observer._obs_start
-                if obs_duration > COOLDOWN_AFTER_TRADE * 1.5:
-                    print(f"[ENGINE] Observasi {round(obs_duration/60,1)} menit, tidak ada kandidat kuat. Reset.")
-                    observer.reset()
+                    success, order = executor.place_order(symbol, side, amount, tp=tp, sl=sl, leverage=LEVERAGE)
+                    if success:
+                        from database import log_trade
+                        log_trade(symbol, mark_price, tp, sl, side=side, score=combined_score, reason=reason)
+                        last_exec_time = time.time()
+                        _consec_losses = 0
+                        print(f"[TRADE LOGGED] {clean_base} {side.upper()} @ {mark_price}")
+                    else:
+                        print(f"[ORDER FAILED] {clean_base}: {order}")
                 else:
-                    print(f"[ENGINE] Belum ada kandidat kuat. Lanjut observasi ({round(obs_duration/60,1)}/{COOLDOWN_AFTER_TRADE//60} menit).")
-                time.sleep(SCAN_INTERVAL)
-                continue
-
-            # Kalau kandidat terbaik tidak punya sinyal prediktif sama sekali,
-            # JANGAN masuk paksa  reset dan tunggu siklus baru yang lebih baik.
-            # Lebih baik tidak trade daripada masuk dengan sinyal lemah.
-            if not best.get('has_predictive_signal', True):
-                obs_duration = time.time() - observer._obs_start
-                print(f"[ENGINE] {best['clean_base']} tidak ada sinyal prediktif "
-                      f"(Future:0, Rising:False, Whale:NORMAL) setelah {round(obs_duration/60,1)} menit. "
-                      f"Reset dan cari kandidat baru.")
-                observer.reset()
-                time.sleep(SCAN_INTERVAL)
-                continue
-
-            #  11. EKSEKUSI KANDIDAT TERBAIK 
-            clean_base = best['clean_base']
-            side       = best['side']
-            tech       = best['tech']
-
-            # Cari symbol lengkap dari candidates
-            symbol = None
-            for coin in candidates:
-                if executor._clean_symbol(coin.get('symbol', '')) == clean_base:
-                    symbol = coin.get('symbol')
-                    break
-            if not symbol:
-                symbol = clean_base + 'USDT'
-
-            # Ambil harga terbaru + data institusional lengkap untuk entry
-            fresh_tech = get_technical_indicators(symbol)
-            if fresh_tech:
-                tech = fresh_tech  # Pakai data fresh untuk eksekusi
-
-            # Tambahkan Volume Profile, HTF Levels, Fibonacci, Stop Hunt
-            # Menggunakan fungsi yang sudah di-import di atas
-            try:
-                vp   = get_volume_profile(symbol)
-                htf  = get_htf_key_levels(symbol)
-                fib  = get_fibonacci_levels(symbol)
-                hunt = detect_stop_hunt(symbol)
-                tech.update({
-                    "poc":              vp.get("poc", 0),
-                    "price_vs_poc":     vp.get("price_vs_poc", "UNKNOWN"),
-                    "poc_distance_pct": vp.get("poc_distance_pct", 0),
-                    "daily_high":       htf.get("daily_high", 0),
-                    "daily_low":        htf.get("daily_low", 0),
-                    "near_daily_level": htf.get("near_daily_level", False),
-                    "near_weekly_level":htf.get("near_weekly_level", False),
-                    "htf_level_bias":   htf.get("level_bias", "NEUTRAL"),
-                    "fib_382":          fib.get("fib_382", 0),
-                    "fib_618":          fib.get("fib_618", 0),
-                    "at_fib_support":   fib.get("at_fib_support", False),
-                    "at_fib_resistance":fib.get("at_fib_resistance", False),
-                    "current_fib_level":fib.get("current_fib_level", "NONE"),
-                    "bull_stop_hunt":   hunt.get("bull_stop_hunt", False),
-                    "bear_stop_hunt":   hunt.get("bear_stop_hunt", False),
-                    "hunt_strength":    hunt.get("hunt_strength", 0),
-                })
-                print(f"[ENTRY INTEL] {clean_base} | POC:{vp.get('price_vs_poc','?')} "
-                      f"| HTF:{htf.get('level_bias','?')} "
-                      f"| Fib:{fib.get('current_fib_level','NONE')} "
-                      f"| Hunt:{'YES' if hunt.get('bull_stop_hunt') or hunt.get('bear_stop_hunt') else 'NO'}")
-            except Exception as _e:
-                pass  # Kalau gagal, lanjut dengan data yang ada
-
-            mark_price = tech.get('mark_price', 0)
-            if mark_price == 0:
-                print(f"[SKIP] {clean_base} tidak bisa ambil harga terbaru.")
-                # Jangan reset observer - coba kandidat lain di cycle berikutnya
-                time.sleep(SCAN_INTERVAL)
-                continue
-
-            rsi       = tech.get('rsi', 50)
-            vwap_dist = _calc_vwap_dist(mark_price, symbol)
-
-            # ── 5M ENTRY CONFIRMATION ──────────────────────────────────────────
-            # Masalah utama: bot lihat 15m bagus tapi di 5m harga di area supply
-            # dari bounce sebelumnya — entry di tengah no man's land.
-            #
-            # Cek 3 hal di 5m sebelum entry:
-            # 1. Apakah harga di bawah VWAP 5m? (discount zone untuk BUY)
-            # 2. Apakah MA5 > MA10 di 5m? (momentum 5m bullish untuk BUY)
-            # 3. Apakah tidak ada bearish structure di 5m? (lower high/lower low)
-            try:
-                url_5m = (f"https://api.bitget.com/api/v2/mix/market/history-candles"
-                          f"?symbol={symbol}&granularity=5m&limit=20&productType=USDT-FUTURES")
-                r5 = requests.get(url_5m, timeout=5, verify=False)
-                if r5.status_code == 200:
-                    data_5m = r5.json().get('data', [])
-                    if len(data_5m) >= 10:
-                        closes_5m = [float(c[4]) for c in data_5m]
-                        highs_5m  = [float(c[2]) for c in data_5m]
-                        lows_5m   = [float(c[3]) for c in data_5m]
-                        vols_5m   = [float(c[5]) for c in data_5m]
-
-                        # VWAP 5m (20 candle = 100 menit)
-                        cum_pv = sum((highs_5m[i]+lows_5m[i]+closes_5m[i])/3 * vols_5m[i]
-                                     for i in range(len(closes_5m)))
-                        cum_v  = sum(vols_5m)
-                        vwap_5m = cum_pv / cum_v if cum_v > 0 else closes_5m[-1]
-                        price_vs_vwap_5m = (closes_5m[-1] - vwap_5m) / vwap_5m * 100
-
-                        # MA5 dan MA10 di 5m
-                        ma5_5m  = sum(closes_5m[-5:]) / 5
-                        ma10_5m = sum(closes_5m[-10:]) / 10
-
-                        # Bearish structure di 5m: lower high + lower low di 3 candle terakhir
-                        lh = highs_5m[-1] < highs_5m[-2] < highs_5m[-3]
-                        ll = lows_5m[-1]  < lows_5m[-2]  < lows_5m[-3]
-                        bearish_5m = lh or ll
-
-                        # Bullish structure di 5m: higher high + higher low
-                        hh = highs_5m[-1] > highs_5m[-2]
-                        hl = lows_5m[-1]  > lows_5m[-2]
-                        bullish_5m = hh and hl
-
-                        # Resistance dari bounce: harga sudah naik > 3% dari low 5m terakhir
-                        # dan sekarang di area atas dari range itu = area supply dari bounce
-                        low_5m_recent  = min(lows_5m[-10:])
-                        high_5m_recent = max(highs_5m[-10:])
-                        range_5m = high_5m_recent - low_5m_recent
-                        pos_in_range_5m = ((closes_5m[-1] - low_5m_recent) / range_5m * 100) if range_5m > 0 else 50
-                        bounce_pct = ((closes_5m[-1] - low_5m_recent) / low_5m_recent * 100) if low_5m_recent > 0 else 0
-
-                        # BLOCK BUY kalau di 5m:
-                        # - Harga di atas VWAP 5m (premium zone) DAN bearish structure
-                        # - ATAU harga sudah bounce > 5% dari low dan di 70%+ dari range 5m
-                        #   (ini yang terjadi di NIL: bounce dari 0.06655 ke 0.07115 = +6.9%)
-                        block_5m_buy = False
-                        block_5m_sell = False
-
-                        if side == "buy":
-                            if price_vs_vwap_5m > 1.0 and bearish_5m:
-                                block_5m_buy = True
-                                print(f"[5M GUARD] {clean_base} BUY diblokir: "
-                                      f"Harga di atas VWAP 5m (+{round(price_vs_vwap_5m,2)}%) "
-                                      f"+ bearish structure 5m. Entry di area supply bounce.")
-                            elif bounce_pct > 5.0 and pos_in_range_5m > 70:
-                                block_5m_buy = True
-                                print(f"[5M GUARD] {clean_base} BUY diblokir: "
-                                      f"Sudah bounce {round(bounce_pct,1)}% dari low, "
-                                      f"harga di {round(pos_in_range_5m,0)}% dari range 5m. "
-                                      f"Terlambat untuk BUY — tunggu pullback.")
-                            elif ma5_5m < ma10_5m and not bullish_5m:
-                                block_5m_buy = True
-                                print(f"[5M GUARD] {clean_base} BUY diblokir: "
-                                      f"MA5({round(ma5_5m,6)}) < MA10({round(ma10_5m,6)}) di 5m "
-                                      f"= momentum 5m masih bearish.")
-                        elif side == "sell":
-                            if price_vs_vwap_5m < -1.0 and bullish_5m:
-                                block_5m_sell = True
-                                print(f"[5M GUARD] {clean_base} SELL diblokir: "
-                                      f"Harga di bawah VWAP 5m ({round(price_vs_vwap_5m,2)}%) "
-                                      f"+ bullish structure 5m. Entry di area demand.")
-                            elif bounce_pct < -5.0 and pos_in_range_5m < 30:
-                                block_5m_sell = True
-                                print(f"[5M GUARD] {clean_base} SELL diblokir: "
-                                      f"Sudah dump {round(abs(bounce_pct),1)}% dari high, "
-                                      f"harga di {round(pos_in_range_5m,0)}% dari range 5m. "
-                                      f"Terlambat untuk SELL — tunggu pullback.")
-
-                        if block_5m_buy or block_5m_sell:
-                            skip_reasons['5m_guard'] = skip_reasons.get('5m_guard', 0) + 1
-                            observer.reset()
-                            time.sleep(SCAN_INTERVAL)
-                            continue
-
-                        print(f"[5M OK] {clean_base} | VWAP5m:{round(price_vs_vwap_5m,2)}% "
-                              f"| MA5>{round(ma5_5m,6)} MA10>{round(ma10_5m,6)} "
-                              f"| Pos:{round(pos_in_range_5m,0)}% Bounce:{round(bounce_pct,1)}% "
-                              f"| {'BULL' if bullish_5m else 'BEAR' if bearish_5m else 'NEUTRAL'}_5m")
-            except Exception as _e5m:
-                print(f"[5M GUARD] Gagal cek 5m untuk {clean_base}: {_e5m}. Lanjut tanpa 5m check.")
-
-            # Re-validasi side dengan data fresh
-            fresh_side, fresh_reason, fresh_tech_score = _determine_trade_side(
-                tech, rsi, vwap_dist, market_sentiment
-            )
-
-            # Kalau side berubah dari observasi, pakai yang fresh
-            if fresh_side != side:
-                print(f"[REVALIDATE] {clean_base} side berubah: {side} -> {fresh_side}. "
-                      f"Pakai data terbaru.")
-                side = fresh_side
-                if side is None:
-                    print(f"[SKIP] {clean_base} sinyal hilang saat revalidasi.")
-                    # Jangan reset observer - sinyal bisa kembali di cycle berikutnya
-                    time.sleep(SCAN_INTERVAL)
-                    continue
-
-            reason = fresh_reason or f"Whale Observer Score {best['final_score']}"
-
-            # Hitung TP/SL
-            tp, sl = _calc_tp_sl(mark_price, side, tech)
-
-            # Hitung size
-            amount = executor.get_max_available(symbol, leverage=LEVERAGE)
-            if amount <= 0:
-                print(f"[MARGIN GUARD] Insufficient margin for {clean_base}.")
-                # Jangan reset - margin issue bukan alasan buang data observasi
-                time.sleep(SCAN_INTERVAL)
-                continue
-
-            #  EKSEKUSI 
-            print(f"\n{'='*65}")
-            print(f"[WHALE OBSERVER] ENTRY: {clean_base} {side.upper()}")
-            print(f"  Reason      : {reason}")
-            print(f"  Avg Score   : {best['avg_score']}/100 | Final: {best['final_score']}")
-            print(f"  Future Score: {best['future_score']} | Appearances: {best['appearances']}x")
-            print(f"  Rising      : {'YA' if best['is_rising'] else 'TIDAK'} | "
-                  f"Whale: {tech.get('whale_signal','NORMAL')}")
-            print(f"  Price       : {mark_price} | RSI: {rsi} | VWAP: {vwap_dist}%")
-            print(f"  OI          : {tech.get('open_interest',0):.0f} | "
-                  f"Funding: {tech.get('funding_rate',0):.4f}")
-            if side == "buy":
-                print(f"  TP: {tp} (+{round((tp/mark_price-1)*100,2)}%) | "
-                      f"SL: {sl} (-{round((1-sl/mark_price)*100,2)}%)")
-            else:
-                print(f"  TP: {tp} (-{round((1-tp/mark_price)*100,2)}%) | "
-                      f"SL: {sl} (+{round((sl/mark_price-1)*100,2)}%)")
-            print(f"  Leverage    : {LEVERAGE}x | Sentiment: {market_sentiment}")
-            print(f"{'='*65}\n")
-
-            #  EKSEKUSI 
-            print(f"[EXECUTOR] Mengirim order {side.upper()} {symbol} ke Bitget...", flush=True)
-            
-            success, order = executor.place_order(
-                symbol, side, amount, tp=tp, sl=sl, leverage=LEVERAGE
-            )
-            if success:
-                log_trade(symbol, mark_price, tp, sl,
-                          side=side,
-                          score=best['final_score'],
-                          reason=reason)
-                last_exec_time = time.time()
-                open_count    += 1
-                open_bases.append(clean_base)
-                print(f"[TRADE LOGGED] {clean_base} {side.upper()} @ {mark_price} "
-                      f"| Score: {best['final_score']}")
-                # Trade berhasil masuk = reset consecutive loss counter
-                # (loss counter hanya naik saat exit, bukan saat entry)
-                _consec_losses = 0
-                # Reset observer untuk periode observasi berikutnya
-                observer.reset()
-            else:
-                print(f"[ORDER FAILED] {clean_base}: {order}")
-                # Tetap reset observer - jangan stuck di kandidat yang gagal
-                observer.reset()
+                    print(f"[MARGIN GUARD] Insufficient margin for {clean_base}.")
 
             time.sleep(SCAN_INTERVAL)
 
