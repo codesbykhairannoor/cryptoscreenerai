@@ -1277,7 +1277,7 @@ class ForexExecutor:
                 profit_pt = (current_price - open_price) if is_buy else (open_price - current_price)
 
             direction = "BUY" if is_buy else "SELL"
-            if int(time.time()) % 30 < 3:
+            if int(time.time()) % 10 < 3:
                 print("[TRAIL] " + sym + " " + direction + " open=" + str(open_price) + " cur=" + str(current_price) + " profit=$" + str(round(profit,2)) + " pt=" + str(round(profit_pt,2)) + " sl=" + str(current_sl))
 
             # AUTO-CLOSE: rugi > $7
@@ -1403,7 +1403,7 @@ class ForexExecutor:
                 total_lots   = sum(float(p.get("volume", 0)) for p in positions)
 
                 if broker_price > 0:
-                    if int(time.time()) % 30 < 3:
+                    if int(time.time()) % 10 < 3:
                         print("[FOREX] Price: " + str(broker_price) + " | Trades: " + str(active_count) + " | Lots: " + str(round(total_lots,2)) + " | Spread: " + str(spread_pts) + "pts")
 
                 if broker_price > 0 and positions:
@@ -1475,11 +1475,11 @@ class ForexExecutor:
                     continue
 
                 # CALCULATE INDICATORS DULU  side harus ada sebelum COMMIT check
-                if int(now) % 30 < 3:
+                if int(now) % 10 < 3:
                     print("[FOREX SCAN] Calculating indicators for " + str(self._working_symbol) + "...")
                 ind = self._calc_indicators()
                 if not ind:
-                    if int(now) % 30 < 3:
+                    if int(now) % 10 < 3:
                         print("[FOREX SCAN] No indicators. Retrying...")
                     time.sleep(5)
                     continue
@@ -1490,7 +1490,7 @@ class ForexExecutor:
                 trend_4h = ind.get("trend_4h", "NEUTRAL")
                 pump_sig = ind.get("pump_signal", "NONE")
                 
-                if int(now) % 30 < 3:
+                if int(now) % 10 < 3:
                     print("[FOREX SCAN] RSI:" + str(rsi_val) + " 30m:" + trend + " 1h:" + trend_1h + " 4h:" + trend_4h + " Pump:" + pump_sig)
 
                 # DETERMINE SIDE  HARUS SEBELUM COMMIT CHECK
@@ -1498,7 +1498,7 @@ class ForexExecutor:
                 if side is None:
                     buy_sc  = self._score_setup(ind, "buy",  spread_pts)
                     sell_sc = self._score_setup(ind, "sell", spread_pts)
-                    if int(now) % 30 < 3:
+                    if int(now) % 10 < 3:
                         print("[FOREX SCAN] No setup. Buy:" + str(buy_sc) + " Sell:" + str(sell_sc) + " (need " + str(MIN_MOMENTUM_SCORE) + "+)")
                     time.sleep(SCAN_INTERVAL)
                     continue
