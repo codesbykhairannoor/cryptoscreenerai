@@ -892,10 +892,17 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
         whale == 'WHALE_SELL'
     )
 
+    # Cek Kondisi Candle Saat Ini (Mencegah beli di tengah terjun bebas)
+    falling_knife = tech.get('falling_knife', False)
+    flying_rocket = tech.get('flying_rocket', False)
+
     # Kalau 4h bearish dan tidak ada reversal signal = skip BUY
-    block_buy  = (trend_4h == 'BEARISH' and not has_strong_reversal_buy)
+    # ATAU kalau harga masih terjun bebas (pisau jatuh) = HARAM BUY!
+    block_buy  = (trend_4h == 'BEARISH' and not has_strong_reversal_buy) or falling_knife
+    
     # Kalau 4h bullish dan tidak ada reversal signal = skip SELL
-    block_sell = (trend_4h == 'BULLISH' and not has_strong_reversal_sell)
+    # ATAU kalau harga masih meroket = HARAM SELL!
+    block_sell = (trend_4h == 'BULLISH' and not has_strong_reversal_sell) or flying_rocket
 
     # Kalau 1h juga berlawanan = block lebih ketat
     if trend_1h == 'BEARISH' and trend_4h == 'BEARISH':

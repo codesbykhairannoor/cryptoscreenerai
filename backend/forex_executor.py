@@ -1054,10 +1054,25 @@ class ForexExecutor:
         best_side  = None
         best_score = 0
 
+        falling_knife = ind.get("falling_knife", False)
+        flying_rocket = ind.get("flying_rocket", False)
+        is_exhaustion_pump = ind.get("is_exhaustion_pump", False)
+        is_exhaustion_dump = ind.get("is_exhaustion_dump", False)
+
         if buy_score >= sell_score and buy_score >= MIN_MOMENTUM_SCORE:
-            best_side, best_score = "buy", buy_score
+            if falling_knife or is_exhaustion_dump:
+                print(f"[GUARD] XAUUSD BUY diblokir: Pisau Jatuh (Harga masih turun tajam). Tunggu pantulan!")
+            elif is_exhaustion_pump:
+                print(f"[GUARD] XAUUSD BUY diblokir: FOMO di pucuk.")
+            else:
+                best_side, best_score = "buy", buy_score
         elif sell_score > buy_score and sell_score >= MIN_MOMENTUM_SCORE:
-            best_side, best_score = "sell", sell_score
+            if flying_rocket or is_exhaustion_pump:
+                print(f"[GUARD] XAUUSD SELL diblokir: Roket Terbang (Harga masih naik tajam). Tunggu rejection!")
+            elif is_exhaustion_dump:
+                print(f"[GUARD] XAUUSD SELL diblokir: FOMO di dasar.")
+            else:
+                best_side, best_score = "sell", sell_score
 
         if best_side is None:
             return None, 0, 0

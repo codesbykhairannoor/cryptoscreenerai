@@ -678,6 +678,19 @@ def get_technical_indicators(symbol, interval="15m"):
             trs.append(tr)
         atr_val = round(sum(trs[-14:]) / 14, 6) if len(trs) >= 14 else round(mark_price * 0.015, 6)
 
+        # 7b. FALLING KNIFE / FLYING ROCKET (Anti-Premature Entry)
+        # Deteksi apakah candle saat ini masih bergerak kuat melawan arah pantulan
+        last_open = df_cur['open'].iloc[-1]
+        last_close = df_cur['close'].iloc[-1]
+        prev_low = df_cur['low'].iloc[-2] if len(df_cur) >= 2 else last_close
+        prev_high = df_cur['high'].iloc[-2] if len(df_cur) >= 2 else last_close
+        body_size = abs(last_close - last_open)
+        
+        # Pisau jatuh: Candle merah membesar (body > 50% ATR) dan menjebol low candle sebelumnya
+        falling_knife = (last_close < last_open) and (body_size > atr_val * 0.5) and (last_close < prev_low)
+        # Roket terbang: Candle hijau membesar (body > 50% ATR) dan menjebol high candle sebelumnya
+        flying_rocket = (last_close > last_open) and (body_size > atr_val * 0.5) and (last_close > prev_high)
+
         # 8. RSI 14
         closes_list = df_cur['close'].tolist()
         rsi_gains, rsi_losses = [], []
@@ -745,7 +758,9 @@ def get_technical_indicators(symbol, interval="15m"):
             "ema_50_4h": round(ema_50_4h, 6),
             "open_interest": get_open_interest(symbol),
             "funding_rate": get_funding_rate(symbol),
-            "htf": "1h"
+            "htf": "1h",
+            "falling_knife": falling_knife,
+            "flying_rocket": flying_rocket
         }
     except Exception as e:
         print(f"Error indicators for {symbol}: {e}")
