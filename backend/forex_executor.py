@@ -1378,6 +1378,7 @@ class ForexExecutor:
 
         print("[FOREX ENGINE v6.0] XAUUSD Scalper AKTIF! TP:" + str(SCALP_TP_POINTS) + " SL:" + str(SCALP_SL_POINTS), flush=True)
         last_auto_trade = 0
+        last_scan_log   = 0  # throttle log scan ke 30 detik sekali
 
         while True:
             try:
@@ -1385,9 +1386,7 @@ class ForexExecutor:
                     time.sleep(60)
                     continue
 
-                # TRAILING STOP ??? jalan SELALU, tidak peduli session
-                # Harus sebelum session filter agar posisi tetap diproteksi
-                # bahkan saat outside trading hours
+                # TRAILING STOP — jalan SELALU, tidak peduli session
                 price_data   = self.get_live_price()
                 broker_price = price_data["mid"]
                 spread_pts   = price_data["spread_points"]
@@ -1403,9 +1402,10 @@ class ForexExecutor:
                 active_count = len(positions)
                 total_lots   = sum(float(p.get("volume", 0)) for p in positions)
 
+                now_t = time.time()
                 if broker_price > 0:
-                    if int(time.time()) % 10 < 3:
-                        print("[FOREX] Price: " + str(broker_price) + " | Trades: " + str(active_count) + " | Lots: " + str(round(total_lots,2)) + " | Spread: " + str(spread_pts) + "pts", flush=True)
+                    if now_t - last_scan_log >= 15:
+                        print(f"[FOREX] Price: {broker_price} | Trades: {active_count} | Lots: {round(total_lots,2)} | Spread: {spread_pts}pts", flush=True)
 
                 if broker_price > 0 and positions:
                     for p in positions:
@@ -1475,13 +1475,12 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # CALCULATE INDICATORS DULU  side harus ada sebelum COMMIT check
-                if int(now) % 10 < 3:
-                    print("[FOREX SCAN] Calculating indicators for " + str(self._working_symbol) + "...")
+                # CALCULATE INDICATORS — throttle log ke 30 detik
+                do_log = (now - last_scan_log >= 30)
+                if do_log:
+                    print(f"[FOREX SCAN] {self._working_symbol} | RSI calculating...", flush=True)
                 ind = self._calc_indicators()
                 if not ind:
-                    if int(now) % 10 < 3:
-                        print("[FOREX SCAN] No indicators. Retrying...")
                     time.sleep(5)
                     continue
 
@@ -1490,17 +1489,18 @@ class ForexExecutor:
                 trend_1h = ind.get("trend_1h", "NEUTRAL")
                 trend_4h = ind.get("trend_4h", "NEUTRAL")
                 pump_sig = ind.get("pump_signal", "NONE")
-                
-                if int(now) % 10 < 3:
-                    print("[FOREX SCAN] RSI:" + str(rsi_val) + " 30m:" + trend + " 1h:" + trend_1h + " 4h:" + trend_4h + " Pump:" + pump_sig, flush=True)
 
-                # DETERMINE SIDE  HARUS SEBELUM COMMIT CHECK
+                if do_log:
+                    print(f"[FOREX SCAN] RSI:{rsi_val} 30m:{trend} 1h:{trend_1h} 4h:{trend_4h} Pump:{pump_sig}", flush=True)
+                    last_scan_log = now
+
+                # DETERMINE SIDE
                 side, score, trades_to_open = self._determine_side(ind, spread_pts)
                 if side is None:
                     buy_sc  = self._score_setup(ind, "buy",  spread_pts)
                     sell_sc = self._score_setup(ind, "sell", spread_pts)
-                    if int(now) % 10 < 3:
-                        print("[FOREX SCAN] No setup. Buy:" + str(buy_sc) + " Sell:" + str(sell_sc) + " (need " + str(MIN_MOMENTUM_SCORE) + "+)")
+                    if do_log:
+                        print(f"[FOREX SCAN] No setup. Buy:{buy_sc} Sell:{sell_sc} (need {MIN_MOMENTUM_SCORE}+)", flush=True)
                     time.sleep(SCAN_INTERVAL)
                     continue
 

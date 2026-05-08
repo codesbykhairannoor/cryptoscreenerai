@@ -627,8 +627,7 @@ class BitgetExecutor:
                         is_better = (sl_p == 0) or (new_sl < sl_p)
 
                     if is_better and now - self._last_sl_set.get(symbol, 0) > 60:
-                        print(f"🔥 [TRAIL] {symbol} SL {round(sl_p,4)} → {round(new_sl,4)} "
-                              f"(PNL:{pnl}% PEAK:{peak_pnl}%)")
+                        print(f"[TRAIL] {symbol} SL {round(sl_p,4)} -> {round(new_sl,4)} (PNL:{pnl}% PEAK:{peak_pnl}%)", flush=True)
                         self._set_sl_tp_bitget(symbol, side, size, sl_price=new_sl)
                         self._last_sl_set[symbol] = now
 

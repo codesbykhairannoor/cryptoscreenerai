@@ -1130,17 +1130,15 @@ def run_crypto_engine():
     print(f"  Cooldown : {COOLDOWN_AFTER_TRADE//60} menit observasi aktif", flush=True)
     print(f"  Min appear: {MIN_APPEARANCES}x dalam cooldown window", flush=True)
 
-    last_exec_time     = 0
-    last_news_report   = 0
-    last_global_report = 0
-    _dxy_cache         = {"trend": "NEUTRAL", "ts": 0}
-    _recently_exited   = {}  # {clean_base: exit_timestamp}
-    # Track koin yang sering kena SL - {clean_base: [timestamp_sl1, timestamp_sl2, ...]}
-    # Kalau kena SL 2x dalam 4 jam -> blacklist sementara
-    _loss_tracker      = {}  # {clean_base: [timestamps]}
-    # Consecutive loss tracker  pause bot kalau kalah 2x berturut-turut
-    _consec_losses     = 0   # jumlah loss berturut-turut
-    _consec_pause_until = 0  # timestamp sampai kapan bot pause
+    last_exec_time      = 0
+    last_news_report    = 0
+    last_global_report  = 0
+    last_deepseek_report = 0   # DeepSeek analysis setiap 15 menit
+    _dxy_cache          = {"trend": "NEUTRAL", "ts": 0}
+    _recently_exited    = {}  # {clean_base: exit_timestamp}
+    _loss_tracker       = {}  # {clean_base: [timestamps]}
+    _consec_losses      = 0
+    _consec_pause_until = 0
 
     # Mulai observasi langsung dari startup
     observer.reset()
@@ -1157,8 +1155,33 @@ def run_crypto_engine():
             if now - last_news_report > NEWS_REPORT_INTERVAL:
                 digest = get_market_news_digest()
                 print(f"[NEWS VELOCITY] Sentiment: {digest['sentiment']} | "
-                      f"Top: {digest['crypto_top']}")
+                      f"Top: {digest['crypto_top']}", flush=True)
                 last_news_report = now
+
+            #  2b. DEEPSEEK AI ANALYSIS (setiap 15 menit) 
+            if now - last_deepseek_report > 900:
+                try:
+                    from ai_model import analyze_market_data
+                    raw_data    = fetch_all_tickers()
+                    candidates  = analyze_and_sort(raw_data)
+                    top5        = candidates[:5] if candidates else []
+                    if top5:
+                        top5_simple = [{
+                            "symbol":  c.get("symbol"),
+                            "change":  round(float(c.get("priceChangePercent", 0)), 2),
+                            "volume":  round(float(c.get("quoteVolume", 0)) / 1_000_000, 1),
+                            "pump":    round(float(c.get("pump_score", 0)), 1),
+                            "dump":    round(float(c.get("dump_score", 0)), 1),
+                        } for c in top5]
+                        print("[DEEPSEEK] Requesting AI analysis...", flush=True)
+                        result = analyze_market_data(str(top5_simple))
+                        print("[DEEPSEEK ANALYSIS]", flush=True)
+                        for line in str(result).split("\n"):
+                            if line.strip():
+                                print(f"  {line}", flush=True)
+                except Exception as e:
+                    print(f"[DEEPSEEK ERROR] {e}", flush=True)
+                last_deepseek_report = now
 
             #  3. GLOBAL CONTEXT (setiap 5 menit) 
             if now - last_global_report > GLOBAL_REPORT_INTERVAL:
