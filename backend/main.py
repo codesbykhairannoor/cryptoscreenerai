@@ -17,6 +17,34 @@ from forex_executor import ForexExecutor
 from news_sniper import get_sniper_instance, news_execution_handler
 import threading
 import time
+import subprocess
+import os as _os
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  PORT CLEANUP — dipanggil saat lifespan startup
+#  Membunuh proses lama yang masih pakai port 8000 sebelum bind
+# ─────────────────────────────────────────────────────────────────────────────
+def _kill_stale_port(port: int = 8000):
+    """Kill proses lain yang masih pakai port ini. Windows-safe."""
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True, timeout=5
+        )
+        my_pid = str(_os.getpid())
+        for line in result.stdout.splitlines():
+            if f":{port}" in line and "LISTENING" in line:
+                parts = line.strip().split()
+                pid = parts[-1]
+                if pid.isdigit() and pid != "0" and pid != my_pid:
+                    subprocess.run(
+                        ["taskkill", "/PID", pid, "/F"],
+                        capture_output=True, timeout=5
+                    )
+                    print(f"[STARTUP] Killed stale PID {pid} on port {port}", flush=True)
+                    time.sleep(1)
+    except Exception as e:
+        print(f"[STARTUP] Port cleanup: {e}", flush=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  SINGLETON EXECUTORS
@@ -43,6 +71,10 @@ def get_forex_executor() -> ForexExecutor:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # ── STARTUP ──────────────────────────────────────────────────────────────
+    # Kill proses lama yang masih pakai port 8000 SEBELUM engines start
+    # Ini fix untuk [Errno 10048] saat PM2 restart
+    _kill_stale_port(8000)
+
     print("[SYSTEM] Starting CryptoScreener AI...", flush=True)
 
     # 0. Database migration
@@ -352,39 +384,17 @@ def get_history():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  ENTRY POINT
-#  --timeout-graceful-shutdown 3  → port dilepas cepat saat restart PM2
+#  ENTRY POINT — dipakai saat run via: python main.py
+#  Saat run via PM2 dengan uvicorn langsung, bagian ini tidak dieksekusi
+#  tapi _kill_stale_port sudah dipanggil di lifespan startup
 # ─────────────────────────────────────────────────────────────────────────────
-def _kill_port(port: int):
-    """Kill proses yang masih pakai port ini sebelum bind. Windows-safe."""
-    import subprocess, sys
-    try:
-        result = subprocess.run(
-            ["netstat", "-ano"],
-            capture_output=True, text=True, timeout=5
-        )
-        for line in result.stdout.splitlines():
-            if f":{port}" in line and "LISTENING" in line:
-                parts = line.strip().split()
-                pid = parts[-1]
-                if pid.isdigit() and int(pid) != 0:
-                    my_pid = str(__import__('os').getpid())
-                    if pid != my_pid:
-                        subprocess.run(["taskkill", "/PID", pid, "/F"],
-                                       capture_output=True, timeout=5)
-                        print(f"[STARTUP] Killed stale process PID {pid} on port {port}", flush=True)
-                        __import__('time').sleep(1)
-    except Exception as e:
-        print(f"[STARTUP] Port cleanup warning: {e}", flush=True)
-
-
 if __name__ == "__main__":
     import uvicorn
-    _kill_port(8000)  # Kill proses lama yang masih pakai port 8000
+    _kill_stale_port(8000)
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=8000,
         reload=False,
-        timeout_graceful_shutdown=3,
+        timeout_graceful_shutdown=5,
     )

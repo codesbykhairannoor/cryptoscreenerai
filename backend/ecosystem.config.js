@@ -2,20 +2,22 @@ module.exports = {
   apps: [
     {
       name: "MyTradingBot",
-      script: "main.py",
-      interpreter: "python",
+
+      // Jalankan uvicorn langsung — lebih reliable di Windows
+      // PM2 bisa kill process ini dengan benar saat restart
+      script: "uvicorn",
+      args: "main:app --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 5",
+      interpreter: "none",
       cwd: "C:\\Users\\Administrator\\cryptoscreenerai\\backend",
 
       // Restart policy
-      restart_delay: 8000,          // Tunggu 8 detik sebelum restart (cukup untuk port dilepas)
+      restart_delay: 8000,
       max_restarts: 10,
       min_uptime: "15s",
       exp_backoff_restart_delay: 3000,
-
-      // Kill timeout — beri waktu 10 detik untuk graceful shutdown sebelum SIGKILL
       kill_timeout: 10000,
 
-      // Environment — WAJIB set PYTHONUNBUFFERED supaya log langsung muncul
+      // Environment
       env: {
         PYTHONIOENCODING: "utf-8",
         PYTHONUNBUFFERED: "1",
