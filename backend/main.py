@@ -1,11 +1,12 @@
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from sentiment import get_crypto_news, get_global_market_data
+from sentiment import get_crypto_news, get_global_market_data, get_fred_macro_context
 from data_fetcher import (
     fetch_all_tickers, get_order_book_details, 
     get_technical_indicators, get_forex_data, 
     get_idx_data, get_idx_market_status,
-    get_retail_sentiment, detect_institutional_flow
+    get_retail_sentiment, detect_institutional_flow,
+    get_dune_macro_metrics
 )
 from ai_model import analyze_and_sort
 from database import log_trade, get_performance_stats, init_db
@@ -67,7 +68,7 @@ def startup_event():
     
     # 3. Start WebSocket Sniper (Isolated)
     try:
-        from websocket_sniper import main as ws_main
+        from websocket_sniper import main as ws_main, get_market_ws
         import asyncio
         def run_ws():
             loop = asyncio.new_event_loop()
@@ -75,7 +76,7 @@ def startup_event():
             loop.run_until_complete(ws_main())
         ws_thread = threading.Thread(target=run_ws, daemon=True)
         ws_thread.start()
-        print("[SYSTEM] WebSocket Sniper AKTIF!")
+        print("[SYSTEM] WebSocket Sniper AKTIF! (Private + Finnhub + MarketWS)")
     except Exception as e:
         print(f"[SYSTEM] Gagal memulai WebSocket: {e}")
 
@@ -111,6 +112,77 @@ def startup_event():
 @app.get("/")
 def read_root():
     return {"message": "CryptoScreener AI Multi-Market Backend is running"}
+
+@app.get("/api/macro-context")
+def get_macro_context():
+    """
+    Endpoint untuk FRED macro context.
+    Data: Fed Rate, CPI, DXY, 10Y Treasury, Yield Curve, Macro Bias.
+    Cache 1 jam — data FRED update harian.
+    """
+    try:
+        fred = get_fred_macro_context()
+        return {"status": "success", "data": fred}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/market-ws-status")
+def get_market_ws_status():
+    """
+    Status real-time BitgetMarketWS — setara CoinAPI connection status.
+    Menampilkan berapa symbol yang di-track, data freshness, dan sample data.
+    """
+    try:
+        from shared_state import state
+        from websocket_sniper import get_market_ws
+        mws = get_market_ws()
+
+        # Hitung berapa symbol yang punya data fresh (< 30 detik)
+        now = time.time()
+        fresh_count = sum(
+            1 for sym, ts in state.rt_ticker_ts.items()
+            if now - ts < 30
+        )
+
+        # Sample data dari BTC
+        btc = "BTCUSDT"
+        sample = {
+            "price":      state.rt_price.get(btc, 0),
+            "obi":        state.rt_obi.get(btc, 0),
+            "whale":      state.rt_whale.get(btc, "N/A"),
+            "funding":    state.rt_funding.get(btc, 0),
+            "oi":         state.rt_oi.get(btc, 0),
+            "spread_pct": state.rt_spread.get(btc, 0),
+            "change_24h": state.rt_change.get(btc, 0),
+            "whale_buy_vol_5m":  state.rt_whale_buy_vol.get(btc, 0),
+            "whale_sell_vol_5m": state.rt_whale_sell_vol.get(btc, 0),
+        }
+
+        return {
+            "status": "success",
+            "data": {
+                "connected":       state.market_ws_connected,
+                "tracked_symbols": len(state.market_ws_symbols),
+                "fresh_symbols":   fresh_count,
+                "symbols":         state.market_ws_symbols[:20],
+                "btc_sample":      sample,
+            }
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/onchain-context")
+def get_onchain_context():
+    """
+    Dune Analytics on-chain macro context.
+    Data: stablecoin supply, DEX volume, ETH gas, whale transfers.
+    Cache 30 menit — tidak trigger fresh execution setiap request.
+    """
+    try:
+        dune = get_dune_macro_metrics()
+        return {"status": "success", "data": dune}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.get("/api/bitget-status")
 def get_bitget_status():

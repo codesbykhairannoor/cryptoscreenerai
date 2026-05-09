@@ -6,13 +6,13 @@ import TradingChart from '../components/TradingChart';
 
 export default function Home() {
   const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://127.0.0.1:8000';
-  
+
   const [cryptoData, setCryptoData] = useState<any[]>([]);
   const [forexData, setForexData] = useState<any[]>([]);
   const [idxData, setIdxData] = useState<any[]>([]);
   const [idxStatus, setIdxStatus] = useState<string>("UNKNOWN");
   const [tradeHistory, setTradeHistory] = useState<any[]>([]);
-  const [performance, setPerformance] = useState<{wins: number, losses: number, pending: number, win_rate: number} | null>(null);
+  const [performance, setPerformance] = useState<{ wins: number, losses: number, pending: number, win_rate: number } | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<string>("Menunggu data untuk dianalisis...");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [expandedRow, setExpandedRow] = useState<string | null>(null);
@@ -71,7 +71,7 @@ export default function Home() {
           setIdxStatus(json.market_status || "UNKNOWN");
         }
       }
-      
+
       const [resPerf, resHistory] = await Promise.all([
         fetch(`${backendUrl}/api/performance`),
         fetch(`${backendUrl}/api/trade-history`)
@@ -79,7 +79,7 @@ export default function Home() {
 
       if (resPerf.ok) setPerformance((await resPerf.json()).data);
       if (resHistory.ok) setTradeHistory((await resHistory.json()).data || []);
-      
+
       setLastUpdated(new Date());
     } catch (error) {
       console.error("Network Error:", error);
@@ -87,36 +87,36 @@ export default function Home() {
   }, [backendUrl, timeframe, activeTab]);
 
   useEffect(() => {
-    fetchData(); 
-    const interval = setInterval(fetchData, 15000); 
+    fetchData();
+    const interval = setInterval(fetchData, 15000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
   useEffect(() => {
     if (activeTab === 'idx') return; // IDX doesn't use Binance WS
-    const symbols = activeTab === 'crypto' 
-      ? cryptoData.map(c => `${c.symbol.toLowerCase()}@ticker`) 
+    const symbols = activeTab === 'crypto'
+      ? cryptoData.map(c => `${c.symbol.toLowerCase()}@ticker`)
       : forexData.filter(f => f.symbol !== 'XAUUSD').map(f => `${f.symbol.toLowerCase()}@ticker`);
-    
+
     if (symbols.length === 0) return;
     const wsUrl = `wss://stream.binance.vision:9443/stream?streams=${symbols.join('/')}`;
-    
+
     if (wsRef.current) wsRef.current.close();
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 
     ws.onmessage = (event) => {
-        const msg = JSON.parse(event.data);
-        if (msg.data?.s && msg.data?.c) {
-            const symbol = msg.data.s; 
-            const price = parseFloat(msg.data.c);
-            setLivePrices(prev => {
-                if (prev[symbol] && prev[symbol] !== price) {
-                    setPriceDirections(pd => ({...pd, [symbol]: price > prev[symbol] ? 'up' : 'down'}));
-                }
-                return { ...prev, [symbol]: price };
-            });
-        }
+      const msg = JSON.parse(event.data);
+      if (msg.data?.s && msg.data?.c) {
+        const symbol = msg.data.s;
+        const price = parseFloat(msg.data.c);
+        setLivePrices(prev => {
+          if (prev[symbol] && prev[symbol] !== price) {
+            setPriceDirections(pd => ({ ...pd, [symbol]: price > prev[symbol] ? 'up' : 'down' }));
+          }
+          return { ...prev, [symbol]: price };
+        });
+      }
     };
     return () => ws.close();
   }, [cryptoData, forexData, activeTab]);
@@ -164,7 +164,7 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-[#0d1117] text-white p-4 md:p-8 font-sans">
       <div className="max-w-7xl mx-auto space-y-6">
-        
+
         {/* HEADER */}
         <header className="flex flex-col md:flex-row justify-between items-center gap-4 bg-gray-900/50 p-6 rounded-2xl border border-gray-800 shadow-2xl backdrop-blur-md">
           <div className="text-center md:text-left">
@@ -194,7 +194,7 @@ export default function Home() {
             </div>
           )}
         </header>
-        
+
         {/* CONDITIONAL STATUS BAR */}
         {activeTab === 'crypto' && (
           <div className={`p-4 rounded-xl border flex items-center justify-between transition-all ${isBitgetConnected ? 'bg-emerald-950/20 border-emerald-900/50' : 'bg-red-950/20 border-red-900/50'}`}>
@@ -237,7 +237,7 @@ export default function Home() {
             { id: 'forex', label: 'Gold & Forex', icon: '🌕' },
             { id: 'idx', label: 'IDX Stocks', icon: '🇮🇩' }
           ].map(tab => (
-            <button key={tab.id} onClick={() => {setActiveTab(tab.id); setExpandedRow(null);}}
+            <button key={tab.id} onClick={() => { setActiveTab(tab.id); setExpandedRow(null); }}
               className={`flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl font-black text-xs md:text-sm transition-all ${activeTab === tab.id ? 'bg-blue-600 text-white shadow-2xl scale-[1.02]' : 'text-gray-500 hover:text-gray-300'}`}>
               <div className="flex flex-col items-center">
                 <div className="flex items-center gap-2">
@@ -301,7 +301,7 @@ export default function Home() {
                                 <span className="text-[10px] font-black text-white">{asset.demand_score}%</span>
                               </div>
                               <div className="h-1.5 w-32 bg-gray-800 rounded-full overflow-hidden border border-gray-700">
-                                <div 
+                                <div
                                   className={`h-full transition-all duration-1000 bg-gradient-to-r from-blue-600 to-cyan-400`}
                                   style={{ width: `${asset.demand_score}%` }}
                                 />
@@ -330,19 +330,19 @@ export default function Home() {
                         </td>
                         <td className="px-6 py-5 text-center">
                           <div className="flex items-center gap-2">
-                            <button onClick={(e) => {e.stopPropagation(); handlePickTrade(asset);}} className="bg-emerald-500/10 hover:bg-emerald-500 text-emerald-500 hover:text-white p-3 rounded-xl border border-emerald-500/20 transition-all" title="Add to Journal">✅</button>
-                            <button onClick={(e) => {e.stopPropagation(); handleExecuteNow(asset);}} className="bg-orange-500/10 hover:bg-orange-500 text-orange-500 hover:text-white px-3 py-3 rounded-xl border border-orange-500/20 transition-all font-black text-[10px]" title="Execute Now">⚡ NOW</button>
+                            <button onClick={(e) => { e.stopPropagation(); handlePickTrade(asset); }} className="bg-emerald-500/10 hover:bg-emerald-500 text-emerald-500 hover:text-white p-3 rounded-xl border border-emerald-500/20 transition-all" title="Add to Journal">✅</button>
+                            <button onClick={(e) => { e.stopPropagation(); handleExecuteNow(asset); }} className="bg-orange-500/10 hover:bg-orange-500 text-orange-500 hover:text-white px-3 py-3 rounded-xl border border-orange-500/20 transition-all font-black text-[10px]" title="Execute Now">⚡ NOW</button>
                           </div>
                         </td>
                       </tr>
                       {isExp && (
                         <tr className="bg-black/60">
                           <td colSpan={6} className="p-6 border-b border-gray-800">
-                            <TradingChart 
-                              symbol={asset.symbol} 
-                              entryPrice={asset.entry_price || 0} 
-                              tpPrice={asset.tp_price || 0} 
-                              slPrice={asset.sl_price || 0} 
+                            <TradingChart
+                              symbol={asset.symbol}
+                              entryPrice={asset.entry_price || 0}
+                              tpPrice={asset.tp_price || 0}
+                              slPrice={asset.sl_price || 0}
                             />
                           </td>
                         </tr>

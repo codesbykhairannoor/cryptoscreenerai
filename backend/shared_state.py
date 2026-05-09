@@ -20,11 +20,26 @@ class SharedState:
             cls._instance.pos_start_time = {} # Symbol -> timestamp
             
             # REAL-TIME INTELLIGENCE (L2 & Whale)
-            cls._instance.rt_obi = {} # Symbol -> imbalance
-            cls._instance.rt_whale = {} # Symbol -> signal (WHALE_BUY/SELL)
-            cls._instance.rt_oi = {} # Symbol -> open interest
-            cls._instance.rt_price = {} # Symbol -> last price
-            
+            cls._instance.rt_obi = {}        # Symbol -> imbalance float (-1 to 1)
+            cls._instance.rt_whale = {}      # Symbol -> signal str (WHALE_BUY/WHALE_SELL/NORMAL)
+            cls._instance.rt_oi = {}         # Symbol -> open interest float
+            cls._instance.rt_price = {}      # Symbol -> last price float
+            cls._instance.rt_funding = {}    # Symbol -> funding rate float
+            cls._instance.rt_volume = {}     # Symbol -> 24h volume float
+            cls._instance.rt_change = {}     # Symbol -> 24h price change % float
+            cls._instance.rt_high = {}       # Symbol -> 24h high float
+            cls._instance.rt_low = {}        # Symbol -> 24h low float
+            cls._instance.rt_bid = {}        # Symbol -> best bid float
+            cls._instance.rt_ask = {}        # Symbol -> best ask float
+            cls._instance.rt_spread = {}     # Symbol -> spread % float
+            cls._instance.rt_whale_buy_vol = {}   # Symbol -> cumulative whale buy USD (rolling 5min)
+            cls._instance.rt_whale_sell_vol = {}  # Symbol -> cumulative whale sell USD (rolling 5min)
+            cls._instance.rt_whale_trades = {}    # Symbol -> list of recent whale trades
+            cls._instance.rt_ticker_ts = {}  # Symbol -> last ticker update timestamp
+            cls._instance.rt_depth_ts = {}   # Symbol -> last depth update timestamp
+            cls._instance.market_ws_connected = False  # Market WS connection status
+            cls._instance.market_ws_symbols = []       # List of symbols being tracked
+
             # NEWS SENTIMENT (Finnhub)
             cls._instance.news_sentiment = {} # Symbol -> score (-1 to 1)
             cls._instance.rt_news = [] # List of recent headlines

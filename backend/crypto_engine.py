@@ -39,9 +39,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from data_fetcher import (
     get_technical_indicators, fetch_all_tickers,
     get_volume_profile, get_htf_key_levels, get_fibonacci_levels, 
-    detect_stop_hunt, detect_institutional_liquidity_grab
+    detect_stop_hunt, detect_institutional_liquidity_grab,
+    get_dune_macro_metrics
 )
-from sentiment import get_crypto_news, get_global_market_data
+from sentiment import get_crypto_news, get_global_market_data, get_fred_macro_context
 from ai_model import analyze_and_sort
 from database import log_trade
 from bitget_executor import BitgetExecutor
@@ -52,6 +53,8 @@ SCAN_INTERVAL        = 10     # Scan setiap 10 detik
 COOLDOWN_AFTER_TRADE = 120    # 2 menit cooldown — versi profit May 5
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
+FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
+DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
 LEVERAGE             = 10
 MIN_MOMENTUM_SCORE   = 40     # Threshold versi profit May 6
 MIN_TECH_SCORE       = 30     # Tech score minimum
@@ -1072,6 +1075,8 @@ def run_crypto_engine():
     last_exec_time      = 0
     last_news_report    = 0
     last_global_report  = 0
+    last_fred_report    = 0
+    last_dune_report    = 0
     last_deepseek_report = 0
     _dxy_cache          = {"trend": "NEUTRAL", "ts": 0}
     _recently_exited    = {}
@@ -1100,6 +1105,18 @@ def run_crypto_engine():
                 global_ctx = get_global_market_data()
                 print(f"[GLOBAL] {global_ctx}")
                 last_global_report = now
+
+            #  3b. FRED MACRO CONTEXT (setiap 1 jam)
+            if now - last_fred_report > FRED_REPORT_INTERVAL:
+                fred_ctx = get_fred_macro_context()
+                print(f"[FRED MACRO] {fred_ctx.get('summary', 'N/A')}", flush=True)
+                last_fred_report = now
+
+            #  3c. DUNE ON-CHAIN CONTEXT (setiap 30 menit)
+            if now - last_dune_report > DUNE_REPORT_INTERVAL:
+                dune_ctx = get_dune_macro_metrics()
+                print(f"[DUNE] {dune_ctx.get('summary', 'N/A')}", flush=True)
+                last_dune_report = now
 
             #  4. CIRCUIT BREAKER
             stats     = get_performance_stats('crypto')
@@ -1196,6 +1213,11 @@ def run_crypto_engine():
             dxy_trend  = _dxy_cache.get("trend", "NEUTRAL")
             dxy_change = _dxy_cache.get("change", 0)
 
+            #  8b. GLOBAL INTELLIGENCE (WS Real-time) — BTC global data dari BitgetMarketWS
+            from shared_state import state as _mws_state
+            global_btc_vol = _mws_state.rt_volume.get("BTCUSDT", 0)
+            global_btc_change = _mws_state.rt_change.get("BTCUSDT", 0)
+
             #  9. SCAN & EVALUATE CANDIDATES PARALLEL (DIRECT MODE)
             raw_data   = fetch_all_tickers()
             candidates = analyze_and_sort(raw_data)
@@ -1215,9 +1237,23 @@ def run_crypto_engine():
             _repeat_losers = {b for b, ts in _loss_tracker.items() if len(ts) >= REPEAT_LOSS_MAX_COUNT}
 
             btc_ctx = _get_btc_context()
+            fred_ctx = get_fred_macro_context()
+            fred_crypto_impact = fred_ctx.get("crypto_impact", "NEUTRAL")
+            fred_bias          = fred_ctx.get("macro_bias", "NEUTRAL")
+
+            # Dune on-chain context (dari cache, tidak trigger fetch baru)
+            dune_ctx           = get_dune_macro_metrics()
+            dune_trend         = dune_ctx.get("macro_trend", "NEUTRAL")
+            dune_activity      = dune_ctx.get("onchain_activity", "NORMAL")
+            dune_stable_b      = dune_ctx.get("stablecoin_supply_b", 0)
+            dune_whale_count   = dune_ctx.get("whale_transfers_1h", 0)
+
             print(f"[CRYPTO ENGINE] Scan {min(20, len(candidates))} koin | "
                   f"Sentiment: {market_sentiment} | DXY: {dxy_trend} | "
-                  f"BTC: {btc_ctx['trend']} ({btc_ctx['change_1h']:+.1f}%/1h)", flush=True)
+                  f"BTC: {btc_ctx['trend']} ({btc_ctx['change_1h']:+.1f}%/1h) | "
+                  f"FRED: {fred_bias} | "
+                  f"DUNE: {dune_trend}({dune_activity}) Stable:{dune_stable_b}B Whales:{dune_whale_count}/h",
+                  flush=True)
 
             #  SUB-FUNCTION FOR PARALLEL EVALUATION
             def evaluate_coin(coin, off_hours=False):
@@ -1248,15 +1284,46 @@ def run_crypto_engine():
                 side, reason, tech_score = _determine_trade_side(tech, rsi, vwap_dist, market_sentiment)
                 combined_score = round((pump_sc * 0.5) + (tech_score * 0.5))
 
+                # WS GLOBAL BOOST — Gantikan CoinAPI dengan BitgetMarketWS real-time data
+                # Setara CoinAPI get_asset_daily_performance + get_whale_orderbook
+                global_boost = 0
+                try:
+                    from shared_state import state as _ws_st
+                    sym_ws = f"{clean_base}USDT"
+
+                    # 1. 24h change confirmation (setara CoinAPI asset daily performance)
+                    change_24h = _ws_st.rt_change.get(sym_ws, 0)
+                    if side == "buy"  and change_24h > 3.0:  global_boost += 8
+                    elif side == "sell" and change_24h < -3.0: global_boost += 8
+
+                    # 2. Whale order book imbalance (setara CoinAPI whale orderbook)
+                    obi_ws = _ws_st.rt_obi.get(sym_ws, 0)
+                    if side == "buy"  and obi_ws > 0.15:  global_boost += 7
+                    elif side == "sell" and obi_ws < -0.15: global_boost += 7
+
+                    # 3. Rolling 5min whale volume dominance
+                    wbv = _ws_st.rt_whale_buy_vol.get(sym_ws, 0)
+                    wsv = _ws_st.rt_whale_sell_vol.get(sym_ws, 0)
+                    if side == "buy"  and wbv > wsv * 1.5 and wbv > 50000: global_boost += 5
+                    elif side == "sell" and wsv > wbv * 1.5 and wsv > 50000: global_boost += 5
+
+                    # 4. Spread filter — jangan masuk kalau spread > 0.1% (liquidity rendah)
+                    spread = _ws_st.rt_spread.get(sym_ws, 0)
+                    if spread > 0.1: global_boost -= 5  # Spread terlalu lebar = slippage tinggi
+
+                except Exception:
+                    pass
+
+                combined_score += global_boost
+
                 # APPLY STRICT OFF-HOURS LOGIC
                 current_min_momentum = MIN_MOMENTUM_SCORE
                 current_min_tech = MIN_TECH_SCORE
                 
                 if off_hours:
-                    current_min_momentum = 65  # Sangat ketat (Mei 6: 60)
-                    current_min_tech = 45      # Tech harus solid
+                    current_min_momentum = 65  
+                    current_min_tech = 45      
                     
-                    # Syarat tambahan: Harus ada sinyal institusi yang kuat
                     has_whale = tech.get('whale_signal') in ('WHALE_BUY', 'WHALE_SELL')
                     has_liq = tech.get('liquidity_grab', {}).get('bullish_grab') or tech.get('liquidity_grab', {}).get('bearish_grab')
                     has_hunt = tech.get('bull_stop_hunt') or tech.get('bear_stop_hunt')
@@ -1271,6 +1338,35 @@ def run_crypto_engine():
                 btc_signal = btc_ctx.get("signal", "NEUTRAL")
                 if (btc_signal == "AVOID_LONG" and side == "buy") or (btc_signal == "AVOID_SHORT" and side == "sell"):
                     return None
+
+                # FRED MACRO FILTER
+                # Kalau Fed lagi HIKING + DXY STRONG = Risk-OFF = jangan LONG crypto
+                # Kalau RISK_OFF kuat, naikkan threshold score supaya hanya sinyal terkuat yang lolos
+                if fred_crypto_impact == "BEARISH" and side == "buy":
+                    # Risk-OFF environment: naikkan bar minimum 10 poin
+                    if combined_score < current_min_momentum + 10:
+                        return None
+                elif fred_crypto_impact == "BULLISH" and side == "buy":
+                    # Risk-ON environment: turunkan bar 5 poin (lebih agresif)
+                    if combined_score < max(current_min_momentum - 5, 30):
+                        return None
+
+                # DUNE ON-CHAIN BOOST/FILTER
+                # Stablecoin supply tinggi + whale aktif = kondisi ideal untuk entry
+                dune_boost = 0
+                if dune_trend == "BULLISH" and side == "buy":
+                    dune_boost += 5   # On-chain macro mendukung
+                elif dune_trend == "BEARISH" and side == "buy":
+                    dune_boost -= 5   # On-chain macro melawan
+                if dune_activity == "HIGH":
+                    dune_boost += 3   # Market aktif = sinyal lebih reliable
+                elif dune_activity == "LOW":
+                    dune_boost -= 3   # Market sepi = sinyal lebih banyak false
+                if dune_whale_count > 50 and side == "buy":
+                    dune_boost += 4   # Whale aktif bergerak = potensi volatilitas
+                if dune_stable_b > 200:
+                    dune_boost += 2   # Banyak dry powder = potensi inflow
+                combined_score = min(100, combined_score + dune_boost)
 
                 return {
                     "symbol": symbol, "clean_base": clean_base, "side": side,
@@ -1312,6 +1408,8 @@ def run_crypto_engine():
                     print(f"  Reason : {reason}")
                     print(f"  Price  : {mark_price} | RSI: {rsi} | VWAP: {vwap_dist}%")
                     print(f"  TP: {tp} | SL: {sl} | Amount: {amount}")
+                    print(f"  FRED   : {fred_bias} | Crypto:{fred_crypto_impact} | Fed:{fred_ctx.get('fed_rate')}%({fred_ctx.get('fed_trend')}) | DXY:{fred_ctx.get('dxy')}({fred_ctx.get('dxy_trend')})")
+                    print(f"  DUNE   : {dune_trend} | Activity:{dune_activity} | Stable:{dune_stable_b}B | Whales:{dune_whale_count}/h | DEX:{dune_ctx.get('dex_volume_24h_b', 0)}B/24h")
                     print(f"{'='*60}\n")
 
                     success, order = executor.place_order(symbol, side, amount, tp=tp, sl=sl, leverage=LEVERAGE)

@@ -12,6 +12,68 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# ─────────────────────────────────────────────────────────────────────────────
+#  WS CACHE HELPERS
+#  Semua fungsi REST di bawah ini akan cek shared_state (WS cache) dulu.
+#  Kalau data WS fresh (< TTL), pakai itu. Kalau stale/kosong, fallback REST.
+#  Ini setara CoinAPI real-time feed tapi gratis via Bitget WS.
+# ─────────────────────────────────────────────────────────────────────────────
+WS_TICKER_TTL = 10   # detik — ticker update setiap ~100ms via WS
+WS_DEPTH_TTL  = 5    # detik — order book update setiap ~200ms via WS
+
+
+def _ws_state():
+    """Lazy import shared_state untuk hindari circular import."""
+    try:
+        from shared_state import state
+        return state
+    except Exception:
+        return None
+
+
+def _ws_price(symbol: str) -> float:
+    """Ambil harga real-time dari WS cache. Return 0 kalau tidak ada."""
+    s = _ws_state()
+    if s and symbol in s.rt_price:
+        ts = s.rt_ticker_ts.get(symbol, 0)
+        if time.time() - ts < WS_TICKER_TTL:
+            return s.rt_price[symbol]
+    return 0.0
+
+
+def _ws_obi(symbol: str) -> float:
+    """Ambil OBI dari WS cache. Return None kalau tidak ada/stale."""
+    s = _ws_state()
+    if s and symbol in s.rt_obi:
+        ts = s.rt_depth_ts.get(symbol, 0)
+        if time.time() - ts < WS_DEPTH_TTL:
+            return s.rt_obi[symbol]
+    return None
+
+
+def _ws_whale(symbol: str) -> str:
+    """Ambil whale signal dari WS cache."""
+    s = _ws_state()
+    if s and symbol in s.rt_whale:
+        return s.rt_whale[symbol]
+    return None
+
+
+def _ws_oi(symbol: str) -> float:
+    """Ambil open interest dari WS cache."""
+    s = _ws_state()
+    if s and symbol in s.rt_oi:
+        return s.rt_oi[symbol]
+    return None
+
+
+def _ws_funding(symbol: str) -> float:
+    """Ambil funding rate dari WS cache."""
+    s = _ws_state()
+    if s and symbol in s.rt_funding:
+        return s.rt_funding[symbol]
+    return None
+
 
 def detect_candle_patterns(df):
     if len(df) < 5: return "NONE"
@@ -178,7 +240,16 @@ def detect_institutional_flow(df):
     return "NORMAL"
 
 def get_orderbook_imbalance(symbol):
-    """Calculates real-time Bid/Ask pressure"""
+    """
+    Calculates real-time Bid/Ask pressure.
+    WS-FIRST: pakai shared_state.rt_obi kalau fresh, fallback REST.
+    """
+    # 1. WS Cache (update setiap ~200ms via BitgetMarketWS)
+    ws_obi = _ws_obi(symbol)
+    if ws_obi is not None:
+        return ws_obi
+
+    # 2. REST Fallback
     try:
         url = f"https://api.bitget.com/api/v2/mix/market/depth?symbol={symbol}&limit=50&productType=USDT-FUTURES"
         r = requests.get(url, timeout=5, verify=False)
@@ -193,7 +264,16 @@ def get_orderbook_imbalance(symbol):
     return 0
 
 def detect_whale_activity(symbol):
-    """Scans recent trade stream for institutional-sized fills"""
+    """
+    Scans recent trade stream for institutional-sized fills.
+    WS-FIRST: pakai shared_state.rt_whale (rolling 5min) kalau ada, fallback REST.
+    """
+    # 1. WS Cache (rolling 5 menit dari BitgetMarketWS trade stream)
+    ws_whale = _ws_whale(symbol)
+    if ws_whale is not None:
+        return ws_whale
+
+    # 2. REST Fallback
     try:
         url = f"https://api.bitget.com/api/v2/mix/market/fills?symbol={symbol}&limit=50&productType=USDT-FUTURES"
         r = requests.get(url, timeout=5, verify=False)
@@ -213,6 +293,15 @@ def detect_whale_activity(symbol):
     return "NORMAL"
 
 def get_open_interest(symbol):
+    """
+    WS-FIRST: pakai shared_state.rt_oi kalau ada, fallback REST.
+    """
+    # 1. WS Cache
+    ws_oi = _ws_oi(symbol)
+    if ws_oi is not None and ws_oi > 0:
+        return ws_oi
+
+    # 2. REST Fallback
     try:
         url = f"https://api.bitget.com/api/v2/mix/market/open-interest?symbol={symbol}&productType=USDT-FUTURES"
         r = requests.get(url, timeout=5, verify=False)
@@ -223,6 +312,15 @@ def get_open_interest(symbol):
     return 0
 
 def get_funding_rate(symbol):
+    """
+    WS-FIRST: pakai shared_state.rt_funding (refresh setiap 60s via BitgetMarketWS), fallback REST.
+    """
+    # 1. WS Cache
+    ws_fr = _ws_funding(symbol)
+    if ws_fr is not None:
+        return ws_fr
+
+    # 2. REST Fallback
     try:
         url = f"https://api.bitget.com/api/v2/mix/market/current-funding-rate?symbol={symbol}&productType=USDT-FUTURES"
         r = requests.get(url, timeout=5, verify=False)
@@ -465,7 +563,10 @@ def get_technical_indicators(symbol, interval="15m"):
         hunt = {"bull_stop_hunt": False, "bear_stop_hunt": False, "hunt_strength": 0}
 
         # 7. ATR 14 (True Range) & EMA
-        mark_price = df_cur['close'].iloc[-1]
+        # WS-FIRST: pakai harga real-time dari WS kalau tersedia (lebih akurat dari candle close)
+        candle_close = df_cur['close'].iloc[-1]
+        ws_live_price = _ws_price(symbol)
+        mark_price = ws_live_price if ws_live_price > 0 else candle_close
         ema_200_cur = df_cur['close'].ewm(span=200, adjust=False).mean()
         trs = []
         for i in range(1, len(df_cur)):
@@ -665,18 +766,40 @@ def get_technical_indicators(symbol, interval="15m"):
             "bearish_structure":          bearish_structure,
             "bullish_structure":          bullish_structure,
             "vol_exhaustion":             vol_exhaustion,
+            # WS Real-time enrichment (setara CoinAPI live feed)
+            "ws_live_price":    ws_live_price if ws_live_price > 0 else candle_close,
+            "ws_bid":           _ws_state().rt_bid.get(symbol, 0) if _ws_state() else 0,
+            "ws_ask":           _ws_state().rt_ask.get(symbol, 0) if _ws_state() else 0,
+            "ws_spread_pct":    _ws_state().rt_spread.get(symbol, 0) if _ws_state() else 0,
+            "ws_change_24h":    _ws_state().rt_change.get(symbol, 0) if _ws_state() else 0,
+            "ws_volume_24h":    _ws_state().rt_volume.get(symbol, 0) if _ws_state() else 0,
+            "ws_whale_buy_vol": _ws_state().rt_whale_buy_vol.get(symbol, 0) if _ws_state() else 0,
+            "ws_whale_sell_vol":_ws_state().rt_whale_sell_vol.get(symbol, 0) if _ws_state() else 0,
+            "ws_connected":     _ws_state().market_ws_connected if _ws_state() else False,
         }
     except Exception as e:
         print(f"Error indicators for {symbol}: {e}")
         return {}
 
 def fetch_all_tickers():
-    """Fetches all USDT-FUTURES tickers from Bitget"""
+    """
+    Fetches all USDT-FUTURES tickers from Bitget.
+    Setelah fetch, update BitgetMarketWS symbol list supaya WS coverage selalu fresh.
+    """
     try:
         url = "https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES"
         r = requests.get(url, timeout=10, verify=False)
         if r.status_code == 200:
-            return r.json().get('data', [])
+            data = r.json().get('data', [])
+            # Update WS symbol list dengan top 60 by volume
+            try:
+                from websocket_sniper import get_market_ws
+                sorted_data = sorted(data, key=lambda x: float(x.get('baseVolume', 0) or 0), reverse=True)
+                top_syms = [t['symbol'] for t in sorted_data[:60] if t.get('symbol')]
+                get_market_ws().update_symbols(top_syms)
+            except Exception:
+                pass
+            return data
     except: pass
     return []
 
@@ -791,25 +914,234 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
         return {}
 
 def get_dune_macro_metrics():
-    """Fetch Macro On-Chain metrics from Dune Analytics"""
-    try:
-        api_key = os.getenv("DUNE_API_KEY")
-        if not api_key: return {"macro_sentiment": "NEUTRAL"}
-        query_id = 3403
-        url = f"https://api.dune.com/api/v1/query/{query_id}/results/latest"
-        headers = {"X-Dune-API-Key": api_key}
-        r = requests.get(url, headers=headers, timeout=3)
-        if r.status_code == 200:
-            data = r.json()
-            rows = data.get('result', {}).get('rows', [])
-            if rows:
-                latest = rows[0]
-                return {
-                    "stablecoin_supply": latest.get('total_supply', 0),
-                    "macro_trend": "BULLISH" if latest.get('change_7d', 0) > 0 else "BEARISH"
-                }
-    except: pass
-    return {"macro_sentiment": "NEUTRAL"}
+    """
+    DUNE ANALYTICS — Full On-Chain Macro Intelligence Engine
+    =========================================================
+    Menggunakan Dune API v1 dengan flow: create query → execute → poll → result.
+    Cache 30 menit — data on-chain update per block (~12 detik) tapi kita tidak
+    perlu refresh sesering itu untuk macro signal.
+
+    Data yang dihasilkan:
+    1. Stablecoin supply (USDT+USDC+DAI) — proxy untuk "dry powder" di market
+       Naik = lebih banyak uang siap masuk crypto = bullish
+       Turun = capital keluar dari crypto = bearish
+
+    2. DEX volume 24h — on-chain trading activity
+       Tinggi = market aktif, sinyal lebih reliable
+       Rendah = market sepi, sinyal lebih banyak false
+
+    3. ETH gas price — proxy untuk network congestion & market activity
+       Gas tinggi = banyak transaksi = market aktif/bullish
+       Gas rendah = sepi = market lesu
+
+    4. Whale ETH transfers (>100 ETH) — institutional movement
+       Banyak = whale aktif bergerak = potensi volatilitas tinggi
+
+    Return dict:
+      stablecoin_supply_b  : float  — total stablecoin supply dalam Miliar USD
+      stablecoin_change_pct: float  — perubahan supply vs kemarin (%)
+      dex_volume_24h_b     : float  — DEX volume 24h dalam Miliar USD
+      eth_gas_gwei         : float  — ETH gas price rata-rata (Gwei)
+      whale_transfers_1h   : int    — jumlah transfer >100 ETH dalam 1 jam
+      whale_eth_volume_1h  : float  — total ETH dari whale transfers
+      macro_trend          : str    — "BULLISH" / "BEARISH" / "NEUTRAL"
+      onchain_activity     : str    — "HIGH" / "NORMAL" / "LOW"
+      summary              : str    — ringkasan 1 baris untuk log
+    """
+    # Cache 30 menit
+    now = time.time()
+    if hasattr(get_dune_macro_metrics, '_cache'):
+        cached = get_dune_macro_metrics._cache
+        if now - cached.get('ts', 0) < 1800:
+            return cached['data']
+
+    api_key = os.getenv("DUNE_API_KEY")
+    if not api_key:
+        return _dune_neutral("DUNE_API_KEY tidak ditemukan")
+
+    BASE    = "https://api.dune.com/api/v1"
+    HEADERS = {"X-DUNE-API-KEY": api_key, "Content-Type": "application/json"}
+
+    def _dune_run(sql: str, name: str, max_wait: int = 60) -> list:
+        """Create → Execute → Poll → Return rows."""
+        try:
+            # 1. Create query
+            r = requests.post(f"{BASE}/query", headers=HEADERS,
+                              json={"name": name, "query_sql": sql, "is_private": False},
+                              timeout=15)
+            if r.status_code not in (200, 201):
+                return []
+            qid = r.json().get("query_id")
+
+            # 2. Execute (tanpa performance param — free tier)
+            r2 = requests.post(f"{BASE}/query/{qid}/execute",
+                               headers=HEADERS, json={}, timeout=15)
+            if r2.status_code not in (200, 201):
+                return []
+            exec_id = r2.json().get("execution_id")
+
+            # 3. Poll (max max_wait detik)
+            for _ in range(max_wait // 5):
+                time.sleep(5)
+                r3 = requests.get(f"{BASE}/execution/{exec_id}/results",
+                                  headers=HEADERS, timeout=15)
+                if r3.status_code == 200:
+                    data = r3.json()
+                    state = data.get("state", "")
+                    if state == "QUERY_STATE_COMPLETED":
+                        return data.get("result", {}).get("rows", [])
+                    elif "FAILED" in state or "CANCELLED" in state:
+                        return []
+            return []
+        except Exception as e:
+            print(f"[DUNE] Error running {name}: {e}", flush=True)
+            return []
+
+    result = {}
+
+    # ── 1. Stablecoin Supply ─────────────────────────────────────────────────
+    print("[DUNE] Fetching stablecoin supply...", flush=True)
+    stable_rows = _dune_run("""
+        SELECT
+            symbol,
+            SUM(amount / 1e6) as supply_millions,
+            COUNT(*) as tx_count
+        FROM tokens_ethereum.transfers
+        WHERE symbol IN ('USDT', 'USDC', 'DAI', 'BUSD')
+          AND block_time >= NOW() - INTERVAL '1' day
+        GROUP BY symbol
+        ORDER BY supply_millions DESC
+        LIMIT 5
+    """, "CryptoScreener_StablecoinSupply", max_wait=60)
+
+    total_stable_m = sum(r.get("supply_millions", 0) for r in stable_rows)
+    total_stable_b = round(total_stable_m / 1000, 2)
+    result["stablecoin_supply_b"] = total_stable_b
+    result["stablecoin_breakdown"] = {
+        r["symbol"]: round(r.get("supply_millions", 0) / 1000, 2)
+        for r in stable_rows
+    }
+
+    # ── 2. DEX Volume 24h ────────────────────────────────────────────────────
+    print("[DUNE] Fetching DEX volume...", flush=True)
+    dex_rows = _dune_run("""
+        SELECT
+            project,
+            SUM(amount_usd) as volume_usd,
+            COUNT(*) as trades
+        FROM dex.trades
+        WHERE block_time >= NOW() - INTERVAL '24' hour
+          AND blockchain = 'ethereum'
+        GROUP BY project
+        ORDER BY volume_usd DESC
+        LIMIT 8
+    """, "CryptoScreener_DEXVolume24h", max_wait=60)
+
+    total_dex_usd = sum(r.get("volume_usd", 0) for r in dex_rows)
+    result["dex_volume_24h_b"] = round(total_dex_usd / 1e9, 2)
+    result["dex_top_protocol"]  = dex_rows[0]["project"] if dex_rows else "unknown"
+
+    # ── 3. ETH Gas (market activity proxy) ───────────────────────────────────
+    print("[DUNE] Fetching ETH gas...", flush=True)
+    gas_rows = _dune_run("""
+        SELECT
+            AVG(gas_price / 1e9) as avg_gwei,
+            COUNT(*) as tx_count
+        FROM ethereum.transactions
+        WHERE block_time >= NOW() - INTERVAL '1' hour
+    """, "CryptoScreener_ETHGas1h", max_wait=60)
+
+    eth_gas = round(gas_rows[0].get("avg_gwei", 0), 2) if gas_rows else 0
+    eth_tx_count = gas_rows[0].get("tx_count", 0) if gas_rows else 0
+    result["eth_gas_gwei"]   = eth_gas
+    result["eth_tx_count_1h"] = eth_tx_count
+
+    # ── 4. Whale ETH Transfers ───────────────────────────────────────────────
+    print("[DUNE] Fetching whale transfers...", flush=True)
+    whale_rows = _dune_run("""
+        SELECT
+            COUNT(*) as large_transfers,
+            SUM(value / 1e18) as total_eth,
+            AVG(value / 1e18) as avg_eth
+        FROM ethereum.transactions
+        WHERE block_time >= NOW() - INTERVAL '1' hour
+          AND value / 1e18 > 100
+    """, "CryptoScreener_WhaleTransfers1h", max_wait=60)
+
+    whale_count = whale_rows[0].get("large_transfers", 0) if whale_rows else 0
+    whale_eth   = round(whale_rows[0].get("total_eth", 0), 0) if whale_rows else 0
+    result["whale_transfers_1h"]  = whale_count
+    result["whale_eth_volume_1h"] = whale_eth
+
+    # ── 5. Macro Trend Scoring ───────────────────────────────────────────────
+    bull_score = 0
+    bear_score = 0
+
+    # Stablecoin supply: > $200B = banyak dry powder = bullish
+    if total_stable_b > 200:   bull_score += 2
+    elif total_stable_b < 100: bear_score += 1
+
+    # DEX volume: > $1B/day = market aktif = bullish
+    if result["dex_volume_24h_b"] > 1.0:   bull_score += 2
+    elif result["dex_volume_24h_b"] < 0.3: bear_score += 1
+
+    # ETH gas: > 20 Gwei = market sangat aktif
+    if eth_gas > 20:    bull_score += 1
+    elif eth_gas < 2:   bear_score += 1  # Market sepi
+
+    # Whale activity: > 50 transfers/jam = whale aktif
+    if whale_count > 50:  bull_score += 1
+    elif whale_count < 5: bear_score += 1
+
+    if bull_score > bear_score + 1:
+        macro_trend = "BULLISH"
+    elif bear_score > bull_score + 1:
+        macro_trend = "BEARISH"
+    else:
+        macro_trend = "NEUTRAL"
+
+    result["macro_trend"] = macro_trend
+
+    # On-chain activity level
+    if result["dex_volume_24h_b"] > 2.0 or eth_gas > 30:
+        onchain_activity = "HIGH"
+    elif result["dex_volume_24h_b"] < 0.5 and eth_gas < 5:
+        onchain_activity = "LOW"
+    else:
+        onchain_activity = "NORMAL"
+
+    result["onchain_activity"] = onchain_activity
+
+    # ── Summary ──────────────────────────────────────────────────────────────
+    result["summary"] = (
+        f"[DUNE] Stable:{total_stable_b}B | "
+        f"DEX:{result['dex_volume_24h_b']}B/24h | "
+        f"Gas:{eth_gas}gwei | "
+        f"Whales:{whale_count}tx/{whale_eth:.0f}ETH | "
+        f"Trend:{macro_trend} | Activity:{onchain_activity}"
+    )
+    print(result["summary"], flush=True)
+
+    # Cache
+    get_dune_macro_metrics._cache = {"ts": now, "data": result}
+    return result
+
+
+def _dune_neutral(reason: str = "") -> dict:
+    """Return neutral Dune context kalau API gagal."""
+    return {
+        "stablecoin_supply_b":  0.0,
+        "stablecoin_breakdown": {},
+        "dex_volume_24h_b":     0.0,
+        "dex_top_protocol":     "unknown",
+        "eth_gas_gwei":         0.0,
+        "eth_tx_count_1h":      0,
+        "whale_transfers_1h":   0,
+        "whale_eth_volume_1h":  0.0,
+        "macro_trend":          "NEUTRAL",
+        "onchain_activity":     "NORMAL",
+        "summary":              f"[DUNE] Data tidak tersedia: {reason}",
+    }
 
 def detect_institutional_liquidity_grab(df):
     """
