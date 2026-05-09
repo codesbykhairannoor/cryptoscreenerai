@@ -321,15 +321,23 @@ class FinnhubWS:
             except Exception as e:
                 # Finnhub sangat ketat dengan Rate Limit (429), kita tunggu lebih lama
                 print(f"[FINNHUB WS ERROR] {e}")
-                # Exponential backoff: mulai 30 detik, max 5 menit
                 if not hasattr(self, '_finnhub_retry_count'):
                     self._finnhub_retry_count = 0
                 self._finnhub_retry_count += 1
-                wait = min(300, 30 * (2 ** min(self._finnhub_retry_count - 1, 3)))
-                print(f"[FINNHUB WS] Reconnect dalam {wait}s (attempt #{self._finnhub_retry_count})...")
-                await asyncio.sleep(wait)
+
+                # Cap di attempt 10 — setelah itu pause 30 menit, tidak spam log
+                if self._finnhub_retry_count > 10:
+                    wait = 1800  # 30 menit
+                    print(f"[FINNHUB WS] Terlalu banyak retry ({self._finnhub_retry_count}x). "
+                          f"Pause 30 menit, lanjut tanpa Finnhub.", flush=True)
+                    await asyncio.sleep(wait)
+                    self._finnhub_retry_count = 0  # Reset setelah pause panjang
+                else:
+                    # Exponential backoff: 30s, 60s, 120s, 240s, max 300s
+                    wait = min(300, 30 * (2 ** min(self._finnhub_retry_count - 1, 3)))
+                    print(f"[FINNHUB WS] Reconnect dalam {wait}s (attempt #{self._finnhub_retry_count}/10)...")
+                    await asyncio.sleep(wait)
             else:
-                # Koneksi sukses, reset retry counter
                 self._finnhub_retry_count = 0
 
 async def main():
@@ -716,7 +724,7 @@ class BitgetMarketWS:
                 tickers = r.json().get("data", [])
                 # Sort by 24h volume, ambil top 60
                 tickers.sort(key=lambda x: float(x.get("baseVolume", 0) or 0), reverse=True)
-                syms = [t["symbol"] for t in tickers[:60] if t.get("symbol")]
+                syms = [t["symbol"] for t in tickers if t.get("symbol")]  # Semua koin
                 self.update_symbols(syms)
         except Exception as e:
             print(f"[MARKET WS] Seed symbols error: {e}", flush=True)

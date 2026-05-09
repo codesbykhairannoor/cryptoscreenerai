@@ -1409,15 +1409,61 @@ def run_crypto_engine():
 
             # Run parallel evaluation
             results = []
-            with ThreadPoolExecutor(max_workers=5) as pool:
-                futures = [pool.submit(evaluate_coin, c, is_off_hours) for c in candidates[:20]]
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = [pool.submit(evaluate_coin, c, is_off_hours) for c in candidates[:40]]
                 for f in as_completed(futures):
                     res = f.result()
                     if res: results.append(res)
 
-            # Sort by score and execute the best one
+            # Sort by score and log all candidates
             if results:
                 results.sort(key=lambda x: x['score'], reverse=True)
+
+                # ── LOG ANALISIS DETAIL SEMUA KANDIDAT ──────────────────────
+                print(f"\n{'─'*65}", flush=True)
+                print(f"[SCAN RESULT] {len(results)} kandidat lolos filter dari {min(40, len(candidates))} koin:", flush=True)
+                for i, r in enumerate(results[:8]):  # Tampilkan top 8
+                    sym   = r['clean_base']
+                    side  = r['side'].upper()
+                    score = r['score']
+                    tech  = r['tech']
+                    rsi   = r.get('rsi', 0)
+                    vwap  = r.get('vwap_dist', 0)
+
+                    # Kumpulkan sinyal aktif
+                    signals = []
+                    if tech.get('in_5m_demand') and side == "BUY":
+                        q = tech.get('entry_quality_5m', 0)
+                        f5 = tech.get('zone_freshness_5m', '')[:5]
+                        signals.append(f"5mDZ({q}/{f5})")
+                    if tech.get('in_5m_supply') and side == "SELL":
+                        q = tech.get('entry_quality_5m', 0)
+                        signals.append(f"5mSZ({q})")
+                    if tech.get('in_demand'):   signals.append("DZ")
+                    if tech.get('in_supply'):   signals.append("SZ")
+                    if tech.get('mss_bullish'): signals.append("MSS↑")
+                    if tech.get('mss_bearish'): signals.append("MSS↓")
+                    if tech.get('fvg') not in ('NONE', None): signals.append(f"FVG:{tech['fvg'][:4]}")
+                    whale = tech.get('whale_signal', 'NORMAL')
+                    if whale != 'NORMAL': signals.append(f"WHALE:{whale[6:]}")
+                    if tech.get('bull_stop_hunt'): signals.append("HUNT↑")
+                    if tech.get('bear_stop_hunt'): signals.append("HUNT↓")
+                    fr = tech.get('funding_rate', 0)
+                    if fr < -0.0003: signals.append(f"SQUEEZE({fr:.4f})")
+                    obi = tech.get('obi', 0)
+                    if abs(obi) > 0.1: signals.append(f"OBI:{obi:+.2f}")
+                    trend1h = tech.get('trend_1h', 'N')
+                    trend4h = tech.get('trend_4h', 'N')
+
+                    marker = "→ EXECUTE" if i == 0 else f"  #{i+1}"
+                    print(
+                        f"  {marker} {sym:<8} {side:<5} Score:{score:>3} | "
+                        f"RSI:{rsi:.0f} VWAP:{vwap:+.1f}% | "
+                        f"1h:{trend1h[:4]} 4h:{trend4h[:4]} | "
+                        f"Signals:[{' '.join(signals) if signals else 'NONE'}]",
+                        flush=True
+                    )
+                print(f"{'─'*65}\n", flush=True)
                 top = results[0]
                 
                 clean_base = top['clean_base']
@@ -1460,6 +1506,16 @@ def run_crypto_engine():
                         print(f"[ORDER FAILED] {clean_base}: {order}")
                 else:
                     print(f"[MARGIN GUARD] Insufficient margin for {clean_base}.")
+
+            else:
+                # Tidak ada kandidat yang lolos — log alasan umum
+                if int(now) % 30 < 10:
+                    print(
+                        f"[NO SIGNAL] 0 kandidat lolos dari {min(40, len(candidates))} koin. "
+                        f"Kondisi: Sentiment={market_sentiment} BTC={btc_ctx['trend']} "
+                        f"FRED={fred_bias} DUNE={dune_trend}({dune_activity})",
+                        flush=True
+                    )
 
             time.sleep(SCAN_INTERVAL)
 

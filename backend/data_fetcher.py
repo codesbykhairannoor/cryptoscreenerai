@@ -812,7 +812,7 @@ def fetch_all_tickers():
             try:
                 from websocket_sniper import get_market_ws
                 sorted_data = sorted(data, key=lambda x: float(x.get('baseVolume', 0) or 0), reverse=True)
-                top_syms = [t['symbol'] for t in sorted_data[:60] if t.get('symbol')]
+                top_syms = [t['symbol'] for t in sorted_data if t.get('symbol')]  # Semua koin, tidak dibatasi
                 get_market_ws().update_symbols(top_syms)
             except Exception:
                 pass
