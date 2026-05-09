@@ -544,6 +544,14 @@ def get_technical_indicators(symbol, interval="15m"):
         dsz = detect_demand_supply_zones(df_cur)  # Demand/Supply Zones
         liq_grab = detect_institutional_liquidity_grab(df_cur) # BlackRock Liquidity Hunter
 
+        # 5m Precision Entry (hanya fetch kalau interval bukan 5m untuk hindari redundant call)
+        entry_5m = get_5m_precision_entry(symbol) if interval != "5m" else {
+            "in_5m_demand": False, "in_5m_supply": False,
+            "demand_5m": {}, "supply_5m": {},
+            "entry_quality": 0, "entry_signal": "NEUTRAL",
+            "proximity_pct": 999, "zone_freshness": "UNKNOWN"
+        }
+
         # Volume Profile, HTF Key Levels, Fibonacci, Stop Hunt
         # CATATAN: Fungsi-fungsi ini dipanggil hanya saat entry (bukan saat scan)
         # untuk menghindari terlalu banyak API call per koin
@@ -776,6 +784,15 @@ def get_technical_indicators(symbol, interval="15m"):
             "ws_whale_buy_vol": _ws_state().rt_whale_buy_vol.get(symbol, 0) if _ws_state() else 0,
             "ws_whale_sell_vol":_ws_state().rt_whale_sell_vol.get(symbol, 0) if _ws_state() else 0,
             "ws_connected":     _ws_state().market_ws_connected if _ws_state() else False,
+            # 5m Precision Entry
+            "in_5m_demand":     entry_5m.get("in_5m_demand", False),
+            "in_5m_supply":     entry_5m.get("in_5m_supply", False),
+            "entry_quality_5m": entry_5m.get("entry_quality", 0),
+            "entry_signal_5m":  entry_5m.get("entry_signal", "NEUTRAL"),
+            "demand_5m":        entry_5m.get("demand_5m", {}),
+            "supply_5m":        entry_5m.get("supply_5m", {}),
+            "zone_freshness_5m":entry_5m.get("zone_freshness", "UNKNOWN"),
+            "proximity_5m_pct": entry_5m.get("proximity_pct", 999),
         }
     except Exception as e:
         print(f"Error indicators for {symbol}: {e}")
@@ -1142,6 +1159,175 @@ def _dune_neutral(reason: str = "") -> dict:
         "onchain_activity":     "NORMAL",
         "summary":              f"[DUNE] Data tidak tersedia: {reason}",
     }
+
+def get_5m_precision_entry(symbol: str) -> dict:
+    """
+    5M PRECISION ENTRY ENGINE
+    ==========================
+    Cari zona demand/supply di TF 5m untuk precision entry di dalam zona HTF.
+
+    Kenapa 5m?
+    - HTF (15m/1h/4h) menentukan ARAH dan ZONA BESAR
+    - 5m menentukan TITIK ENTRY PRESISI di dalam zona tersebut
+    - Entry di 5m demand zone = risiko lebih kecil, reward lebih besar
+    - Ini yang dipakai trader institusi: "snipe entry" di lower TF
+
+    Return dict:
+      in_5m_demand      : bool   — harga di dalam demand zone 5m
+      in_5m_supply      : bool   — harga di dalam supply zone 5m
+      demand_5m         : dict   — {top, bottom, strength, fresh, volume_ratio}
+      supply_5m         : dict   — {top, bottom, strength, fresh, volume_ratio}
+      entry_quality     : int    — 0-100, seberapa bagus entry sekarang
+      entry_signal      : str    — "STRONG_BUY" / "BUY" / "NEUTRAL" / "SELL" / "STRONG_SELL"
+      proximity_pct     : float  — % jarak harga ke zona terdekat
+      zone_freshness    : str    — "FRESH" / "TESTED_ONCE" / "TESTED_MULTIPLE"
+    """
+    empty = {
+        "in_5m_demand": False, "in_5m_supply": False,
+        "demand_5m": {}, "supply_5m": {},
+        "entry_quality": 0, "entry_signal": "NEUTRAL",
+        "proximity_pct": 999, "zone_freshness": "UNKNOWN"
+    }
+
+    try:
+        url = (f"https://api.bitget.com/api/v2/mix/market/history-candles"
+               f"?symbol={symbol}&granularity=5m&limit=80&productType=USDT-FUTURES")
+        r = requests.get(url, timeout=5, verify=False)
+        if r.status_code != 200:
+            return empty
+
+        data = r.json().get('data', [])
+        if len(data) < 20:
+            return empty
+
+        highs  = [float(c[2]) for c in data]
+        lows   = [float(c[3]) for c in data]
+        closes = [float(c[4]) for c in data]
+        opens  = [float(c[1]) for c in data]
+        vols   = [float(c[5]) for c in data]
+        n      = len(closes)
+
+        current_price = closes[-1]
+
+        # ATR 14
+        trs = []
+        for i in range(1, n):
+            tr = max(highs[i] - lows[i],
+                     abs(highs[i] - closes[i-1]),
+                     abs(lows[i]  - closes[i-1]))
+            trs.append(tr)
+        atr = sum(trs[-14:]) / 14 if len(trs) >= 14 else current_price * 0.003
+
+        avg_vol = sum(vols) / len(vols) if vols else 1
+        consol_threshold  = atr * 0.5
+        impulse_threshold = max(atr * 1.2, current_price * 0.002)
+
+        best_demand = {"active": False, "top": 0, "bottom": 0, "strength": 0,
+                       "fresh": True, "volume_ratio": 1.0, "candle_idx": 0}
+        best_supply = {"active": False, "top": 0, "bottom": 0, "strength": 0,
+                       "fresh": True, "volume_ratio": 1.0, "candle_idx": 0}
+
+        for i in range(3, n - 2):
+            body_i = abs(closes[i] - opens[i])
+            if body_i < impulse_threshold:
+                continue
+
+            consol_start = max(0, i - 6)
+            consol_candles = []
+            for j in range(consol_start, i):
+                if (highs[j] - lows[j]) <= consol_threshold:
+                    consol_candles.append(j)
+
+            if len(consol_candles) < 2:
+                continue
+
+            zone_top    = max(highs[j] for j in consol_candles)
+            zone_bottom = min(lows[j]  for j in consol_candles)
+            strength    = len(consol_candles)
+            vol_ratio   = vols[i] / avg_vol if avg_vol > 0 else 1.0
+
+            # Freshness: berapa kali harga sudah masuk zona ini setelah terbentuk
+            touch_count = sum(1 for k in range(i + 1, n)
+                              if zone_bottom <= closes[k] <= zone_top)
+            is_fresh = touch_count == 0
+            freshness_label = ("FRESH" if touch_count == 0 else
+                               "TESTED_ONCE" if touch_count <= 2 else "TESTED_MULTIPLE")
+
+            if closes[i] > opens[i]:  # Demand zone
+                dist = abs(current_price - zone_top)
+                if not best_demand["active"] or dist < abs(current_price - best_demand["top"]):
+                    best_demand = {
+                        "active": True, "top": round(zone_top, 8),
+                        "bottom": round(zone_bottom, 8), "strength": strength,
+                        "fresh": is_fresh, "freshness": freshness_label,
+                        "volume_ratio": round(vol_ratio, 2),
+                        "candle_idx": i, "touch_count": touch_count,
+                    }
+            else:  # Supply zone
+                dist = abs(current_price - zone_bottom)
+                if not best_supply["active"] or dist < abs(current_price - best_supply["bottom"]):
+                    best_supply = {
+                        "active": True, "top": round(zone_top, 8),
+                        "bottom": round(zone_bottom, 8), "strength": strength,
+                        "fresh": is_fresh, "freshness": freshness_label,
+                        "volume_ratio": round(vol_ratio, 2),
+                        "candle_idx": i, "touch_count": touch_count,
+                    }
+
+        in_demand = False
+        in_supply = False
+        proximity_pct = 999.0
+
+        if best_demand["active"]:
+            dz_top, dz_bottom = best_demand["top"], best_demand["bottom"]
+            if dz_bottom - atr * 0.5 <= current_price <= dz_top + atr * 0.3:
+                in_demand = True
+            proximity_pct = min(proximity_pct, abs(current_price - dz_top) / current_price * 100)
+
+        if best_supply["active"]:
+            sz_top, sz_bottom = best_supply["top"], best_supply["bottom"]
+            if sz_bottom - atr * 0.3 <= current_price <= sz_top + atr * 0.5:
+                in_supply = True
+            proximity_pct = min(proximity_pct, abs(current_price - sz_bottom) / current_price * 100)
+
+        # Entry Quality Score (0-100)
+        quality = 0
+        active_zone = best_demand if in_demand else (best_supply if in_supply else None)
+        if active_zone:
+            quality += 40
+            if active_zone.get("fresh"):                    quality += 25
+            elif active_zone.get("touch_count", 0) <= 1:   quality += 10
+            vol_r = active_zone.get("volume_ratio", 1.0)
+            if vol_r >= 2.0:   quality += 20
+            elif vol_r >= 1.5: quality += 12
+            elif vol_r >= 1.2: quality += 6
+            if active_zone.get("strength", 0) >= 4:        quality += 15
+        elif proximity_pct < 0.5:
+            quality = 20
+        quality = min(100, quality)
+
+        if in_demand and quality >= 70:   entry_signal = "STRONG_BUY"
+        elif in_demand and quality >= 40: entry_signal = "BUY"
+        elif in_supply and quality >= 70: entry_signal = "STRONG_SELL"
+        elif in_supply and quality >= 40: entry_signal = "SELL"
+        else:                             entry_signal = "NEUTRAL"
+
+        return {
+            "in_5m_demand":   in_demand,
+            "in_5m_supply":   in_supply,
+            "demand_5m":      best_demand if best_demand["active"] else {},
+            "supply_5m":      best_supply if best_supply["active"] else {},
+            "entry_quality":  quality,
+            "entry_signal":   entry_signal,
+            "proximity_pct":  round(proximity_pct, 4),
+            "zone_freshness": (best_demand.get("freshness") if in_demand else
+                               best_supply.get("freshness", "UNKNOWN")),
+        }
+
+    except Exception as e:
+        print(f"[5M ENTRY] Error {symbol}: {e}")
+        return empty
+
 
 def detect_institutional_liquidity_grab(df):
     """

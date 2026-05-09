@@ -274,8 +274,8 @@ class BitgetExecutor:
                 if sl and sl > 0 and sl < price:
                     final_sl = sl   # Pakai SL dari crypto_engine   sudah benar
                 else:
-                    final_sl = price * 0.985  # Fallback: 1.5% = 15% PnL
-                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 1.5%: {round(final_sl,6)}")
+                    final_sl = price * 0.97   # Fallback: 3% = 30% PnL
+                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 3%: {round(final_sl,6)}")
                 # TP long harus di atas fill price
                 if tp and tp > 0 and tp > price:
                     final_tp = tp
@@ -287,8 +287,8 @@ class BitgetExecutor:
                 if sl and sl > 0 and sl > price:
                     final_sl = sl
                 else:
-                    final_sl = price * 1.015
-                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 1.5%: {round(final_sl,6)}")
+                    final_sl = price * 1.03
+                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 3%: {round(final_sl,6)}")
                 if tp and tp > 0 and tp < price:
                     final_tp = tp
                 else:
@@ -323,10 +323,10 @@ class BitgetExecutor:
             # Validasi: SL long harus di bawah current price
             if current_price > 0:
                 if hold_side == 'long' and sl_price >= current_price * 0.999:
-                    sl_price = current_price * 0.985
+                    sl_price = current_price * 0.97   # 3% = 30% PnL
                     print(f"[SL ADJUST] {symbol} SL adjusted to {round(sl_price,6)}")
                 elif hold_side == 'short' and sl_price <= current_price * 1.001:
-                    sl_price = current_price * 1.015
+                    sl_price = current_price * 1.03   # 3% = 30% PnL
                     print(f"[SL ADJUST] {symbol} SL adjusted to {round(sl_price,6)}")
             self._set_sl_ccxt(symbol, side, size, sl_price)
 
@@ -343,9 +343,9 @@ class BitgetExecutor:
 
             if mark > 0:
                 if hold == 'long' and sl_price >= mark:
-                    sl_price = mark * 0.985
+                    sl_price = mark * 0.97    # 3% = 30% PnL
                 elif hold == 'short' and sl_price <= mark:
-                    sl_price = mark * 1.015
+                    sl_price = mark * 1.03    # 3% = 30% PnL
 
             # Cancel semua SL order yang ada untuk symbol ini dulu
             # Ini mencegah duplikat SL order
@@ -574,7 +574,7 @@ class BitgetExecutor:
                           f"SL:{'OK' if has_sl else 'MISSING'} TP:{'OK' if has_tp else 'MISSING'}")
 
                 #    HARD EXIT                                                  
-                if pnl <= -15:
+                if pnl <= -30:
                     print(f"[HARD EXIT] {symbol} hit {pnl}% PNL. Closing.")
                     self.exchange.create_order(symbol, 'market',
                         'sell' if side in ['long','buy'] else 'buy', size)
@@ -588,8 +588,8 @@ class BitgetExecutor:
                 #    INITIAL GUARD                                              
                 if (not has_sl or not has_tp) and now - self.startup_time > self.warmup_period:
                     if now - self._last_sl_set.get(symbol, 0) > 60:
-                        print(f"[GUARD] Protecting {symbol} | SL 15% | TP 80%")
-                        sl_price = entry * 0.985 if side in ['long','buy'] else entry * 1.015
+                        print(f"[GUARD] Protecting {symbol} | SL 30% | TP 80%")
+                        sl_price = entry * 0.97 if side in ['long','buy'] else entry * 1.03
                         tp_price = entry * 1.08  if side in ['long','buy'] else entry * 0.92
                         if not has_sl: self._set_sl_tp_bitget(symbol, side, size, sl_price=sl_price)
                         if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)

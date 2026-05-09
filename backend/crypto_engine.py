@@ -74,10 +74,10 @@ FUNDING_SQUEEZE_THR  = -0.0003  # Fix: -0.03% lebih realistis (sebelumnya -0.1% 
 VOLUME_SPIKE_RATIO   = 2.5
 
 # TP/SL berbasis PnL target (10x leverage)
-SCALP_TP_PCT  = 0.08
-SCALP_SL_PCT  = 0.015
+SCALP_TP_PCT  = 0.08   # 8% price move = 80% PnL
+SCALP_SL_PCT  = 0.03   # 3% price move = 30% PnL  (naik dari 1.5%)
 SCALP_TP_ATR  = 5.0
-SCALP_SL_ATR  = 1.5
+SCALP_SL_ATR  = 2.5    # ATR multiplier naik dari 1.5 → 2.5 sesuai SL lebih lebar
 
 # Session filter
 CRYPTO_SESSION_START_UTC = 1
@@ -826,6 +826,39 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
     if side == "sell" and liq.get('bearish_grab'):
         score += 15
 
+    # 3h. 5M PRECISION ENTRY (max 30 poin — bonus terbesar)
+    # Harga di dalam demand/supply zone 5m = entry presisi ala institusi
+    # Fresh zone + volume tinggi = sinyal paling kuat
+    entry_5m_signal  = tech.get('entry_signal_5m', 'NEUTRAL')
+    entry_5m_quality = tech.get('entry_quality_5m', 0)
+    zone_fresh_5m    = tech.get('zone_freshness_5m', 'UNKNOWN')
+    in_5m_demand     = tech.get('in_5m_demand', False)
+    in_5m_supply     = tech.get('in_5m_supply', False)
+
+    if side == "buy" and entry_5m_signal in ("STRONG_BUY", "BUY"):
+        base_5m = 20 if entry_5m_signal == "STRONG_BUY" else 12
+        # Freshness bonus
+        if zone_fresh_5m == "FRESH":          base_5m += 10
+        elif zone_fresh_5m == "TESTED_ONCE":  base_5m += 4
+        # Quality bonus
+        if entry_5m_quality >= 80:            base_5m += 5
+        elif entry_5m_quality >= 60:          base_5m += 2
+        score += min(30, base_5m)
+
+    elif side == "sell" and entry_5m_signal in ("STRONG_SELL", "SELL"):
+        base_5m = 20 if entry_5m_signal == "STRONG_SELL" else 12
+        if zone_fresh_5m == "FRESH":          base_5m += 10
+        elif zone_fresh_5m == "TESTED_ONCE":  base_5m += 4
+        if entry_5m_quality >= 80:            base_5m += 5
+        elif entry_5m_quality >= 60:          base_5m += 2
+        score += min(30, base_5m)
+
+    # Penalti: harga di supply zone 5m tapi mau BUY = melawan zona
+    elif side == "buy" and in_5m_supply:
+        score -= 10
+    elif side == "sell" and in_5m_demand:
+        score -= 10
+
     # 3e. VOLUME PROFILE / POC (max 10 poin, penalti -8)
     # Harga di bawah POC = discount zone (bagus untuk BUY)
     # Harga di atas POC = premium zone (bagus untuk SELL)
@@ -1008,24 +1041,24 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]
     TP/SL berbasis PnL target di 10x leverage.
     
     Target FIXED:
-    - SL = -15% PnL = -1.5% price move (SELALU, tidak bisa lebih kecil)
+    - SL = -30% PnL = -3% price move (SELALU, tidak bisa lebih kecil)
     - TP = +80% PnL = +8% price move
     
     ATR hanya dipakai kalau LEBIH BESAR dari minimum % - untuk koin
-    volatile yang butuh SL lebih lebar. Tidak pernah lebih kecil dari 1.5%.
+    volatile yang butuh SL lebih lebar. Tidak pernah lebih kecil dari 3%.
     
     Contoh DOGS (harga $0.001, ATR $0.000003):
-    - ATR x 1.5 = $0.0000045 = 0.45% -> TERLALU KECIL
-    - min_sl = $0.001 x 0.015 = $0.000015 = 1.5% -> PAKAI INI
+    - ATR x 2.5 = $0.0000075 = 0.75% -> TERLALU KECIL
+    - min_sl = $0.001 x 0.03 = $0.00003 = 3% -> PAKAI INI
     
     Contoh BTC (harga $60000, ATR $800):
-    - ATR x 1.5 = $1200 = 2% -> LEBIH BESAR dari 1.5%
-    - Pakai ATR-based = $1200
+    - ATR x 2.5 = $2000 = 3.3% -> LEBIH BESAR dari 3%
+    - Pakai ATR-based = $2000
     """
     atr = tech.get('atr', 0)
 
-    # HARD MINIMUM: SL tidak boleh lebih kecil dari 1.5% price (= 15% PnL di 10x)
-    min_sl_dist = mark_price * SCALP_SL_PCT   # 1.5% - TIDAK BOLEH LEBIH KECIL
+    # HARD MINIMUM: SL tidak boleh lebih kecil dari 3% price (= 30% PnL di 10x)
+    min_sl_dist = mark_price * SCALP_SL_PCT   # 3% - TIDAK BOLEH LEBIH KECIL
     min_tp_dist = mark_price * SCALP_TP_PCT   # 8%
 
     if atr and atr > 0:
@@ -1410,6 +1443,10 @@ def run_crypto_engine():
                     print(f"  TP: {tp} | SL: {sl} | Amount: {amount}")
                     print(f"  FRED   : {fred_bias} | Crypto:{fred_crypto_impact} | Fed:{fred_ctx.get('fed_rate')}%({fred_ctx.get('fed_trend')}) | DXY:{fred_ctx.get('dxy')}({fred_ctx.get('dxy_trend')})")
                     print(f"  DUNE   : {dune_trend} | Activity:{dune_activity} | Stable:{dune_stable_b}B | Whales:{dune_whale_count}/h | DEX:{dune_ctx.get('dex_volume_24h_b', 0)}B/24h")
+                    e5m = tech.get('entry_signal_5m', 'N/A')
+                    q5m = tech.get('entry_quality_5m', 0)
+                    f5m = tech.get('zone_freshness_5m', 'N/A')
+                    print(f"  5M     : Signal:{e5m} | Quality:{q5m}/100 | Zone:{f5m}")
                     print(f"{'='*60}\n")
 
                     success, order = executor.place_order(symbol, side, amount, tp=tp, sl=sl, leverage=LEVERAGE)
