@@ -47,7 +47,7 @@ def get_forex_executor() -> ForexExecutor:
 
 @app.on_event("startup")
 def startup_event():
-    # 0. Database migration   tambah kolom baru kalau belum ada
+    # 0. Database migration
     try:
         init_db()
         print("[DB] Database migration selesai.")
@@ -62,9 +62,10 @@ def startup_event():
         print(f"[SYSTEM] Gagal sinkronisasi state: {e}", flush=True)
 
     # 2. Start Crypto Engine (Isolated)
-    crypto_thread = threading.Thread(target=run_crypto_engine, daemon=True)
+    # VERSI: v5.1 Direct Execution Mode (bukan v9.0 Whale Observer)
+    crypto_thread = threading.Thread(target=run_crypto_engine, daemon=True, name="CryptoEngine")
     crypto_thread.start()
-    print("[SYSTEM] Crypto Engine AKTIF!", flush=True)
+    print("[SYSTEM] Crypto Engine AKTIF! (v5.1 Direct Mode)", flush=True)
     
     # 3. Start WebSocket Sniper (Isolated)
     try:

@@ -1082,10 +1082,11 @@ def run_crypto_engine():
     """
     CRYPTO SCALPER v5.1 - Direct Execution Mode
     =============================================
-    Restored to profitable May 5 logic:
-    - Scan top 20 coins every 10 seconds
-    - If coin passes filters -> execute immediately (no 15-min observation)
-    - Session filter: 08:00-22:00 WIB only (hard stop off-hours)
+    - Scan top 40 coins every 10 seconds (parallel, 8 workers)
+    - 5m precision entry: demand/supply zone detection
+    - FRED macro filter + Dune on-chain boost
+    - SL: 30% PnL (-3% price), TP: 80% PnL (+8% price)
+    - Session: 08:00-22:00 WIB only
     - Cooldown: 120 seconds between trades
     """
     executor = BitgetExecutor()
@@ -1094,9 +1095,11 @@ def run_crypto_engine():
     from sentiment import get_market_news_digest
 
     print("[CRYPTO SCALPER v5.1] Direct Execution Mode AKTIF!", flush=True)
-    print(f"  Strategy : 1 trade terbaik | {LEVERAGE}x leverage", flush=True)
+    print(f"  Strategy : 1 trade terbaik | {LEVERAGE}x leverage | SL:30% TP:80%", flush=True)
+    print(f"  Scan     : Top 40 koin setiap {SCAN_INTERVAL}s (8 workers parallel)", flush=True)
     print(f"  Cooldown : {COOLDOWN_AFTER_TRADE}s antara trade", flush=True)
     print(f"  Session  : 08:00-22:00 WIB (01:00-15:00 UTC)", flush=True)
+    print(f"  5m Entry : Demand/Supply zone precision entry AKTIF", flush=True)
 
     try:
         print("[SYSTEM] Sinkronisasi awal dengan Bitget...", flush=True)

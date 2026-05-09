@@ -19,9 +19,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# DeepSeek client
+# DeepSeek client — opsional, tidak wajib untuk bot berjalan
+# Kalau kehabisan kredit atau key tidak ada, bot tetap jalan normal
 api_key = os.getenv("DEEPSEEK_API_KEY")
-client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com") if api_key else None
+_deepseek_disabled = False  # Flag untuk disable setelah error insufficient balance
+
+def _get_deepseek_client():
+    """Lazy client — return None kalau disabled atau tidak ada key."""
+    global _deepseek_disabled
+    if _deepseek_disabled or not api_key:
+        return None
+    try:
+        return OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+    except Exception:
+        return None
+
+client = _get_deepseek_client()
 
 
 def analyze_and_sort(raw_data):
@@ -255,9 +268,10 @@ def smart_trade_decision(symbol, technicals, news):
 
 
 def analyze_market_data(data_json):
-    """Untuk frontend dashboard - menggunakan DeepSeek."""
-    if not client:
-        return "DeepSeek API Key tidak tersedia."
+    """Untuk frontend dashboard - menggunakan DeepSeek (opsional)."""
+    global _deepseek_disabled, client
+    if _deepseek_disabled or not client:
+        return "DeepSeek tidak tersedia (kredit habis atau key tidak ada). Bot tetap berjalan normal."
     try:
         prompt = f"""
         Analyze this crypto/market data and provide 3 hot trading recommendations.
@@ -267,7 +281,7 @@ def analyze_market_data(data_json):
         Include Entry, TP, and SL for each recommendation.
         """
         response = client.chat.completions.create(
-            model="deepseek-v4-pro",
+            model="deepseek-chat",
             messages=[
                 {"role": "system", "content": "You are a brilliant, creative, and highly accurate institutional trading analyst assistant."},
                 {"role": "user", "content": prompt},
@@ -276,4 +290,10 @@ def analyze_market_data(data_json):
         )
         return response.choices[0].message.content
     except Exception as e:
+        err_str = str(e).lower()
+        if "insufficient" in err_str or "balance" in err_str or "quota" in err_str:
+            _deepseek_disabled = True
+            client = None
+            print("[DEEPSEEK] Kredit habis. DeepSeek dinonaktifkan. Bot tetap jalan normal.", flush=True)
+            return "DeepSeek dinonaktifkan (kredit habis). Bot tetap berjalan normal."
         return f"Gagal analisis: {e}"
