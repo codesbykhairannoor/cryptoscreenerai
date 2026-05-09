@@ -6,26 +6,27 @@ module.exports = {
       interpreter: "python",
       cwd: "C:\\Users\\Administrator\\cryptoscreenerai\\backend",
 
-      // Restart policy — tunggu 5 detik sebelum restart supaya port lama dilepas
-      restart_delay: 5000,
+      // Restart policy
+      restart_delay: 8000,          // Tunggu 8 detik sebelum restart (cukup untuk port dilepas)
       max_restarts: 10,
-      min_uptime: "10s",
-
-      // Jangan restart kalau exit code 1 (port conflict) lebih dari 3x dalam 1 menit
-      // Ini mencegah restart loop yang bikin log spam
+      min_uptime: "15s",
       exp_backoff_restart_delay: 3000,
 
-      // Environment
+      // Kill timeout — beri waktu 10 detik untuk graceful shutdown sebelum SIGKILL
+      kill_timeout: 10000,
+
+      // Environment — WAJIB set PYTHONUNBUFFERED supaya log langsung muncul
       env: {
         PYTHONIOENCODING: "utf-8",
         PYTHONUNBUFFERED: "1",
+        PYTHONUTF8: "1",
       },
 
       // Log
-      out_file: "C:\\Users\\Administrator\\.pm2\\logs\\MyTradingBot-out.log",
-      error_file: "C:\\Users\\Administrator\\.pm2\\logs\\MyTradingBot-error.log",
+      out_file:        "C:\\Users\\Administrator\\.pm2\\logs\\MyTradingBot-out.log",
+      error_file:      "C:\\Users\\Administrator\\.pm2\\logs\\MyTradingBot-error.log",
       log_date_format: "YYYY-MM-DD HH:mm:ss",
-      merge_logs: true,
+      merge_logs:      true,
     },
   ],
 };

@@ -355,12 +355,36 @@ def get_history():
 #  ENTRY POINT
 #  --timeout-graceful-shutdown 3  → port dilepas cepat saat restart PM2
 # ─────────────────────────────────────────────────────────────────────────────
+def _kill_port(port: int):
+    """Kill proses yang masih pakai port ini sebelum bind. Windows-safe."""
+    import subprocess, sys
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines():
+            if f":{port}" in line and "LISTENING" in line:
+                parts = line.strip().split()
+                pid = parts[-1]
+                if pid.isdigit() and int(pid) != 0:
+                    my_pid = str(__import__('os').getpid())
+                    if pid != my_pid:
+                        subprocess.run(["taskkill", "/PID", pid, "/F"],
+                                       capture_output=True, timeout=5)
+                        print(f"[STARTUP] Killed stale process PID {pid} on port {port}", flush=True)
+                        __import__('time').sleep(1)
+    except Exception as e:
+        print(f"[STARTUP] Port cleanup warning: {e}", flush=True)
+
+
 if __name__ == "__main__":
     import uvicorn
+    _kill_port(8000)  # Kill proses lama yang masih pakai port 8000
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
         port=8000,
         reload=False,
-        timeout_graceful_shutdown=3,   # Lepas port dalam 3 detik saat shutdown
+        timeout_graceful_shutdown=3,
     )

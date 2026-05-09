@@ -1,12 +1,11 @@
 # ============================================================
 # AUTO UPDATE SCRIPT — CryptoScreener AI
-# Jalankan sekali: Setup-AutoUpdate.ps1
-# Script ini dicek setiap 5 menit oleh Windows Task Scheduler
+# Dicek setiap 5 menit oleh Windows Task Scheduler
 # ============================================================
 
-$BOT_DIR    = "C:\Users\Administrator\cryptoscreenerai\backend"
-$LOG_FILE   = "C:\Users\Administrator\.pm2\logs\auto_update.log"
-$PM2_NAME   = "MyTradingBot"
+$BOT_DIR  = "C:\Users\Administrator\cryptoscreenerai\backend"
+$LOG_FILE = "C:\Users\Administrator\.pm2\logs\auto_update.log"
+$PM2_NAME = "MyTradingBot"
 
 function Write-Log($msg) {
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -23,25 +22,37 @@ $LOCAL  = git rev-parse HEAD
 $REMOTE = git rev-parse origin/main
 
 if ($LOCAL -eq $REMOTE) {
-    # Tidak ada update — diam saja (tidak log supaya tidak spam)
-    exit 0
+    exit 0  # Tidak ada update — diam
 }
 
-Write-Log "[AUTO-UPDATE] Update ditemukan! Local:$($LOCAL.Substring(0,7)) Remote:$($REMOTE.Substring(0,7))"
+Write-Log "[AUTO-UPDATE] Update ditemukan! $($LOCAL.Substring(0,7)) -> $($REMOTE.Substring(0,7))"
 
 # 3. Pull update
 $pullResult = git pull origin main 2>&1
 Write-Log "[AUTO-UPDATE] git pull: $pullResult"
 
-# 4. Kill port 8000 kalau masih dipakai
-$pid8000 = (netstat -ano | Select-String ":8000.*LISTENING") -replace '.*\s(\d+)$','$1' | Select-Object -First 1
-if ($pid8000 -and $pid8000 -match '^\d+$') {
-    taskkill /PID $pid8000 /F 2>&1 | Out-Null
-    Write-Log "[AUTO-UPDATE] Killed port 8000 (PID $pid8000)"
-    Start-Sleep -Seconds 2
+# 4. Kill SEMUA proses Python (bersihkan instance lama)
+$killed = 0
+Get-Process -Name "python*" -ErrorAction SilentlyContinue | ForEach-Object {
+    Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+    $killed++
+}
+if ($killed -gt 0) {
+    Write-Log "[AUTO-UPDATE] Killed $killed Python process(es)"
+    Start-Sleep -Seconds 3
 }
 
-# 5. Restart PM2
+# 5. Kill port 8000 kalau masih dipakai
+$portLine = netstat -ano | Select-String ":8000.*LISTENING" | Select-Object -First 1
+if ($portLine) {
+    $pid8000 = ($portLine -replace '.*\s(\d+)$','$1').Trim()
+    if ($pid8000 -match '^\d+$') {
+        taskkill /PID $pid8000 /F 2>&1 | Out-Null
+        Write-Log "[AUTO-UPDATE] Killed port 8000 (PID $pid8000)"
+        Start-Sleep -Seconds 2
+    }
+}
+
+# 6. Restart PM2
 pm2 restart $PM2_NAME 2>&1 | Out-Null
-Write-Log "[AUTO-UPDATE] PM2 restarted: $PM2_NAME"
-Write-Log "[AUTO-UPDATE] Done. Bot running latest version."
+Write-Log "[AUTO-UPDATE] PM2 restarted. Bot running latest version."
