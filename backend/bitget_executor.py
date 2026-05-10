@@ -59,6 +59,16 @@ class BitgetExecutor:
                 for p in pos:
                     print(f"   > {p['symbol']} | Side: {p['side']} | PNL: {p['pnl']}%")
                     self.get_pending_plan_orders(p['symbol'])
+                    # Seed pos_start_time untuk trade yang sudah berjalan
+                    # Pakai waktu sekarang sebagai fallback — lebih aman dari reset ke 0
+                    # Trade yang sudah ada tidak akan kena sideways detection prematur
+                    from shared_state import state as _s
+                    sym = p['symbol']
+                    if sym not in _s.pos_start_time:
+                        # Estimasi: trade sudah berjalan, set start ke 30 menit lalu
+                        # Ini mencegah sideways detection langsung aktif saat restart
+                        _s.pos_start_time[sym] = time.time() - 1800
+                        print(f"   > [TIMER] {sym} pos_start seeded (restart recovery)", flush=True)
         except Exception as e:
             print(f"[STARTUP AUDIT ERROR] {e}")
 
@@ -491,33 +501,29 @@ class BitgetExecutor:
                     except Exception as e:
                         print(f"[SCRUBBER ERROR] {symbol}: {e}")
 
-                #    SIDEWAYS DETECTION                                         
+                #    SIDEWAYS DETECTION
+                # Hanya aktif setelah trade berjalan CUKUP LAMA
+                # Gunakan waktu dari pos_start_time ATAU fallback ke sekarang
                 if symbol not in state.pos_start_time:
                     state.pos_start_time[symbol] = now
                 duration_hours = (now - state.pos_start_time[symbol]) / 3600
                 price_move_pct = abs((mark_price - entry) / entry * 100) if entry > 0 else 0
 
-                # MINIMUM HOLD TIME: 5 menit sebelum sideways detection aktif
-                # Ini mencegah close terlalu cepat karena noise/spread
-                # RAVE close 12 detik, CRCL close 11 detik   ini yang dicegah
-                if duration_hours >= (5.0 / 60):  # Sudah > 5 menit
-                    SIDEWAYS_WARN_HOURS    = 2.0
-                    SIDEWAYS_TIMEOUT_HOURS = 2.667
-                    is_sideways = (-5.0 < pnl < 5.0) and (price_move_pct < 3.0)
+                # MINIMUM HOLD TIME: 30 menit sebelum sideways detection aktif
+                # Naik dari 5 menit — trade butuh waktu untuk berkembang
+                # Ini juga mencegah false close saat bot restart (timer reset ke 0)
+                MIN_HOLD_HOURS     = 0.5    # 30 menit minimum hold
+                SIDEWAYS_WARN_HOURS    = 3.0   # Warning setelah 3 jam
+                SIDEWAYS_TIMEOUT_HOURS = 4.0   # Force close setelah 4 jam
 
+                # Sideways: PnL stuck di -10% to +10% DAN harga tidak bergerak
+                # Threshold dinaikkan dari 5% ke 10% supaya tidak terlalu sensitif
+                is_sideways = (-10.0 < pnl < 10.0) and (price_move_pct < 2.0)
+
+                if duration_hours >= MIN_HOLD_HOURS:
                     if duration_hours > SIDEWAYS_WARN_HOURS and is_sideways:
                         if duration_hours > SIDEWAYS_TIMEOUT_HOURS:
-                            print(f"[SIDEWAYS TIMEOUT] {symbol} {round(duration_hours,1)}h. Force close.")
-                            self.exchange.create_order(symbol, 'market',
-                                'sell' if side in ['long','buy'] else 'buy', size)
-                            if symbol in state.pos_start_time: del state.pos_start_time[symbol]
-                            if symbol in self._peak_pnl: del self._peak_pnl[symbol]
-                            clean = self._clean_symbol(symbol)
-                            if not hasattr(state, 'recently_exited'): state.recently_exited = {}
-                            state.recently_exited[clean] = time.time()
-                            continue
-                        elif pnl >= 5.0:
-                            print(f"[SIDEWAYS EXIT] {symbol} {round(duration_hours,1)}h. PnL {pnl}% >= 5%.")
+                            print(f"[SIDEWAYS TIMEOUT] {symbol} {round(duration_hours,1)}h sideways. Force close.", flush=True)
                             self.exchange.create_order(symbol, 'market',
                                 'sell' if side in ['long','buy'] else 'buy', size)
                             if symbol in state.pos_start_time: del state.pos_start_time[symbol]
@@ -529,12 +535,12 @@ class BitgetExecutor:
                         else:
                             if int(now) % 60 < 2:
                                 remaining_min = round((SIDEWAYS_TIMEOUT_HOURS - duration_hours) * 60)
-                                print(f"[SIDEWAYS WARNING] {symbol} {round(duration_hours,1)}h. "
-                                      f"PnL:{pnl}% (need 5%+). Timeout in {remaining_min}min.")
+                                print(f"[SIDEWAYS WARNING] {symbol} {round(duration_hours,1)}h | "
+                                      f"PnL:{pnl:.1f}% | Timeout in {remaining_min}min.", flush=True)
                 else:
-                    # Belum 5 menit   log saja, jangan close
-                    if int(now) % 30 < 2:
-                        print(f"[HOLD] {symbol} baru {round(duration_hours*60,1)} menit. Min hold 5 menit.")
+                    if int(now) % 60 < 2:
+                        print(f"[HOLD] {symbol} {round(duration_hours*60,1)}min | PnL:{pnl:.1f}% | "
+                              f"Min hold: {int(MIN_HOLD_HOURS*60)}min", flush=True)
 
                 if now - self._last_sl_check.get(symbol, 0) < 10: continue
                 self._last_sl_check[symbol] = now
