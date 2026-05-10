@@ -135,6 +135,14 @@ async def lifespan(app: FastAPI):
 
     print("[SYSTEM] All engines started. Bot is LIVE.", flush=True)
 
+    # 6. Early Signal Engine (OI Tracker + DexScreener)
+    try:
+        from early_signal import start_early_signal_engine
+        start_early_signal_engine()
+        print("[SYSTEM] Early Signal Engine AKTIF! (OI Tracker + DexScreener)", flush=True)
+    except Exception as e:
+        print(f"[SYSTEM] Gagal memulai Early Signal Engine: {e}", flush=True)
+
     yield  # ← aplikasi berjalan di sini
 
     # ── SHUTDOWN ─────────────────────────────────────────────────────────────
@@ -174,6 +182,20 @@ def get_onchain_context():
     """Dune Analytics: stablecoin supply, DEX volume, ETH gas, whale transfers."""
     try:
         return {"status": "success", "data": get_dune_macro_metrics()}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+@app.get("/api/early-signals")
+def get_early_signals_endpoint():
+    """
+    Early momentum signals:
+    - OI surge coins (OI naik >30% dalam 1 jam)
+    - DexScreener early-stage pairs (volume spike di DEX sebelum listing futures)
+    - Top RVOL coins (volume spike vs rata-rata)
+    """
+    try:
+        from early_signal import get_early_signals
+        return {"status": "success", "data": get_early_signals()}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 

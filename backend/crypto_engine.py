@@ -1277,18 +1277,29 @@ def run_crypto_engine():
             fred_crypto_impact = fred_ctx.get("crypto_impact", "NEUTRAL")
             fred_bias          = fred_ctx.get("macro_bias", "NEUTRAL")
 
-            # Dune on-chain context (dari cache, tidak trigger fetch baru)
+            # Dune on-chain context (dari cache)
             dune_ctx           = get_dune_macro_metrics()
             dune_trend         = dune_ctx.get("macro_trend", "NEUTRAL")
             dune_activity      = dune_ctx.get("onchain_activity", "NORMAL")
             dune_stable_b      = dune_ctx.get("stablecoin_supply_b", 0)
             dune_whale_count   = dune_ctx.get("whale_transfers_1h", 0)
 
-            print(f"[CRYPTO ENGINE] Scan {min(20, len(candidates))} koin | "
-                  f"Sentiment: {market_sentiment} | DXY: {dxy_trend} | "
-                  f"BTC: {btc_ctx['trend']} ({btc_ctx['change_1h']:+.1f}%/1h) | "
-                  f"FRED: {fred_bias} | "
-                  f"DUNE: {dune_trend}({dune_activity}) Stable:{dune_stable_b}B Whales:{dune_whale_count}/h",
+            # Early signal context (OI surge + DexScreener)
+            try:
+                from early_signal import get_early_signals
+                early = get_early_signals()
+                early_combined = early.get("combined", {})
+                oi_surge_count = len(early.get("oi_surges", []))
+                dex_alert_count = len(early.get("dex_alerts", []))
+            except Exception:
+                early_combined = {}
+                oi_surge_count = 0
+                dex_alert_count = 0
+
+            print(f"[CRYPTO ENGINE] Scan {min(40, len(candidates))} koin | "
+                  f"Sentiment:{market_sentiment} BTC:{btc_ctx['trend']} "
+                  f"FRED:{fred_bias} DUNE:{dune_trend} | "
+                  f"OI_Surge:{oi_surge_count} DEX:{dex_alert_count}",
                   flush=True)
 
             #  SUB-FUNCTION FOR PARALLEL EVALUATION
@@ -1321,18 +1332,17 @@ def run_crypto_engine():
                 combined_score = round((pump_sc * 0.5) + (tech_score * 0.5))
 
                 # WS GLOBAL BOOST — Gantikan CoinAPI dengan BitgetMarketWS real-time data
-                # Setara CoinAPI get_asset_daily_performance + get_whale_orderbook
                 global_boost = 0
                 try:
                     from shared_state import state as _ws_st
                     sym_ws = f"{clean_base}USDT"
 
-                    # 1. 24h change confirmation (setara CoinAPI asset daily performance)
+                    # 1. 24h change confirmation
                     change_24h = _ws_st.rt_change.get(sym_ws, 0)
                     if side == "buy"  and change_24h > 3.0:  global_boost += 8
                     elif side == "sell" and change_24h < -3.0: global_boost += 8
 
-                    # 2. Whale order book imbalance (setara CoinAPI whale orderbook)
+                    # 2. Whale order book imbalance
                     obi_ws = _ws_st.rt_obi.get(sym_ws, 0)
                     if side == "buy"  and obi_ws > 0.15:  global_boost += 7
                     elif side == "sell" and obi_ws < -0.15: global_boost += 7
@@ -1343,9 +1353,16 @@ def run_crypto_engine():
                     if side == "buy"  and wbv > wsv * 1.5 and wbv > 50000: global_boost += 5
                     elif side == "sell" and wsv > wbv * 1.5 and wsv > 50000: global_boost += 5
 
-                    # 4. Spread filter — jangan masuk kalau spread > 0.1% (liquidity rendah)
+                    # 4. Spread filter
                     spread = _ws_st.rt_spread.get(sym_ws, 0)
-                    if spread > 0.1: global_boost -= 5  # Spread terlalu lebar = slippage tinggi
+                    if spread > 0.1: global_boost -= 5
+
+                    # 5. EARLY SIGNAL BOOST (OI surge + RVOL)
+                    early_boost = early_combined.get(sym_ws, 0)
+                    if early_boost > 0 and side == "buy":
+                        global_boost += min(early_boost, 20)  # Max +20 dari early signal
+                        if early_boost >= 20:
+                            print(f"  [EARLY BOOST] {clean_base} +{early_boost}pts (OI surge/RVOL)", flush=True)
 
                 except Exception:
                     pass

@@ -164,6 +164,12 @@ def analyze_and_sort(raw_data):
             elif whale == 'WHALE_SELL': score -= 5
             if obi > 0.15:            score += 10
             elif obi < -0.15:         score -= 5
+            # OI Surge boost (dari early_signal engine)
+            oi_surge = state.oi_surge_coins.get(sym, {})
+            oi_pct = oi_surge.get("oi_change_pct", 0)
+            if oi_pct >= 50:   score += 25   # OI naik >50% = akumulasi kuat
+            elif oi_pct >= 30: score += 15   # OI naik >30%
+            elif oi_pct >= 15: score += 8
         except Exception:
             pass
 
@@ -230,6 +236,10 @@ def analyze_and_sort(raw_data):
             elif whale == 'WHALE_BUY': score -= 5
             if obi < -0.15:           score += 10
             elif obi > 0.15:          score -= 5
+            # OI Surge penalty untuk short (OI naik + harga naik = longs masuk, jangan short)
+            oi_surge = state.oi_surge_coins.get(sym, {})
+            oi_pct = oi_surge.get("oi_change_pct", 0)
+            if oi_pct >= 30: score -= 10  # OI surge = smart money long, jangan short
         except Exception:
             pass
 

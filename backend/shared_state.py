@@ -48,6 +48,10 @@ class SharedState:
             cls._instance.peak_pnl = {}       # Symbol -> peak PnL% (untuk trailing SL)
             cls._instance.recently_exited = {} # Symbol -> exit timestamp
             cls._instance.exit_pnl = {}        # Symbol -> exit PnL%
+
+            # EARLY SIGNAL STATE
+            cls._instance.oi_surge_coins = {}  # Symbol -> {oi_change_pct, oi_now, ...}
+            cls._instance.dex_alerts     = []  # List of DEX early-stage pairs
         return cls._instance
 
     def update_positions(self, positions):
