@@ -218,8 +218,13 @@ class BitgetPublicWS:
                         elif channel == "ticker" and "data" in data:
                             for t in data["data"]:
                                 state.rt_price[symbol] = float(t.get("lastPr", 0))
-                                if t.get("openInterest"):
-                                    state.rt_oi[symbol] = float(t.get("openInterest"))
+                                # Bitget ticker field OI = holdingAmount (bukan openInterest)
+                                holding = t.get("holdingAmount") or t.get("openInterest")
+                                if holding:
+                                    try:
+                                        state.rt_oi[symbol] = float(holding)
+                                    except (ValueError, TypeError):
+                                        pass
             except Exception as e:
                 print(f"[PUBLIC WS ERROR] {e}")
                 await asyncio.sleep(5)
@@ -485,8 +490,8 @@ class BitgetMarketWS:
                 if high > 0: state.rt_high[symbol] = high
                 if low  > 0: state.rt_low[symbol]  = low
 
-                # Open Interest
-                oi = float(t.get("openInterest", 0) or 0)
+                # Open Interest — field yang benar = holdingAmount
+                oi = float(t.get("holdingAmount", 0) or t.get("openInterest", 0) or 0)
                 if oi > 0:
                     state.rt_oi[symbol] = oi
 

@@ -295,19 +295,26 @@ def detect_whale_activity(symbol):
 def get_open_interest(symbol):
     """
     WS-FIRST: pakai shared_state.rt_oi kalau ada, fallback REST.
+    Bitget ticker field OI = holdingAmount (bukan openInterest).
+    REST endpoint return field 'size' (jumlah kontrak).
     """
-    # 1. WS Cache
+    # 1. WS Cache (dari BitgetMarketWS ticker stream, field holdingAmount)
     ws_oi = _ws_oi(symbol)
     if ws_oi is not None and ws_oi > 0:
         return ws_oi
 
-    # 2. REST Fallback
+    # 2. REST Fallback — dedicated OI endpoint
     try:
         url = f"https://api.bitget.com/api/v2/mix/market/open-interest?symbol={symbol}&productType=USDT-FUTURES"
         r = requests.get(url, timeout=5, verify=False)
         if r.status_code == 200:
-            data = r.json().get('data', [{}])[0]
-            return float(data.get('openInterest', 0))
+            data = r.json().get('data', {})
+            # Response: {"openInterestList": [{"symbol": "BTCUSDT", "size": "30728.0304"}]}
+            oi_list = data.get('openInterestList', [])
+            if oi_list:
+                return float(oi_list[0].get('size', 0))
+            # Fallback ke field lama kalau format berbeda
+            return float(data.get('openInterest', data.get('size', 0)))
     except: pass
     return 0
 
