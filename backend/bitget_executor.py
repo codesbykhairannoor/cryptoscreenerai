@@ -620,7 +620,11 @@ class BitgetExecutor:
                 new_sl = 0
 
                 if peak_pnl >= 10:
-                    locked_pnl = float(int(peak_pnl / 5) * 5 - 10)
+                    # TIGHT TRAILING: 5% Gap (Sebelumnya 10%)
+                    # Jika Peak 10% -> Lock 5% (hampir BE)
+                    # Jika Peak 20% -> Lock 15%
+                    # Jika Peak 44% -> Lock 35% (atau 40% jika dibulatkan)
+                    locked_pnl = float(int(peak_pnl / 5) * 5 - 5)
                     locked_pnl = max(0.0, locked_pnl)
 
                     if side in ['long', 'buy']:
