@@ -187,8 +187,8 @@ class BitgetExecutor:
     def get_all_positions(self):
         try:
             from shared_state import state
-            # 1. WS CACHE PRIORITY (Timeout dikurangi ke 5 detik untuk cegah double trade)
-            if state.positions and time.time() - state.last_update < 5:
+            # 1. WS CACHE PRIORITY (Trust the cache even if empty, to prevent race conditions)
+            if state.last_update > 0 and time.time() - state.last_update < 5:
                 return state.positions
 
             # 2. REST SEED/FALLBACK
@@ -200,8 +200,11 @@ class BitgetExecutor:
                     entry = float(p.get('entryPrice', 0))
                     mark = float(p.get('markPrice', 0))
                     side = p['side'].lower()
+                    # ROE% Calculation (Gross or Net from Exchange)
                     pnl_pct = 0
-                    if entry > 0:
+                    if p.get('percentage') is not None:
+                        pnl_pct = float(p['percentage'])
+                    elif entry > 0:
                         diff = (mark - entry) if side in ['long', 'buy'] else (entry - mark)
                         pnl_pct = (diff / entry) * float(p.get('leverage', 10)) * 100
                     
@@ -211,6 +214,7 @@ class BitgetExecutor:
                         'size': sz,
                         'entry': entry,
                         'mark_price': mark,
+                        'leverage': float(p.get('leverage', 10)),
                         'pnl': round(pnl_pct, 2)
                     })
             state.update_positions(all_pos)
@@ -616,21 +620,19 @@ class BitgetExecutor:
                 # peak=90%  → SL ke 80%  (TP target)
                 # Formula: locked = floor(peak/5)*5 - 10, min 0
                 # ─────────────────────────────────────────────────────
-                LEVERAGE_FACTOR = 10.0
                 new_sl = 0
+                locked_pnl = 0
 
                 if peak_pnl >= 10:
                     # TIGHT TRAILING: 5% Gap (Sebelumnya 10%)
-                    # Jika Peak 10% -> Lock 5% (hampir BE)
-                    # Jika Peak 20% -> Lock 15%
-                    # Jika Peak 44% -> Lock 35% (atau 40% jika dibulatkan)
                     locked_pnl = float(int(peak_pnl / 5) * 5 - 5)
                     locked_pnl = max(0.0, locked_pnl)
 
+                    pos_lev = float(p.get('leverage', 10.0))
                     if side in ['long', 'buy']:
-                        new_sl = entry * (1 + (locked_pnl / 100.0) / LEVERAGE_FACTOR)
+                        new_sl = entry * (1 + (locked_pnl / 100.0) / pos_lev)
                     else:
-                        new_sl = entry * (1 - (locked_pnl / 100.0) / LEVERAGE_FACTOR)
+                        new_sl = entry * (1 - (locked_pnl / 100.0) / pos_lev)
 
                 if new_sl > 0:
                     if side in ['long', 'buy']:
@@ -639,10 +641,9 @@ class BitgetExecutor:
                         is_better = (sl_p == 0) or (new_sl < sl_p)
 
                     if is_better and now - self._last_sl_set.get(symbol, 0) > 30:
-                        locked = max(0, int(peak_pnl / 5) * 5 - 10)
                         print(
                             f"[TRAIL] {symbol} SL {round(sl_p,6)} -> {round(new_sl,6)} "
-                            f"| PNL:{pnl:.1f}% PEAK:{peak_pnl:.1f}% LOCKED:{locked:.0f}%",
+                            f"| PNL:{pnl:.1f}% PEAK:{peak_pnl:.1f}% LOCKED:{locked_pnl:.0f}%",
                             flush=True
                         )
                         self._set_sl_tp_bitget(symbol, side, size, sl_price=new_sl)

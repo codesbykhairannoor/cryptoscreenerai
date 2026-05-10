@@ -1564,6 +1564,10 @@ def run_crypto_engine():
                         except:
                             rt_wbv = rt_wsv = rt_spread = rt_obi = 0
 
+                        # Hitung persentase TP/SL untuk log
+                        tp_pct = round(abs(tp - mark_price) / mark_price * 100, 2)
+                        sl_pct = round(abs(sl - mark_price) / mark_price * 100, 2)
+
                         print(
                             f"\n[ENTRY] {clean_base} {side.upper()} @ {mark_price} | "
                             f"Score:{combined_score} | SL:{sl}(-{sl_pct}%) TP:{tp}(+{tp_pct}%)\n"
