@@ -1329,39 +1329,26 @@ def run_crypto_engine():
                 side, reason, tech_score = _determine_trade_side(tech, rsi, vwap_dist, market_sentiment)
                 combined_score = round((pump_sc * 0.5) + (tech_score * 0.5))
 
-                # WS GLOBAL BOOST — Gantikan CoinAPI dengan BitgetMarketWS real-time data
+                # WS GLOBAL BOOST
                 global_boost = 0
                 try:
                     from shared_state import state as _ws_st
                     sym_ws = f"{clean_base}USDT"
-
-                    # 1. 24h change confirmation
                     change_24h = _ws_st.rt_change.get(sym_ws, 0)
                     if side == "buy"  and change_24h > 3.0:  global_boost += 8
                     elif side == "sell" and change_24h < -3.0: global_boost += 8
-
-                    # 2. Whale order book imbalance
                     obi_ws = _ws_st.rt_obi.get(sym_ws, 0)
                     if side == "buy"  and obi_ws > 0.15:  global_boost += 7
                     elif side == "sell" and obi_ws < -0.15: global_boost += 7
-
-                    # 3. Rolling 5min whale volume dominance
                     wbv = _ws_st.rt_whale_buy_vol.get(sym_ws, 0)
                     wsv = _ws_st.rt_whale_sell_vol.get(sym_ws, 0)
                     if side == "buy"  and wbv > wsv * 1.5 and wbv > 50000: global_boost += 5
                     elif side == "sell" and wsv > wbv * 1.5 and wsv > 50000: global_boost += 5
-
-                    # 4. Spread filter
                     spread = _ws_st.rt_spread.get(sym_ws, 0)
                     if spread > 0.1: global_boost -= 5
-
-                    # 5. EARLY SIGNAL BOOST (OI surge + RVOL)
                     early_boost = early_combined.get(sym_ws, 0)
                     if early_boost > 0 and side == "buy":
-                        global_boost += min(early_boost, 20)  # Max +20 dari early signal
-                        if early_boost >= 20:
-                            print(f"  [EARLY BOOST] {clean_base} +{early_boost}pts (OI surge/RVOL)", flush=True)
-
+                        global_boost += min(early_boost, 20)
                 except Exception:
                     pass
 
@@ -1370,19 +1357,72 @@ def run_crypto_engine():
                 # APPLY STRICT OFF-HOURS LOGIC
                 current_min_momentum = MIN_MOMENTUM_SCORE
                 current_min_tech = MIN_TECH_SCORE
-                
                 if off_hours:
-                    current_min_momentum = 65  
-                    current_min_tech = 45      
-                    
+                    current_min_momentum = 65
+                    current_min_tech = 45
                     has_whale = tech.get('whale_signal') in ('WHALE_BUY', 'WHALE_SELL')
                     has_liq = tech.get('liquidity_grab', {}).get('bullish_grab') or tech.get('liquidity_grab', {}).get('bearish_grab')
                     has_hunt = tech.get('bull_stop_hunt') or tech.get('bear_stop_hunt')
-                    
                     if not (has_whale or has_liq or has_hunt):
                         return None
 
-                if side is None or combined_score < current_min_momentum or tech_score < current_min_tech:
+                # ── LOG PER KOIN (seperti [OBS] di versi lama) ──────────────
+                # Kumpulkan sinyal aktif untuk log
+                active_signals = []
+                if tech.get('in_5m_demand') and side == "buy":
+                    active_signals.append(f"5mDZ({tech.get('entry_quality_5m',0)})")
+                if tech.get('in_5m_supply') and side == "sell":
+                    active_signals.append(f"5mSZ({tech.get('entry_quality_5m',0)})")
+                if tech.get('in_demand'):    active_signals.append("DZ")
+                if tech.get('in_supply'):    active_signals.append("SZ")
+                if tech.get('mss_bullish'):  active_signals.append("MSS↑")
+                if tech.get('mss_bearish'):  active_signals.append("MSS↓")
+                fvg = tech.get('fvg', 'NONE')
+                if fvg not in ('NONE', None): active_signals.append(f"FVG:{fvg[:4]}")
+                ob = tech.get('order_block', 'NONE')
+                if ob not in ('NONE', None):  active_signals.append(f"OB:{ob[:4]}")
+                whale = tech.get('whale_signal', 'NORMAL')
+                if whale != 'NORMAL':         active_signals.append(f"WHALE:{whale[6:]}")
+                if tech.get('bull_stop_hunt'): active_signals.append("HUNT↑")
+                if tech.get('bear_stop_hunt'): active_signals.append("HUNT↓")
+                fr = tech.get('funding_rate', 0)
+                if fr < -0.0003: active_signals.append(f"SQUEEZE")
+                obi = tech.get('obi', 0)
+                if abs(obi) > 0.1: active_signals.append(f"OBI:{obi:+.2f}")
+                oi = tech.get('open_interest', 0)
+                trend1h = tech.get('trend_1h', 'N')
+                trend4h = tech.get('trend_4h', 'N')
+                sig_str = ' '.join(active_signals) if active_signals else 'NONE'
+
+                # Tentukan reject reason
+                reject = None
+                if side is None:
+                    reject = "NO_SIDE"
+                elif combined_score < current_min_momentum:
+                    reject = f"SCORE_LOW({combined_score}<{current_min_momentum})"
+                elif tech_score < current_min_tech:
+                    reject = f"TECH_LOW({tech_score}<{current_min_tech})"
+                else:
+                    btc_signal = btc_ctx.get("signal", "NEUTRAL")
+                    if btc_signal == "AVOID_LONG" and side == "buy":
+                        reject = f"BTC_BEAR"
+                    elif btc_signal == "AVOID_SHORT" and side == "sell":
+                        reject = f"BTC_BULL"
+
+                # Print log per koin
+                status = "PASS" if reject is None else f"SKIP:{reject}"
+                print(
+                    f"[EVAL] {clean_base:<10} {(side or 'N/A'):<5} "
+                    f"Pump:{pump_sc:.0f} Tech:{tech_score} Score:{combined_score} | "
+                    f"RSI:{rsi:.0f} VWAP:{vwap_dist:+.1f}% OBI:{obi:+.2f} "
+                    f"OI:{oi:.0f} FR:{fr:.5f} | "
+                    f"1h:{trend1h[:4]} 4h:{trend4h[:4]} | "
+                    f"[{sig_str}] | {status}",
+                    flush=True
+                )
+                # ── END LOG ──────────────────────────────────────────────────
+
+                if reject is not None:
                     return None
 
                 # BTC correlation filter
@@ -1391,32 +1431,22 @@ def run_crypto_engine():
                     return None
 
                 # FRED MACRO FILTER
-                # Kalau Fed lagi HIKING + DXY STRONG = Risk-OFF = jangan LONG crypto
-                # Kalau RISK_OFF kuat, naikkan threshold score supaya hanya sinyal terkuat yang lolos
                 if fred_crypto_impact == "BEARISH" and side == "buy":
-                    # Risk-OFF environment: naikkan bar minimum 10 poin
                     if combined_score < current_min_momentum + 10:
+                        print(f"[EVAL] {clean_base} SKIP:FRED_BEARISH({combined_score})", flush=True)
                         return None
                 elif fred_crypto_impact == "BULLISH" and side == "buy":
-                    # Risk-ON environment: turunkan bar 5 poin (lebih agresif)
                     if combined_score < max(current_min_momentum - 5, 30):
                         return None
 
                 # DUNE ON-CHAIN BOOST/FILTER
-                # Stablecoin supply tinggi + whale aktif = kondisi ideal untuk entry
                 dune_boost = 0
-                if dune_trend == "BULLISH" and side == "buy":
-                    dune_boost += 5   # On-chain macro mendukung
-                elif dune_trend == "BEARISH" and side == "buy":
-                    dune_boost -= 5   # On-chain macro melawan
-                if dune_activity == "HIGH":
-                    dune_boost += 3   # Market aktif = sinyal lebih reliable
-                elif dune_activity == "LOW":
-                    dune_boost -= 3   # Market sepi = sinyal lebih banyak false
-                if dune_whale_count > 50 and side == "buy":
-                    dune_boost += 4   # Whale aktif bergerak = potensi volatilitas
-                if dune_stable_b > 200:
-                    dune_boost += 2   # Banyak dry powder = potensi inflow
+                if dune_trend == "BULLISH" and side == "buy":   dune_boost += 5
+                elif dune_trend == "BEARISH" and side == "buy": dune_boost -= 5
+                if dune_activity == "HIGH":   dune_boost += 3
+                elif dune_activity == "LOW":  dune_boost -= 3
+                if dune_whale_count > 50 and side == "buy": dune_boost += 4
+                if dune_stable_b > 200:       dune_boost += 2
                 combined_score = min(100, combined_score + dune_boost)
 
                 return {
