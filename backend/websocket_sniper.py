@@ -24,13 +24,24 @@ class BitgetPrivateWS:
         self.api_key = os.getenv("BITGET_API_KEY")
         self.secret_key = os.getenv("BITGET_SECRET_KEY")
         self.passphrase = os.getenv("BITGET_PASSPHRASE")
-        # executor dihapus — tidak pernah dipakai (sync sudah di-comment out)
+        self.time_offset = 0
         self.is_running = True
 
     def get_signature(self, timestamp):
         message = str(timestamp) + 'GET' + '/user/verify'
         mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
         return base64.b64encode(mac.digest()).decode('utf8')
+
+    def sync_time(self):
+        """Fetch server time to calculate offset (fix: Timestamp request expired)"""
+        try:
+            res = requests.get("https://api.bitget.com/api/v2/public/time", timeout=5)
+            server_ts = int(res.json()['data']['serverTime'])
+            local_ts  = int(time.time() * 1000)
+            self.time_offset = server_ts - local_ts
+            print(f"[PRIVATE WS] Time Synced. Offset: {self.time_offset}ms")
+        except Exception as e:
+            print(f"[PRIVATE WS] Time Sync Failed: {e}")
 
     async def heartbeat(self, ws):
         """Send 'ping' every 20s to keep private connection alive"""
@@ -42,7 +53,9 @@ class BitgetPrivateWS:
                 break
 
     async def login(self, ws):
-        ts = int(time.time() * 1000)
+        # Bitget Private WS butuh timestamp dalam MILLISECONDS (13 digit)
+        # Gunakan time_offset agar tidak kena 'Timestamp request expired'
+        ts = int(time.time() * 1000) + self.time_offset
         login_msg = {
             "op": "login",
             "args": [{
@@ -53,7 +66,7 @@ class BitgetPrivateWS:
             }]
         }
         await ws.send(json.dumps(login_msg))
-        print("[PRIVATE WS] Login request sent...")
+        print(f"[PRIVATE WS] Login request sent with ts={ts}...")
 
     async def subscribe(self, ws):
         subs = {
@@ -75,6 +88,7 @@ class BitgetPrivateWS:
         
         while self.is_running:
             try:
+                self.sync_time()
                 async with websockets.connect(self.url, ssl=ssl_context) as ws:
                     asyncio.create_task(self.heartbeat(ws))
                     await self.login(ws)
@@ -169,13 +183,14 @@ class BitgetPublicWS:
     async def subscribe(self, ws):
         args = []
         for sym in self.symbols:
+            # Bitget V2 expects instId in full (e.g. BTCUSDT) for USDT-FUTURES
             args.append({"instType": "USDT-FUTURES", "channel": "ticker", "instId": sym})
             args.append({"instType": "USDT-FUTURES", "channel": "trade", "instId": sym})
             args.append({"instType": "USDT-FUTURES", "channel": "books5", "instId": sym})
         
         subs = {"op": "subscribe", "args": args}
         await ws.send(json.dumps(subs))
-        print(f"[PUBLIC WS] Subscribed to {len(self.symbols)} symbols (Ticker, Trade, L2 Depth)!")
+        print(f"[PUBLIC WS] Subscribed to {len(self.symbols)} symbols (Ticker, Trade, books5)!")
 
     async def listen(self):
         from shared_state import state
@@ -345,19 +360,34 @@ class FinnhubWS:
             else:
                 self._finnhub_retry_count = 0
 
-async def main():
-    private_ws = BitgetPrivateWS()
-    public_ws = BitgetPublicWS()
-    finnhub_ws = FinnhubWS()
-    
-    await asyncio.gather(
-        private_ws.listen(),
-        public_ws.listen(),
-        finnhub_ws.listen()
-    )
+class BinanceWS:
+    """
+    [THE WHALE WATCHER] - Binance Futures WebSocket
+    Tracks Binance real-time data for global correlation.
+    Fix: Using recv() instead of recv_messages() to avoid version conflicts.
+    """
+    def __init__(self):
+        self.url = "wss://fstream.binance.com/ws/btcusdt@ticker/ethusdt@ticker"
+        self.is_running = True
 
-if __name__ == "__main__":
-    asyncio.run(main())
+    async def listen(self):
+        from shared_state import state
+        while self.is_running:
+            try:
+                async with websockets.connect(self.url) as ws:
+                    print("[BINANCE WS] Connected to Binance Futures stream.")
+                    while True:
+                        # Fix: recv() is the correct method for modern websockets library
+                        msg = await ws.recv()
+                        data = json.loads(msg)
+                        symbol = data.get("s")
+                        price = data.get("c")
+                        if symbol and price:
+                            state.rt_price[f"BINANCE:{symbol}"] = float(price)
+            except Exception as e:
+                print(f"[BINANCE WS ERROR] {e}")
+                await asyncio.sleep(5)
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -766,11 +796,14 @@ async def main():
     public_ws   = BitgetPublicWS()   # Legacy — masih jalan untuk backward compat
     finnhub_ws  = FinnhubWS()
     market_ws   = get_market_ws()    # NEW: Full market data engine
+    binance_ws  = BinanceWS()
 
     await asyncio.gather(
         private_ws.listen(),
-        finnhub_ws.listen(),
-        market_ws.listen(),          # Gantikan public_ws untuk data coverage penuh
+        public_ws.listen(),          # Legacy Hunter (6 symbols)
+        finnhub_ws.listen(),         # News & Global
+        market_ws.listen(),          # Full Market Engine (Dinamis)
+        binance_ws.listen(),         # Binance Correlation
     )
 
 if __name__ == "__main__":

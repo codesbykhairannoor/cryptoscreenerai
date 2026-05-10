@@ -140,8 +140,8 @@ class BitgetExecutor:
         - Margin = $5.50 x 95% = $5.22
         - Notional = $5.22 x 10x = $52.2
         - Fee round trip 0.12% = $0.063
-        - SL 30% PnL = -$1.57 per loss
-        - TP 80% PnL = +$4.18 per win
+        - SL 24% PnL = -$1.26 per loss
+        - TP 90% PnL = +$4.72 per win
         """
         try:
             balance   = self.get_balance()
@@ -276,8 +276,8 @@ class BitgetExecutor:
                 if sl and sl > 0 and sl < price:
                     final_sl = sl   # Pakai SL dari crypto_engine   sudah benar
                 else:
-                    final_sl = price * 0.97   # Fallback: 3% = 30% PnL
-                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 3%: {round(final_sl,6)}")
+                    final_sl = price * 0.976   # Fallback: 2.4% = 24% PnL
+                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 2.4%: {round(final_sl,6)}")
                 # TP long harus di atas fill price
                 if tp and tp > 0 and tp > price:
                     final_tp = tp
@@ -289,8 +289,8 @@ class BitgetExecutor:
                 if sl and sl > 0 and sl > price:
                     final_sl = sl
                 else:
-                    final_sl = price * 1.03
-                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 3%: {round(final_sl,6)}")
+                    final_sl = price * 1.024
+                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 2.4%: {round(final_sl,6)}")
                 if tp and tp > 0 and tp < price:
                     final_tp = tp
                 else:
@@ -325,10 +325,10 @@ class BitgetExecutor:
             # Validasi: SL long harus di bawah current price
             if current_price > 0:
                 if hold_side == 'long' and sl_price >= current_price * 0.999:
-                    sl_price = current_price * 0.97   # 3% = 30% PnL
+                    sl_price = current_price * 0.976   # 2.4% = 24% PnL
                     print(f"[SL ADJUST] {symbol} SL adjusted to {round(sl_price,6)}")
                 elif hold_side == 'short' and sl_price <= current_price * 1.001:
-                    sl_price = current_price * 1.03   # 3% = 30% PnL
+                    sl_price = current_price * 1.024   # 2.4% = 24% PnL
                     print(f"[SL ADJUST] {symbol} SL adjusted to {round(sl_price,6)}")
             self._set_sl_ccxt(symbol, side, size, sl_price)
 
@@ -345,9 +345,9 @@ class BitgetExecutor:
 
             if mark > 0:
                 if hold == 'long' and sl_price >= mark:
-                    sl_price = mark * 0.97    # 3% = 30% PnL
+                    sl_price = mark * 0.976    # 2.4% = 24% PnL
                 elif hold == 'short' and sl_price <= mark:
-                    sl_price = mark * 1.03    # 3% = 30% PnL
+                    sl_price = mark * 1.024    # 2.4% = 24% PnL
 
             # Cancel semua SL order yang ada untuk symbol ini dulu
             # Ini mencegah duplikat SL order
@@ -576,7 +576,7 @@ class BitgetExecutor:
                           f"SL:{'OK' if has_sl else 'MISSING'} TP:{'OK' if has_tp else 'MISSING'}")
 
                 #    HARD EXIT                                                  
-                if pnl <= -30:
+                if pnl <= -24:
                     print(f"[HARD EXIT] {symbol} hit {pnl}% PNL. Closing.")
                     self.exchange.create_order(symbol, 'market',
                         'sell' if side in ['long','buy'] else 'buy', size)
@@ -590,39 +590,31 @@ class BitgetExecutor:
                 #    INITIAL GUARD                                              
                 if (not has_sl or not has_tp) and now - self.startup_time > self.warmup_period:
                     if now - self._last_sl_set.get(symbol, 0) > 60:
-                        print(f"[GUARD] Protecting {symbol} | SL 30% | TP 80%")
-                        sl_price = entry * 0.97 if side in ['long','buy'] else entry * 1.03
-                        tp_price = entry * 1.08  if side in ['long','buy'] else entry * 0.92
+                        print(f"[GUARD] Protecting {symbol} | SL 24% | TP 90%")
+                        sl_price = entry * 0.976 if side in ['long','buy'] else entry * 1.024
+                        tp_price = entry * 1.09  if side in ['long','buy'] else entry * 0.91
                         if not has_sl: self._set_sl_tp_bitget(symbol, side, size, sl_price=sl_price)
                         if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                         self._last_sl_set[symbol] = now
 
-                #    TRAILING SL — SETIAP NAIK 10% PnL, SL IKUT NAIK
+                #    TRAILING SL — GRANULAR SETIAP 5% PnL, GAP 10%
                 # ─────────────────────────────────────────────────────
-                # Logika sederhana dan agresif:
-                # - SL awal: -30% PnL (3% price move)
-                # - Begitu PnL naik ke 10%: SL pindah ke breakeven (entry)
-                # - Begitu PnL naik ke 20%: SL lock 10% PnL
-                # - Begitu PnL naik ke 30%: SL lock 20% PnL
-                # - Begitu PnL naik ke 40%: SL lock 30% PnL
-                # - dst... setiap +10% PnL, SL lock (peak - 10)%
-                #
-                # Contoh dengan 10x leverage:
-                # PnL 10% = price naik 1%  → SL ke entry (0% PnL)
-                # PnL 20% = price naik 2%  → SL ke +10% PnL (entry + 1%)
-                # PnL 30% = price naik 3%  → SL ke +20% PnL (entry + 2%)
-                # PnL 80% = price naik 8%  → SL ke +70% PnL (entry + 7%)
+                # peak=10%  → SL ke 0%   (breakeven)
+                # peak=15%  → SL ke 5%
+                # peak=20%  → SL ke 10%
+                # peak=25%  → SL ke 15%
+                # peak=30%  → SL ke 20%
+                # peak=35%  → SL ke 25%
+                # peak=40%  → SL ke 30%
+                # peak=90%  → SL ke 80%  (TP target)
+                # Formula: locked = floor(peak/5)*5 - 10, min 0
                 # ─────────────────────────────────────────────────────
                 LEVERAGE_FACTOR = 10.0
                 new_sl = 0
 
                 if peak_pnl >= 10:
-                    # Lock PnL = floor(peak/10)*10 - 10
-                    # peak=10 → lock=0 (breakeven)
-                    # peak=20 → lock=10
-                    # peak=30 → lock=20
-                    locked_pnl = float(int(peak_pnl / 10) * 10 - 10)
-                    locked_pnl = max(0.0, locked_pnl)  # Minimum breakeven
+                    locked_pnl = float(int(peak_pnl / 5) * 5 - 10)
+                    locked_pnl = max(0.0, locked_pnl)
 
                     if side in ['long', 'buy']:
                         new_sl = entry * (1 + (locked_pnl / 100.0) / LEVERAGE_FACTOR)
@@ -630,17 +622,16 @@ class BitgetExecutor:
                         new_sl = entry * (1 - (locked_pnl / 100.0) / LEVERAGE_FACTOR)
 
                 if new_sl > 0:
-                    # SL hanya boleh naik (long) atau turun (short) — tidak pernah mundur
                     if side in ['long', 'buy']:
                         is_better = new_sl > sl_p
                     else:
                         is_better = (sl_p == 0) or (new_sl < sl_p)
 
                     if is_better and now - self._last_sl_set.get(symbol, 0) > 30:
+                        locked = max(0, int(peak_pnl / 5) * 5 - 10)
                         print(
                             f"[TRAIL] {symbol} SL {round(sl_p,6)} -> {round(new_sl,6)} "
-                            f"| PNL:{pnl:.1f}% PEAK:{peak_pnl:.1f}% "
-                            f"| Locked:{max(0, int(peak_pnl/10)*10-10):.0f}%",
+                            f"| PNL:{pnl:.1f}% PEAK:{peak_pnl:.1f}% LOCKED:{locked:.0f}%",
                             flush=True
                         )
                         self._set_sl_tp_bitget(symbol, side, size, sl_price=new_sl)

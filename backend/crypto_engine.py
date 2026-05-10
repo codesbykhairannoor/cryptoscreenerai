@@ -74,10 +74,10 @@ FUNDING_SQUEEZE_THR  = -0.0003  # Fix: -0.03% lebih realistis (sebelumnya -0.1% 
 VOLUME_SPIKE_RATIO   = 2.5
 
 # TP/SL berbasis PnL target (10x leverage)
-SCALP_TP_PCT  = 0.08   # 8% price move = 80% PnL
-SCALP_SL_PCT  = 0.03   # 3% price move = 30% PnL  (naik dari 1.5%)
-SCALP_TP_ATR  = 5.0
-SCALP_SL_ATR  = 2.5    # ATR multiplier naik dari 1.5 → 2.5 sesuai SL lebih lebar
+SCALP_TP_PCT  = 0.09   # 9% price move = 90% PnL (TP target)
+SCALP_SL_PCT  = 0.024  # 2.4% price move = 24% PnL
+SCALP_TP_ATR  = 6.0
+SCALP_SL_ATR  = 2.0    # ATR multiplier sesuai SL 24%
 
 # Session filter
 CRYPTO_SESSION_START_UTC = 1
@@ -1041,25 +1041,22 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]
     TP/SL berbasis PnL target di 10x leverage.
     
     Target FIXED:
-    - SL = -30% PnL = -3% price move (SELALU, tidak bisa lebih kecil)
-    - TP = +80% PnL = +8% price move
-    
-    ATR hanya dipakai kalau LEBIH BESAR dari minimum % - untuk koin
-    volatile yang butuh SL lebih lebar. Tidak pernah lebih kecil dari 3%.
-    
+    - SL = -24% PnL = -2.4% price move (SELALU, tidak bisa lebih kecil)
+    - TP = +90% PnL = +9% price move
+
     Contoh DOGS (harga $0.001, ATR $0.000003):
-    - ATR x 2.5 = $0.0000075 = 0.75% -> TERLALU KECIL
-    - min_sl = $0.001 x 0.03 = $0.00003 = 3% -> PAKAI INI
-    
+    - ATR x 2.0 = $0.000006 = 0.6% -> TERLALU KECIL
+    - min_sl = $0.001 x 0.024 = $0.000024 = 2.4% -> PAKAI INI
+
     Contoh BTC (harga $60000, ATR $800):
-    - ATR x 2.5 = $2000 = 3.3% -> LEBIH BESAR dari 3%
-    - Pakai ATR-based = $2000
+    - ATR x 2.0 = $1600 = 2.67% -> LEBIH BESAR dari 2.4%
+    - Pakai ATR-based = $1600
     """
     atr = tech.get('atr', 0)
 
-    # HARD MINIMUM: SL tidak boleh lebih kecil dari 3% price (= 30% PnL di 10x)
-    min_sl_dist = mark_price * SCALP_SL_PCT   # 3% - TIDAK BOLEH LEBIH KECIL
-    min_tp_dist = mark_price * SCALP_TP_PCT   # 8%
+    # HARD MINIMUM: SL tidak boleh lebih kecil dari 2.4% price (= 24% PnL di 10x)
+    min_sl_dist = mark_price * SCALP_SL_PCT   # 2.4%
+    min_tp_dist = mark_price * SCALP_TP_PCT   # 9%
 
     if atr and atr > 0:
         atr_sl = atr * SCALP_SL_ATR  # ATR x 1.5
@@ -1085,7 +1082,7 @@ def run_crypto_engine():
     - Scan top 40 coins every 10 seconds (parallel, 8 workers)
     - 5m precision entry: demand/supply zone detection
     - FRED macro filter + Dune on-chain boost
-    - SL: 30% PnL (-3% price), TP: 80% PnL (+8% price)
+    - SL: 24% PnL (-2.4% price), TP: 90% PnL (+9% price)
     - Session: 08:00-22:00 WIB only
     - Cooldown: 120 seconds between trades
     """
