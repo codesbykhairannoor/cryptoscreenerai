@@ -50,7 +50,7 @@ from bitget_executor import BitgetExecutor
 #  KONFIGURASI 
 MAX_POSITIONS        = 1      # FOKUS: 1 trade saja (STRICT)
 FIXED_MARGIN_USDT    = 3.0    # Limit: $3 per trade
-SCAN_INTERVAL        = 10     # Scan setiap 10 detik
+SCAN_INTERVAL        = 3      # Scan lebih cepat (3 detik) agar responsif di VPS
 COOLDOWN_AFTER_TRADE = 120    # 2 menit cooldown — versi profit May 5
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
@@ -1117,12 +1117,14 @@ def run_crypto_engine():
     _loss_tracker       = {}
     _consec_losses      = 0
     _consec_pause_until = 0
+    _last_pulse         = 0
 
     while True:
         try:
             now = time.time()
-            if int(now) % 60 < 10:
-                print("[CRYPTO ENGINE] Heartbeat: Loop is running...", flush=True)
+            if now - _last_pulse > 2:
+                print(f"[LIVE] {time.strftime('%H:%M:%S')} | Engine monitoring markets...", flush=True)
+                _last_pulse = now
 
             #  1. MANAGE EXISTING POSITIONS
             executor.manage_open_positions()
