@@ -1061,9 +1061,9 @@ def get_dune_macro_metrics():
         LIMIT 8
     """, "CryptoScreener_DEXVolume24h", max_wait=60)
 
-    total_dex_usd = sum(r.get("volume_usd", 0) for r in dex_rows)
+    total_dex_usd = sum((r.get("volume_usd") or 0) for r in dex_rows)
     result["dex_volume_24h_b"] = round(total_dex_usd / 1e9, 2)
-    result["dex_top_protocol"]  = dex_rows[0]["project"] if dex_rows else "unknown"
+    result["dex_top_protocol"]  = dex_rows[0].get("project", "unknown") if dex_rows else "unknown"
 
     # ── 3. ETH Gas (market activity proxy) ───────────────────────────────────
     print("[DUNE] Fetching ETH gas...", flush=True)
@@ -1075,8 +1075,8 @@ def get_dune_macro_metrics():
         WHERE block_time >= NOW() - INTERVAL '1' hour
     """, "CryptoScreener_ETHGas1h", max_wait=60)
 
-    eth_gas = round(gas_rows[0].get("avg_gwei", 0), 2) if gas_rows else 0
-    eth_tx_count = gas_rows[0].get("tx_count", 0) if gas_rows else 0
+    eth_gas = round(gas_rows[0].get("avg_gwei") or 0, 2) if gas_rows else 0
+    eth_tx_count = gas_rows[0].get("tx_count") or 0 if gas_rows else 0
     result["eth_gas_gwei"]   = eth_gas
     result["eth_tx_count_1h"] = eth_tx_count
 
@@ -1092,8 +1092,8 @@ def get_dune_macro_metrics():
           AND value / 1e18 > 100
     """, "CryptoScreener_WhaleTransfers1h", max_wait=60)
 
-    whale_count = whale_rows[0].get("large_transfers", 0) if whale_rows else 0
-    whale_eth   = round(whale_rows[0].get("total_eth", 0), 0) if whale_rows else 0
+    whale_count = whale_rows[0].get("large_transfers") or 0 if whale_rows else 0
+    whale_eth   = round(whale_rows[0].get("total_eth") or 0, 0) if whale_rows else 0
     result["whale_transfers_1h"]  = whale_count
     result["whale_eth_volume_1h"] = whale_eth
 
