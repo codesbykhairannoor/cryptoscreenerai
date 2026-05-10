@@ -1040,10 +1040,18 @@ def get_dune_macro_metrics():
 
     total_stable_m = sum(r.get("supply_millions", 0) for r in stable_rows)
     total_stable_b = round(total_stable_m / 1000, 2)
+
+    # Sanity check: stablecoin supply harusnya $200B-$500B
+    # Kalau di luar range ini, data Dune corrupt — pakai 0 (neutral)
+    if total_stable_b > 500 or total_stable_b < 0:
+        print(f"[DUNE] Stablecoin data invalid ({total_stable_b}B), using neutral", flush=True)
+        total_stable_b = 0.0
+
     result["stablecoin_supply_b"] = total_stable_b
     result["stablecoin_breakdown"] = {
         r["symbol"]: round(r.get("supply_millions", 0) / 1000, 2)
         for r in stable_rows
+        if r.get("supply_millions", 0) / 1000 < 500  # Filter baris corrupt
     }
 
     # ── 2. DEX Volume 24h ────────────────────────────────────────────────────
@@ -1062,7 +1070,12 @@ def get_dune_macro_metrics():
     """, "CryptoScreener_DEXVolume24h", max_wait=60)
 
     total_dex_usd = sum((r.get("volume_usd") or 0) for r in dex_rows)
-    result["dex_volume_24h_b"] = round(total_dex_usd / 1e9, 2)
+    dex_volume_b = round(total_dex_usd / 1e9, 2)
+    # Sanity check: DEX volume harusnya $0.1B-$20B per hari
+    if dex_volume_b > 20 or dex_volume_b < 0:
+        print(f"[DUNE] DEX volume invalid ({dex_volume_b}B), using neutral", flush=True)
+        dex_volume_b = 0.0
+    result["dex_volume_24h_b"] = dex_volume_b
     result["dex_top_protocol"]  = dex_rows[0].get("project", "unknown") if dex_rows else "unknown"
 
     # ── 3. ETH Gas (market activity proxy) ───────────────────────────────────
@@ -1076,8 +1089,11 @@ def get_dune_macro_metrics():
     """, "CryptoScreener_ETHGas1h", max_wait=60)
 
     eth_gas = round(gas_rows[0].get("avg_gwei") or 0, 2) if gas_rows else 0
+    # Sanity check: ETH gas harusnya 0.1-500 Gwei
+    if eth_gas > 500 or eth_gas < 0:
+        eth_gas = 0.0
     eth_tx_count = gas_rows[0].get("tx_count") or 0 if gas_rows else 0
-    result["eth_gas_gwei"]   = eth_gas
+    result["eth_gas_gwei"]    = eth_gas
     result["eth_tx_count_1h"] = eth_tx_count
 
     # ── 4. Whale ETH Transfers ───────────────────────────────────────────────

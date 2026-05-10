@@ -1519,7 +1519,23 @@ def run_crypto_engine():
                         log_trade(symbol, mark_price, tp, sl, side=side, score=combined_score, reason=reason)
                         last_exec_time = time.time()
                         _consec_losses = 0
-                        print(f"[TRADE LOGGED] {clean_base} {side.upper()} @ {mark_price}")
+                        # Log lengkap kenapa bot masuk trade ini
+                        sl_pct = round(abs(mark_price - sl) / mark_price * 100, 2) if sl else 0
+                        tp_pct = round(abs(tp - mark_price) / mark_price * 100, 2) if tp else 0
+                        print(
+                            f"\n[ENTRY] {clean_base} {side.upper()} @ {mark_price} | "
+                            f"Score:{combined_score} | SL:{sl}(-{sl_pct}%) TP:{tp}(+{tp_pct}%)\n"
+                            f"  Why: {reason}\n"
+                            f"  RSI:{rsi:.1f} VWAP:{vwap_dist:+.2f}% "
+                            f"Whale:{tech.get('whale_signal','?')} "
+                            f"OBI:{tech.get('obi',0):+.2f} "
+                            f"Trend1h:{tech.get('trend_1h','?')} "
+                            f"5m:{tech.get('entry_signal_5m','?')}({tech.get('entry_quality_5m',0)})\n"
+                            f"  OI:{tech.get('open_interest',0):.0f} "
+                            f"Funding:{tech.get('funding_rate',0):.5f} "
+                            f"ADX:{tech.get('adx',0):.1f}",
+                            flush=True
+                        )
                     else:
                         print(f"[ORDER FAILED] {clean_base}: {order}")
                 else:

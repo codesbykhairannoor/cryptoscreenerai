@@ -178,7 +178,7 @@ class BitgetExecutor:
             if formatted_amount * price < 5.0:
                 return 0
 
-            print(f"[SIZE] Full balance | Margin=${margin_to_use:.2f} | Notional=${round(notional,1)} | {formatted_amount} {symbol}")
+            print(f"[SIZE] Margin=${margin_to_use:.2f} (fixed $3) | Notional=${round(notional,1)} | {formatted_amount} {symbol}")
             return formatted_amount if formatted_amount >= min_amount else 0
         except Exception as e:
             print(f"[GET_MAX ERROR] {e}")
