@@ -131,31 +131,33 @@ class BitgetExecutor:
 
     def get_max_available(self, symbol, leverage=10, risk_usdt=None):
         """
-        Hitung size berdasarkan FIXED MARGIN per trade.
-        
-        Default: $3 margin per trade (fixed, tidak berubah)
-        Notional = $3 x 10x = $30
-        SL 15% PnL = -$0.45 per loss
-        TP 80% PnL = +$2.40 per win
-        1 win = 5.3 loss — konsisten tidak peduli balance berapa
-        
-        Kalau balance < $3, pakai semua yang tersedia (minimum $5 notional).
+        Hitung size untuk 1 trade maksimal.
+
+        Karena MAX_POSITIONS = 1, kita bisa pakai SEMUA balance yang tersedia.
+        Sisakan 5% sebagai buffer untuk fee dan margin call.
+
+        Contoh balance $5.50:
+        - Margin = $5.50 x 95% = $5.22
+        - Notional = $5.22 x 10x = $52.2
+        - Fee round trip 0.12% = $0.063
+        - SL 30% PnL = -$1.57 per loss
+        - TP 80% PnL = +$4.18 per win
         """
-        FIXED_MARGIN = 3.0  # $3 margin per trade — FIXED
-
         try:
-            balance    = self.get_balance()
-            free_usdt  = balance['free']
+            balance   = self.get_balance()
+            free_usdt = balance['free']
 
-            # Pakai fixed $7, tapi tidak boleh melebihi free balance
-            margin_to_use = min(FIXED_MARGIN, free_usdt * 0.95)
+            if free_usdt <= 0:
+                print(f"[SIZE] Balance kosong: ${free_usdt:.2f}")
+                return 0
+
+            # Pakai 95% dari balance bebas (sisakan 5% untuk fee/buffer)
+            margin_to_use = free_usdt * 0.95
 
             # Minimum notional Bitget = 5 USDT
             if margin_to_use * leverage < 5.0:
-                if free_usdt * leverage < 5.0:
-                    print(f"[SIZE] Balance terlalu kecil: ${free_usdt:.2f}")
-                    return 0
-                margin_to_use = 5.0 / leverage
+                print(f"[SIZE] Balance terlalu kecil: ${free_usdt:.2f} (min $0.50 untuk 10x)")
+                return 0
 
             ticker = self.exchange.fetch_ticker(symbol)
             price  = ticker['last']
@@ -171,7 +173,7 @@ class BitgetExecutor:
             if formatted_amount * price < 5.0:
                 return 0
 
-            print(f"[SIZE] Fixed margin=${margin_to_use:.2f} | Notional=${round(notional,1)} | {formatted_amount} {symbol}")
+            print(f"[SIZE] Full balance | Margin=${margin_to_use:.2f} | Notional=${round(notional,1)} | {formatted_amount} {symbol}")
             return formatted_amount if formatted_amount >= min_amount else 0
         except Exception as e:
             print(f"[GET_MAX ERROR] {e}")
@@ -595,43 +597,52 @@ class BitgetExecutor:
                         if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                         self._last_sl_set[symbol] = now
 
-                #    TRAILING SL BERBASIS PEAK PnL                              
-                # Filosofi: biarkan trade jalan sampai TP, jangan potong terlalu cepat.
-                # Altcoin sering koreksi 10-15% sebelum lanjut naik   jangan kena SL.
-                # SL hanya dipindah kalau profit sudah SOLID (peak >= 20%).
+                #    TRAILING SL — SETIAP NAIK 10% PnL, SL IKUT NAIK
+                # ─────────────────────────────────────────────────────
+                # Logika sederhana dan agresif:
+                # - SL awal: -30% PnL (3% price move)
+                # - Begitu PnL naik ke 10%: SL pindah ke breakeven (entry)
+                # - Begitu PnL naik ke 20%: SL lock 10% PnL
+                # - Begitu PnL naik ke 30%: SL lock 20% PnL
+                # - Begitu PnL naik ke 40%: SL lock 30% PnL
+                # - dst... setiap +10% PnL, SL lock (peak - 10)%
                 #
-                # Tabel trailing:
-                # peak < 20%  : DIAM   biarkan SL awal di -15%, jangan ganggu
-                # peak 20-29% : breakeven (entry)   tidak rugi
-                # peak 30-39% : lock 10% PnL
-                # peak 40-49% : lock 20% PnL
-                # peak 50-59% : lock 30% PnL
-                # peak >= 60% : lock 40% PnL
-                # peak >= 20% : lock (peak_rounded_down - 10)%
+                # Contoh dengan 10x leverage:
+                # PnL 10% = price naik 1%  → SL ke entry (0% PnL)
+                # PnL 20% = price naik 2%  → SL ke +10% PnL (entry + 1%)
+                # PnL 30% = price naik 3%  → SL ke +20% PnL (entry + 2%)
+                # PnL 80% = price naik 8%  → SL ke +70% PnL (entry + 7%)
+                # ─────────────────────────────────────────────────────
                 LEVERAGE_FACTOR = 10.0
                 new_sl = 0
-                
-                if peak_pnl >= 20:
+
+                if peak_pnl >= 10:
+                    # Lock PnL = floor(peak/10)*10 - 10
+                    # peak=10 → lock=0 (breakeven)
+                    # peak=20 → lock=10
+                    # peak=30 → lock=20
                     locked_pnl = float(int(peak_pnl / 10) * 10 - 10)
+                    locked_pnl = max(0.0, locked_pnl)  # Minimum breakeven
+
                     if side in ['long', 'buy']:
                         new_sl = entry * (1 + (locked_pnl / 100.0) / LEVERAGE_FACTOR)
                     else:
                         new_sl = entry * (1 - (locked_pnl / 100.0) / LEVERAGE_FACTOR)
-                elif peak_pnl >= 10:
-                    if side in ['long', 'buy']:
-                        new_sl = entry * 1.002  # lock 2%
-                    else:
-                        new_sl = entry * 0.998  # lock 2%
 
                 if new_sl > 0:
-                    # SL hanya boleh naik (long) atau turun (short)   tidak pernah mundur
+                    # SL hanya boleh naik (long) atau turun (short) — tidak pernah mundur
                     if side in ['long', 'buy']:
                         is_better = new_sl > sl_p
                     else:
                         is_better = (sl_p == 0) or (new_sl < sl_p)
 
-                    if is_better and now - self._last_sl_set.get(symbol, 0) > 60:
-                        print(f"[TRAIL] {symbol} SL {round(sl_p,4)} -> {round(new_sl,4)} (PNL:{pnl}% PEAK:{peak_pnl}%)", flush=True)
+                    if is_better and now - self._last_sl_set.get(symbol, 0) > 30:
+                        print(
+                            f"[TRAIL] {symbol} SL {round(sl_p,6)} -> {round(new_sl,6)} "
+                            f"| PNL:{pnl:.1f}% PEAK:{peak_pnl:.1f}% "
+                            f"| Locked:{max(0, int(peak_pnl/10)*10-10):.0f}%",
+                            flush=True
+                        )
                         self._set_sl_tp_bitget(symbol, side, size, sl_price=new_sl)
                         self._last_sl_set[symbol] = now
 
