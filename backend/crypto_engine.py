@@ -1552,20 +1552,25 @@ def run_crypto_engine():
                         last_exec_time = time.time()
                         _consec_losses = 0
                         # Log lengkap kenapa bot masuk trade ini
-                        sl_pct = round(abs(mark_price - sl) / mark_price * 100, 2) if sl else 0
-                        tp_pct = round(abs(tp - mark_price) / mark_price * 100, 2) if tp else 0
+                        # AMBIL DATA REAL-TIME WS UNTUK LOG
+                        try:
+                            from shared_state import state as _ws_st
+                            sym_ws = f"{clean_base}USDT"
+                            rt_wbv = _ws_st.rt_whale_buy_vol.get(sym_ws, 0)
+                            rt_wsv = _ws_st.rt_whale_sell_vol.get(sym_ws, 0)
+                            rt_spread = _ws_st.rt_spread.get(sym_ws, 0)
+                            rt_obi = _ws_st.rt_obi.get(sym_ws, 0)
+                        except:
+                            rt_wbv = rt_wsv = rt_spread = rt_obi = 0
+
                         print(
                             f"\n[ENTRY] {clean_base} {side.upper()} @ {mark_price} | "
                             f"Score:{combined_score} | SL:{sl}(-{sl_pct}%) TP:{tp}(+{tp_pct}%)\n"
                             f"  Why: {reason}\n"
-                            f"  RSI:{rsi:.1f} VWAP:{vwap_dist:+.2f}% "
-                            f"Whale:{tech.get('whale_signal','?')} "
-                            f"OBI:{tech.get('obi',0):+.2f} "
-                            f"Trend1h:{tech.get('trend_1h','?')} "
-                            f"5m:{tech.get('entry_signal_5m','?')}({tech.get('entry_quality_5m',0)})\n"
-                            f"  OI:{tech.get('open_interest',0):.0f} "
-                            f"Funding:{tech.get('funding_rate',0):.5f} "
-                            f"ADX:{tech.get('adx',0):.1f}",
+                            f"  [TECH] RSI:{rsi:.1f} VWAP:{vwap_dist:+.2f}% OBI:{tech.get('obi',0):+.2f} Trend1h:{tech.get('trend_1h','?')}\n"
+                            f"  [WS-RT] WhaleVol: B:${rt_wbv:,.0f} / S:${rt_wsv:,.0f} | OBI:{rt_obi:+.2f} | Spread:{rt_spread:.3f}%\n"
+                            f"  [SCAN] OI:{tech.get('open_interest',0):.0f} Funding:{tech.get('funding_rate',0):.5f} ADX:{tech.get('adx',0):.1f}\n"
+                            f"  [5M-PRECISION] Signal:{tech.get('entry_signal_5m','?')}({tech.get('entry_quality_5m',0)}) | Zone:{tech.get('zone_freshness_5m','?')}",
                             flush=True
                         )
                     else:
