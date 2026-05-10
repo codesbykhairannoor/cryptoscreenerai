@@ -20,6 +20,7 @@ Perbaikan besar dari v7.0:
 """
 import requests, os, time, datetime
 from dotenv import load_dotenv
+from notifier import send_telegram_message, format_trade_message
 load_dotenv()
 
 # ── KONFIGURASI UTAMA ──────────────────────────────────────────────────────────
@@ -603,6 +604,58 @@ class ForexExecutor:
         except Exception:
             return {"aligned_count": 0, "confluence": "NONE", "details": {}}
 
+    def _get_5m_entry_quality(self) -> dict:
+        """
+        PRECISION 5M ENTRY ENGINE: Deteksi SMC pada timeframe 5m.
+        Mencari FVG, Order Block, dan Liquidity Grab untuk konfirmasi entry.
+        """
+        try:
+            candles = self.get_candles(timeframe="5m", limit=15)
+            if len(candles) < 10:
+                return {"quality": 0, "signal": "NEUTRAL", "desc": "Insufficient data"}
+
+            closes = [float(c.get("close", 0)) for c in candles]
+            highs  = [float(c.get("high",  0)) for c in candles]
+            lows   = [float(c.get("low",   0)) for c in candles]
+            opens  = [float(c.get("open",  0)) for i, c in enumerate(candles)]
+            
+            # 1. 5m FVG (Fair Value Gap)
+            fvg = "NONE"
+            if highs[-3] < lows[-1]: fvg = "BULLISH_FVG"
+            elif lows[-3] > highs[-1]: fvg = "BEARISH_FVG"
+            
+            # 2. 5m Liquidity Grab (Stop Hunt)
+            liq_grab = (lows[-1] < min(lows[-5:-1]) and closes[-1] > lows[-1]) or \
+                       (highs[-1] > max(highs[-5:-1]) and closes[-1] < highs[-1])
+            
+            # 3. 5m Candle Momentum
+            last_body = closes[-1] - opens[-1]
+            is_strong = abs(last_body) > (sum(abs(closes[i]-opens[i]) for i in range(-5, -1))/4) * 1.5
+
+            quality = 0
+            signal = "NEUTRAL"
+            
+            if last_body > 0: # Potential Long
+                if fvg == "BULLISH_FVG": quality += 30
+                if liq_grab and closes[-1] > opens[-1]: quality += 40
+                if is_strong: quality += 30
+                if quality >= 40: signal = "BULLISH_CONFIRM"
+            else: # Potential Short
+                if fvg == "BEARISH_FVG": quality += 30
+                if liq_grab and closes[-1] < opens[-1]: quality += 40
+                if is_strong: quality += 30
+                if quality >= 40: signal = "BEARISH_CONFIRM"
+                
+            return {
+                "quality": quality,
+                "signal": signal,
+                "fvg_5m": fvg,
+                "liq_grab_5m": liq_grab,
+                "momentum_5m": is_strong
+            }
+        except Exception as e:
+            return {"quality": 0, "signal": "ERROR", "desc": str(e)}
+
     def _calc_indicators(self):
         """
         XAUUSD Multi-Timeframe Indicator Engine v6.0.
@@ -1094,6 +1147,13 @@ class ForexExecutor:
         if side == "sell" and ind.get("bear_stop_hunt", False):
             score += 10 + min(5, hunt_strength * 2)
 
+        #  7f. 5M PRECISION QUALITY (max 15 poin)
+        e5m = self._get_5m_entry_quality()
+        if side == "buy" and e5m["signal"] == "BULLISH_CONFIRM":
+            score += min(15, e5m["quality"] * 0.2)
+        if side == "sell" and e5m["signal"] == "BEARISH_CONFIRM":
+            score += min(15, e5m["quality"] * 0.2)
+
         #  7e. VOLUME PROFILE / POC (max 10 poin, penalti -8)
         price_vs_poc = ind.get("price_vs_poc", "UNKNOWN")
         poc_dist     = abs(ind.get("poc_distance_pct", 0))
@@ -1343,7 +1403,7 @@ class ForexExecutor:
 
     #  ORDER EXECUTION 
 
-    def place_forex_order(self, symbol, side, amount, tp=None, sl=None):
+    def place_forex_order(self, symbol, side, amount, tp=None, sl=None, reason_data=None):
         if not self.is_active: return False, "Forex not active"
         try:
             url = self.base_url + "/users/current/accounts/" + self.account_id + "/trade"
@@ -1375,6 +1435,26 @@ class ForexExecutor:
             result = res.json()
             if res.status_code == 200:
                 print("[FOREX SUCCESS] " + side.upper() + " " + symbol + " lot=" + str(amount) + " TP=" + str(tp) + " SL=" + str(sl))
+                
+                # KIRIM NOTIF TELEGRAM
+                if reason_data:
+                    from notifier import send_telegram_message, format_trade_message
+                    tg_data = {
+                        'symbol': symbol, 'side': side, 'price': mid, 'amount': amount,
+                        'score': reason_data.get('score', 0), 'reason': reason_data.get('reason', 'N/A'),
+                        'tp': tp, 'sl': sl,
+                        'tp_pct': round(abs(tp-mid)/mid*100, 2) if mid else 0,
+                        'sl_pct': round(abs(sl-mid)/mid*100, 2) if mid else 0,
+                        'rsi': reason_data.get('rsi', 0), 'vwap': reason_data.get('vwap', 0),
+                        'obi_rest': reason_data.get('obi', 0),
+                        'trend_1h': reason_data.get('trend_1h', '?'),
+                        'rt_wbv': 0, 'rt_wsv': 0, 'rt_obi': reason_data.get('obi', 0), 'rt_spread': reason_data.get('spread', 0),
+                        'e5m': reason_data.get('e5m_sig', '?'),
+                        'q5m': reason_data.get('e5m_q', 0),
+                        'f5m': 'XAUUSD_PRECISION'
+                    }
+                    send_telegram_message(format_trade_message(tg_data))
+                
                 return True, result
             else:
                 msg = result.get("message", str(result))
@@ -1499,6 +1579,7 @@ class ForexExecutor:
                         json={"actionType": "POSITION_CLOSE_ID", "positionId": pos_id}, timeout=8)
                     if res.status_code == 200:
                         print(f"[FOREX AUTO-CLOSE] {pos_id} closed OK")
+                        send_telegram_message(f"<b>🛑 FOREX POSITION CLOSED</b>\n\nSymbol: <code>{sym}</code>\nID: <code>{pos_id}</code>\nProfit: <b>${profit}</b>\nReason: <b>Auto-Close (SL Hit/Buffer)</b>")
                     else:
                         del self._close_attempted[pos_id]  # Retry next time
                 except Exception as e:
@@ -1751,6 +1832,14 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
+                # 5M PRECISION CHECK (SMC FVG/Liq)
+                e5m = self._get_5m_entry_quality()
+                if e5m["quality"] < 30 and mtf["aligned_count"] < 3:
+                     if do_log:
+                         print(f"[5M PRECISION] Entry {side.upper()} kurang tajam (Quality: {e5m['quality']}). Skip.")
+                     time.sleep(SCAN_INTERVAL)
+                     continue
+
                 # SESSION OVERLAP (London+NY 12-16 UTC) — butuh score lebih tinggi
                 is_overlap = 12 <= datetime.datetime.utcnow().hour < 16
                 if is_overlap and score < MIN_MOMENTUM_SCORE + 5:
@@ -1825,8 +1914,16 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
+                # DATA UNTUK NOTIF TELEGRAM
+                reason_data = {
+                    'score': score, 'reason': f"Pump:{pump_sig} RSI:{rsi_val} MTF:{mtf['confluence']} 30m:{trend} 1h:{trend_1h}",
+                    'rsi': rsi_val, 'vwap': ind.get('vwap_dist', 0), 'obi': ind.get('obi', 0),
+                    'trend_1h': trend_1h, 'spread': spread_pts,
+                    'e5m_sig': e5m.get('signal', '?'), 'e5m_q': e5m.get('quality', 0)
+                }
+
                 print(f"[EXECUTOR] Mengirim order {side.upper()} {sym} ke MT5...", flush=True)
-                success, _ = self.place_forex_order(sym, side, lot, tp=fresh_tp, sl=fresh_sl)
+                success, _ = self.place_forex_order(sym, side, lot, tp=fresh_tp, sl=fresh_sl, reason_data=reason_data)
                 if success:
                     from database import log_trade
                     log_trade(sym, fresh_entry, fresh_tp, fresh_sl, market="forex",
