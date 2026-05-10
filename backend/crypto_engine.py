@@ -45,6 +45,7 @@ from data_fetcher import (
 from sentiment import get_crypto_news, get_global_market_data, get_fred_macro_context
 from ai_model import analyze_and_sort
 from database import log_trade
+from notifier import send_telegram_message, format_trade_message
 from bitget_executor import BitgetExecutor
 
 #  KONFIGURASI 
@@ -1573,6 +1574,21 @@ def run_crypto_engine():
                             f"  [5M-PRECISION] Signal:{tech.get('entry_signal_5m','?')}({tech.get('entry_quality_5m',0)}) | Zone:{tech.get('zone_freshness_5m','?')}",
                             flush=True
                         )
+
+                        # KIRIM NOTIF TELEGRAM
+                        tg_data = {
+                            'symbol': symbol, 'side': side, 'price': mark_price, 'amount': amount,
+                            'score': combined_score, 'reason': reason, 'tp': tp, 'sl': sl,
+                            'tp_pct': tp_pct, 'sl_pct': sl_pct,
+                            'rsi': round(rsi, 1), 'vwap': round(vwap_dist, 2),
+                            'obi_rest': round(tech.get('obi', 0), 2),
+                            'trend_1h': tech.get('trend_1h', '?'),
+                            'rt_wbv': rt_wbv, 'rt_wsv': rt_wsv, 'rt_obi': rt_obi, 'rt_spread': rt_spread,
+                            'e5m': tech.get('entry_signal_5m', '?'),
+                            'q5m': tech.get('entry_quality_5m', 0),
+                            'f5m': tech.get('zone_freshness_5m', '?')
+                        }
+                        send_telegram_message(format_trade_message(tg_data))
                     else:
                         print(f"[ORDER FAILED] {clean_base}: {order}")
                 else:
