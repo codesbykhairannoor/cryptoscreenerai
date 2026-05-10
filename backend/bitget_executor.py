@@ -57,16 +57,16 @@ class BitgetExecutor:
             if pos:
                 print(f"[STARTUP AUDIT] Running Trades: {len(pos)}")
                 for p in pos:
-                    print(f"   > {p['symbol']} | Side: {p['side']} | PNL: {p['pnl']}%")
-                    self.get_pending_plan_orders(p['symbol'])
+                    sym  = p['symbol']
+                    side = p['side']
+                    pnl  = p['pnl']
+                    entry = p.get('entry', 0)
+                    mark  = p.get('mark_price', 0)
+                    print(f"   > {sym} | Side:{side} | Entry:{entry} | Mark:{mark} | PNL:{pnl}%")
+                    self.get_pending_plan_orders(sym)
                     # Seed pos_start_time untuk trade yang sudah berjalan
-                    # Pakai waktu sekarang sebagai fallback — lebih aman dari reset ke 0
-                    # Trade yang sudah ada tidak akan kena sideways detection prematur
                     from shared_state import state as _s
-                    sym = p['symbol']
                     if sym not in _s.pos_start_time:
-                        # Estimasi: trade sudah berjalan, set start ke 30 menit lalu
-                        # Ini mencegah sideways detection langsung aktif saat restart
                         _s.pos_start_time[sym] = time.time() - 1800
                         print(f"   > [TIMER] {sym} pos_start seeded (restart recovery)", flush=True)
         except Exception as e:

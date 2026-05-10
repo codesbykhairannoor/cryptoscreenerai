@@ -19,6 +19,21 @@ import threading
 import time
 import subprocess
 import os as _os
+import sys
+import traceback
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  GLOBAL EXCEPTION HANDLER — catch semua unhandled exception di semua thread
+#  Ini yang bikin exit code 4294967295 terdeteksi dan di-log
+# ─────────────────────────────────────────────────────────────────────────────
+def _global_thread_exception_handler(args):
+    """Dipanggil saat ada unhandled exception di thread manapun."""
+    print(f"\n[THREAD CRASH] Thread '{args.thread.name}' crashed!", flush=True)
+    print(f"  Exception: {args.exc_type.__name__}: {args.exc_value}", flush=True)
+    traceback.print_tb(args.exc_traceback)
+    print(flush=True)
+
+threading.excepthook = _global_thread_exception_handler
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  PORT CLEANUP — dipanggil saat lifespan startup
@@ -92,8 +107,17 @@ async def lifespan(app: FastAPI):
         print(f"[SYSTEM] Gagal sinkronisasi state: {e}", flush=True)
 
     # 2. Crypto Engine (v5.1 Direct Mode)
+    def _run_crypto_engine_safe():
+        """Wrapper dengan full traceback logging supaya crash terdeteksi."""
+        import traceback
+        try:
+            run_crypto_engine()
+        except Exception as e:
+            print(f"[CRYPTO ENGINE FATAL CRASH] {e}", flush=True)
+            traceback.print_exc()
+
     crypto_thread = threading.Thread(
-        target=run_crypto_engine, daemon=True, name="CryptoEngine"
+        target=_run_crypto_engine_safe, daemon=True, name="CryptoEngine"
     )
     crypto_thread.start()
     print("[SYSTEM] Crypto Engine AKTIF! (v5.1 Direct Mode)", flush=True)
