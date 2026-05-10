@@ -138,17 +138,51 @@ def close_trade(symbol, exit_price, pnl_usd=0, market='crypto'):
     exit_price = float(exit_price) if exit_price else 0.0
     conn = get_connection()
     cursor = conn.cursor()
-    placeholder = "%s" if not is_sqlite(conn) else "?"
     
+    # 1. Ambil data entry_price dan side untuk hitung pnl_pct
+    from psycopg2.extras import RealDictCursor
+    if not is_sqlite(conn):
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+    else:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT id, entry_price, side FROM trades "
+        "WHERE symbol = %s AND market = %s AND status IN ('PENDING', 'RUNNING') LIMIT 1",
+        (symbol, market) if not is_sqlite(conn) else (symbol, market)
+    )
+    trade = cursor.fetchone()
+    
+    if not trade:
+        cursor.close()
+        conn.close()
+        return
+
+    entry = trade['entry_price']
+    side = str(trade['side']).lower()
+    
+    # 2. Hitung PnL % (ROI dengan asumsi leverage 10x)
+    leverage = 10.0
+    pnl_pct = 0.0
+    if entry > 0:
+        if side in ['long', 'buy']:
+            pnl_pct = ((exit_price - entry) / entry) * leverage * 100
+        else:
+            pnl_pct = ((entry - exit_price) / entry) * leverage * 100
+    
+    placeholder = "%s" if not is_sqlite(conn) else "?"
     cursor.execute(f'''
         UPDATE trades
         SET exit_price = {placeholder},
             pnl_usd    = {placeholder},
+            pnl_pct    = {placeholder},
             status     = CASE WHEN {placeholder} >= 0 THEN 'WIN' ELSE 'LOSS' END,
             closed_at  = {placeholder}
-        WHERE symbol = {placeholder} AND market = {placeholder} AND status IN ('PENDING', 'RUNNING')
-    ''', (exit_price, float(pnl_usd), float(pnl_usd),
-          int(time.time() * 1000), symbol, market))
+        WHERE id = {placeholder}
+    ''', (exit_price, float(pnl_usd), float(pnl_pct), float(pnl_pct),
+          int(time.time() * 1000), trade['id']))
+    
     conn.commit()
     cursor.close()
     conn.close()
@@ -224,11 +258,19 @@ def check_pending_trades():
                     status = 'RUNNING'
 
             if status != current_status:
-                pnl = (current_price - entry) if is_long else (entry - current_price)
+                # Hitung PnL % (ROI dengan asumsi leverage 10x)
+                leverage = 10.0
+                pnl_pct = 0.0
+                if entry > 0:
+                    if is_long:
+                        pnl_pct = ((current_price - entry) / entry) * leverage * 100
+                    else:
+                        pnl_pct = ((entry - current_price) / entry) * leverage * 100
+
                 placeholder = "%s" if not is_sqlite(conn) else "?"
                 cursor.execute(
-                    f"UPDATE trades SET status = {placeholder}, exit_price = {placeholder}, closed_at = {placeholder} WHERE id = {placeholder}",
-                    (status, current_price, int(time.time() * 1000), trade_id)
+                    f"UPDATE trades SET status = {placeholder}, exit_price = {placeholder}, pnl_pct = {placeholder}, closed_at = {placeholder} WHERE id = {placeholder}",
+                    (status, current_price, float(pnl_pct), int(time.time() * 1000), trade_id)
                 )
                 conn.commit()
         except Exception as e:
