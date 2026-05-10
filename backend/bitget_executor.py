@@ -220,7 +220,8 @@ class BitgetExecutor:
             state.update_positions(all_pos)
             return all_pos
         except Exception as e:
-            return []
+            print(f"[ERROR] Gagal fetch posisi Bitget: {e}")
+            return None # Indikasi error, bukan 0 posisi
 
     def get_pending_plan_orders(self, symbol):
         try:

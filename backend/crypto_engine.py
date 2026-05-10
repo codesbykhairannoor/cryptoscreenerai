@@ -1186,12 +1186,27 @@ def run_crypto_engine():
 
             #  5. POSITION CHECK
             positions  = executor.get_all_positions()
-            open_count = len(positions) if isinstance(positions, list) else 0
-            open_bases = [executor._clean_symbol(p['symbol']) for p in positions] \
-                         if isinstance(positions, list) else []
+            if positions is None:
+                time.sleep(SCAN_INTERVAL)
+                continue
+
+            open_count = len(positions)
+            open_bases = [executor._clean_symbol(p['symbol']) for p in positions]
+            
+            # GHOST TRADE GUARD (Check Used Margin)
+            try:
+                bal = executor.get_balance()
+                used_margin = bal.get('total', 0) - bal.get('free', 0)
+                if used_margin > (FIXED_MARGIN_USDT * 0.5) and open_count == 0:
+                    if int(now) % 30 < 10:
+                        print(f"[GUARD] Used Margin detected (${used_margin:.2f}). Skipping scan.")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
+            except: pass
 
             if open_count >= MAX_POSITIONS:
-                print(f"[LIMIT] {open_count}/{MAX_POSITIONS} posisi aktif. Manage existing.")
+                if int(now) % 30 < 10:
+                    print(f"[LIMIT] {open_count}/{MAX_POSITIONS} posisi aktif ({', '.join(open_bases)}).")
                 time.sleep(SCAN_INTERVAL)
                 continue
 
