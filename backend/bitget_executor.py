@@ -187,8 +187,8 @@ class BitgetExecutor:
     def get_all_positions(self):
         try:
             from shared_state import state
-            # 1. WS CACHE PRIORITY
-            if state.positions and time.time() - state.last_update < 30:
+            # 1. WS CACHE PRIORITY (Timeout dikurangi ke 5 detik untuk cegah double trade)
+            if state.positions and time.time() - state.last_update < 5:
                 return state.positions
 
             # 2. REST SEED/FALLBACK
@@ -304,6 +304,12 @@ class BitgetExecutor:
 
             # 5. SET SL/TP via Plan Order API (cara yang benar untuk Bitget Classic)
             self._set_sl_tp_bitget(symbol, side, amount, sl_price=final_sl, tp_price=final_tp)
+
+            # 6. INVALIDATE CACHE (PENTING!)
+            # Paksa bot untuk fetch posisi terbaru dari REST di loop berikutnya
+            # agar tidak membuka trade kedua.
+            from shared_state import state
+            state.last_update = 0
 
             print(f"[ORDER OK] {symbol} {side.upper()} | Entry: {price} | TP: {final_tp} (+{round((final_tp/price-1)*100,2)}%) | SL: {final_sl} (-{round((1-final_sl/price)*100,2)}%)")
             return True, order
