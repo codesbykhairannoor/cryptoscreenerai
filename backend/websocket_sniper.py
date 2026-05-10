@@ -288,74 +288,80 @@ class FinnhubWS:
 
     async def listen(self):
         from shared_state import state
-        
+
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
-        
+
         while self.is_running:
             try:
-                # Tambahkan ping_interval & ping_timeout untuk stabilitas lebih tinggi
                 async with websockets.connect(
-                    self.url, 
+                    self.url,
                     ssl=ssl_context,
                     ping_interval=20,
                     ping_timeout=20,
                     close_timeout=10
                 ) as ws:
-                    asyncio.create_task(self.heartbeat(ws))
                     await self.subscribe(ws)
                     while True:
                         try:
                             msg = await asyncio.wait_for(ws.recv(), timeout=60)
                         except asyncio.TimeoutError:
-                            # Jika 60 detik tidak ada data, kirim ping manual
-                            await ws.ping()
+                            try:
+                                await ws.ping()
+                            except Exception:
+                                break
                             continue
-                            
-                        data = json.loads(msg)
+
+                        try:
+                            data = json.loads(msg)
+                        except Exception:
+                            continue
+
                         m_type = data.get("type")
-                        
+
                         if m_type == "news" and "data" in data:
                             for n in data["data"]:
-                                headline = n.get("headline", "")
-                                score = self.analyze_sentiment(headline)
-                                state.rt_news.append({"headline": headline, "score": score, "time": time.time()})
-                                if len(state.rt_news) > 50: state.rt_news.pop(0)
-                                print(f"[NEWS] {headline[:60]}... | Sentiment: {score}")
+                                try:
+                                    headline = n.get("headline", "")
+                                    score = self.analyze_sentiment(headline)
+                                    state.rt_news.append({"headline": headline, "score": score, "time": time.time()})
+                                    if len(state.rt_news) > 50: state.rt_news.pop(0)
+                                    print(f"[NEWS] {headline[:60]}... | Sentiment: {score}")
+                                    if abs(score) >= 0.2:
+                                        try:
+                                            from news_sniper import get_sniper_instance
+                                            sniper = get_sniper_instance()
+                                            sniper.process_finnhub_news(headline, score)
+                                        except Exception as e:
+                                            print(f"[FINNHUB SNIPER ERROR] {e}")
+                                except Exception:
+                                    pass
 
-                                # TRIGGER NEWS SNIPER kalau sentiment kuat
-                                if abs(score) >= 0.2:
-                                    try:
-                                        from news_sniper import get_sniper_instance
-                                        sniper = get_sniper_instance()
-                                        sniper.process_finnhub_news(headline, score)
-                                    except Exception as e:
-                                        print(f"[FINNHUB SNIPER ERROR] {e}")
-                                
                         elif m_type == "trade" and "data" in data:
                             for t in data["data"]:
-                                sym = t.get("s")
-                                price = float(t.get("p", 0))
-                                state.rt_price[f"FINNHUB:{sym}"] = price
+                                try:
+                                    sym = t.get("s")
+                                    price = float(t.get("p", 0))
+                                    if sym and price:
+                                        state.rt_price[f"FINNHUB:{sym}"] = price
+                                except Exception:
+                                    pass
+
             except Exception as e:
-                # Finnhub sangat ketat dengan Rate Limit (429), kita tunggu lebih lama
-                print(f"[FINNHUB WS ERROR] {e}")
+                print(f"[FINNHUB WS ERROR] {e}", flush=True)
                 if not hasattr(self, '_finnhub_retry_count'):
                     self._finnhub_retry_count = 0
                 self._finnhub_retry_count += 1
 
-                # Cap di attempt 10 — setelah itu pause 30 menit, tidak spam log
                 if self._finnhub_retry_count > 10:
-                    wait = 1800  # 30 menit
-                    print(f"[FINNHUB WS] Terlalu banyak retry ({self._finnhub_retry_count}x). "
-                          f"Pause 30 menit, lanjut tanpa Finnhub.", flush=True)
+                    wait = 1800
+                    print(f"[FINNHUB WS] Too many retries. Pause 30min.", flush=True)
                     await asyncio.sleep(wait)
-                    self._finnhub_retry_count = 0  # Reset setelah pause panjang
+                    self._finnhub_retry_count = 0
                 else:
-                    # Exponential backoff: 30s, 60s, 120s, 240s, max 300s
                     wait = min(300, 30 * (2 ** min(self._finnhub_retry_count - 1, 3)))
-                    print(f"[FINNHUB WS] Reconnect dalam {wait}s (attempt #{self._finnhub_retry_count}/10)...")
+                    print(f"[FINNHUB WS] Reconnect in {wait}s (#{self._finnhub_retry_count}/10)...", flush=True)
                     await asyncio.sleep(wait)
             else:
                 self._finnhub_retry_count = 0
@@ -791,19 +797,35 @@ def get_market_ws() -> BitgetMarketWS:
     return _market_ws_instance
 
 
+async def _safe_run(coro, name: str):
+    """
+    Wrapper untuk menjalankan coroutine dengan exception isolation.
+    Kalau satu WS crash, yang lain tetap jalan.
+    Restart otomatis setelah 10 detik.
+    """
+    while True:
+        try:
+            await coro()
+        except Exception as e:
+            print(f"[WS CRASH] {name} crashed: {e}. Restarting in 10s...", flush=True)
+            await asyncio.sleep(10)
+
+
 async def main():
     private_ws  = BitgetPrivateWS()
-    public_ws   = BitgetPublicWS()   # Legacy — masih jalan untuk backward compat
+    public_ws   = BitgetPublicWS()
     finnhub_ws  = FinnhubWS()
-    market_ws   = get_market_ws()    # NEW: Full market data engine
+    market_ws   = get_market_ws()
     binance_ws  = BinanceWS()
 
+    # Jalankan semua WS dengan isolation — satu crash tidak membunuh yang lain
     await asyncio.gather(
-        private_ws.listen(),
-        public_ws.listen(),          # Legacy Hunter (6 symbols)
-        finnhub_ws.listen(),         # News & Global
-        market_ws.listen(),          # Full Market Engine (Dinamis)
-        binance_ws.listen(),         # Binance Correlation
+        _safe_run(private_ws.listen,  "PrivateWS"),
+        _safe_run(public_ws.listen,   "PublicWS"),
+        _safe_run(finnhub_ws.listen,  "FinnhubWS"),
+        _safe_run(market_ws.listen,   "MarketWS"),
+        _safe_run(binance_ws.listen,  "BinanceWS"),
+        return_exceptions=True,   # Jangan propagate exception ke gather
     )
 
 if __name__ == "__main__":
