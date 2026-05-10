@@ -48,7 +48,8 @@ from database import log_trade
 from bitget_executor import BitgetExecutor
 
 #  KONFIGURASI 
-MAX_POSITIONS        = 1      # FOKUS: 1 trade saja
+MAX_POSITIONS        = 1      # FOKUS: 1 trade saja (STRICT)
+FIXED_MARGIN_USDT    = 3.0    # Limit: $3 per trade
 SCAN_INTERVAL        = 10     # Scan setiap 10 detik
 COOLDOWN_AFTER_TRADE = 120    # 2 menit cooldown — versi profit May 5
 NEWS_REPORT_INTERVAL = 600
@@ -1497,7 +1498,7 @@ def run_crypto_engine():
                 tp, sl = _calc_tp_sl(mark_price, side, tech)
 
                 # Hitung size
-                amount = executor.get_max_available(symbol, leverage=LEVERAGE)
+                amount = executor.get_max_available(symbol, leverage=LEVERAGE, risk_usdt=FIXED_MARGIN_USDT)
                 if amount > 0:
                     print(f"\n{'='*60}")
                     print(f"[SCALPER v5.1] {clean_base} {side.upper()} | Score: {combined_score}/100")

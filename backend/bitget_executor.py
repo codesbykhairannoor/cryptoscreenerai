@@ -129,34 +129,29 @@ class BitgetExecutor:
             }
         except: return {'total': 0, 'free': 0}
 
-    def get_max_available(self, symbol, leverage=10, risk_usdt=None):
+    def get_max_available(self, symbol, leverage=10, risk_usdt=3.0):
         """
         Hitung size untuk 1 trade maksimal.
-
-        Karena MAX_POSITIONS = 1, kita bisa pakai SEMUA balance yang tersedia.
-        Sisakan 5% sebagai buffer untuk fee dan margin call.
-
-        Contoh balance $5.50:
-        - Margin = $5.50 x 95% = $5.22
-        - Notional = $5.22 x 10x = $52.2
-        - Fee round trip 0.12% = $0.063
-        - SL 24% PnL = -$1.26 per loss
-        - TP 90% PnL = +$4.72 per win
+        FIX: Dibatasi cuman $3 per trade sesuai permintaan USER.
         """
         try:
             balance   = self.get_balance()
             free_usdt = balance['free']
 
-            if free_usdt <= 0:
-                print(f"[SIZE] Balance kosong: ${free_usdt:.2f}")
-                return 0
-
-            # Pakai 95% dari balance bebas (sisakan 5% untuk fee/buffer)
-            margin_to_use = free_usdt * 0.95
+            if free_usdt < risk_usdt:
+                print(f"[SIZE] Balance tidak cukup untuk trade ${risk_usdt}: ${free_usdt:.2f}")
+                # Fallback ke sisa balance jika masih di atas $0.5 (untuk 10x leverage = $5 notional)
+                if free_usdt >= 0.55:
+                    margin_to_use = free_usdt * 0.90
+                else:
+                    return 0
+            else:
+                # Kunci di $3 sesuai request
+                margin_to_use = risk_usdt
 
             # Minimum notional Bitget = 5 USDT
             if margin_to_use * leverage < 5.0:
-                print(f"[SIZE] Balance terlalu kecil: ${free_usdt:.2f} (min $0.50 untuk 10x)")
+                print(f"[SIZE] Notional terlalu kecil: ${margin_to_use * leverage:.2f} (Min $5)")
                 return 0
 
             ticker = self.exchange.fetch_ticker(symbol)
