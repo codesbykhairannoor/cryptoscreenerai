@@ -32,7 +32,8 @@ class BitgetExecutor:
             'timeout': 30000,
             'options': {
                 'defaultType': 'swap',
-                'posMode': 'unilateral' 
+                'posMode': 'unilateral',
+                'adjustForTimeDifference': True
             }
         })
         
@@ -43,6 +44,8 @@ class BitgetExecutor:
         self.is_uta = False
         self.startup_time = time.time()
         self.warmup_period = 15
+        self.time_offset = 0
+        self.sync_server_time()
         
         try:
             from shared_state import state
@@ -73,9 +76,21 @@ class BitgetExecutor:
         except Exception as e:
             print(f"[STARTUP AUDIT ERROR] {e}")
 
+    def sync_server_time(self):
+        """Fetch server time from Bitget and calculate offset (Fail-safe for Windows VPS)"""
+        try:
+            res = requests.get("https://api.bitget.com/api/v2/public/time", timeout=10)
+            if res.status_code == 200:
+                server_ts = int(res.json()['data']['serverTime'])
+                local_ts  = int(time.time() * 1000)
+                self.time_offset = server_ts - local_ts
+                print(f"[SYSTEM] Time Sync: Offset {self.time_offset}ms applied.")
+        except Exception as e:
+            print(f"[SYSTEM] Time Sync FAILED: {e}")
+
     def _v3_request(self, method, path, query="", body=None):
         """Signed V3 Request for UTA accounts (Stable Baseline)"""
-        ts = str(int(time.time() * 1000))
+        ts = str(int(time.time() * 1000 + self.time_offset))
         request_path = path + (f"?{query}" if query else "")
         body_str = json.dumps(body) if body else ""
         
@@ -186,43 +201,40 @@ class BitgetExecutor:
             return 0
 
     def get_all_positions(self):
+        """Fetch all active positions using direct V2 REST API (Fast & Robust)"""
         try:
             from shared_state import state
             # 1. WS CACHE PRIORITY (Trust the cache even if empty, to prevent race conditions)
             if state.last_update > 0 and time.time() - state.last_update < 5:
                 return state.positions
 
-            # 2. REST SEED/FALLBACK
-            all_pos = []
-            ccxt_pos = self.exchange.fetch_positions(params={'productType': 'usdt-futures'})
-            for p in ccxt_pos:
-                sz = float(p.get('contracts', 0) or 0)
-                if sz > 0:
-                    entry = float(p.get('entryPrice', 0))
-                    mark = float(p.get('markPrice', 0))
-                    side = p['side'].lower()
-                    # ROE% Calculation (Gross or Net from Exchange)
-                    pnl_pct = 0
-                    if p.get('percentage') is not None:
-                        pnl_pct = float(p['percentage'])
-                    elif entry > 0:
-                        diff = (mark - entry) if side in ['long', 'buy'] else (entry - mark)
-                        pnl_pct = (diff / entry) * float(p.get('leverage', 10)) * 100
-                    
-                    all_pos.append({
+            # 2. DIRECT REST FALLBACK (Fail-safe for VPS clock drift)
+            res = self._v3_request("GET", "/api/v2/mix/position/all-position", "productType=USDT-FUTURES")
+            
+            if res.get('code') != '00000':
+                print(f"[ERROR] Direct Position Fetch Gagal: {res}")
+                return None
+            
+            data = res.get('data', [])
+            positions = []
+            for p in data:
+                total_vol = float(p.get('total', 0))
+                if total_vol > 0:
+                    positions.append({
                         'symbol': p['symbol'],
-                        'side': side,
-                        'size': sz,
-                        'entry': entry,
-                        'mark_price': mark,
-                        'leverage': float(p.get('leverage', 10)),
-                        'pnl': round(pnl_pct, 2)
+                        'side': p['holdSide'].lower(),
+                        'amount': total_vol,
+                        'entry': float(p.get('openPriceAvg', 0)),
+                        'mark_price': float(p.get('markPrice', 0)),
+                        'pnl': round(float(p.get('unrealizedPL', 0)), 2),
+                        'margin': float(p.get('margin', 0))
                     })
-            state.update_positions(all_pos)
-            return all_pos
+            # Update cache shared_state
+            state.update_positions(positions)
+            return positions
         except Exception as e:
-            print(f"[ERROR] Gagal fetch posisi Bitget: {e}")
-            return None # Indikasi error, bukan 0 posisi
+            print(f"[ERROR] Exception in get_all_positions: {e}")
+            return None
 
     def get_pending_plan_orders(self, symbol):
         try:

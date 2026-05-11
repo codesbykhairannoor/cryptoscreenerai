@@ -1211,7 +1211,13 @@ def run_crypto_engine():
 
             if open_count >= MAX_POSITIONS:
                 if int(now) % 30 < 10:
-                    print(f"[LIMIT] {open_count}/{MAX_POSITIONS} posisi aktif ({', '.join(open_bases)}).")
+                    pos_info = []
+                    for p in positions:
+                        pnl = p.get('pnl', 0)
+                        sym = p.get('symbol', '???').replace('USDT', '')
+                        color = "+" if pnl >= 0 else ""
+                        pos_info.append(f"{sym}({color}{pnl}%)")
+                    print(f"[LIMIT] {open_count}/{MAX_POSITIONS} posisi aktif: {', '.join(pos_info)}.")
                 time.sleep(SCAN_INTERVAL)
                 continue
 
