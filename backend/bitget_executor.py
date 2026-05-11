@@ -521,7 +521,7 @@ class BitgetExecutor:
             for pos in positions:
                 symbol     = pos['symbol']
                 side       = pos['side']
-                size       = float(pos.get('size', 0))
+                size       = float(pos.get('amount', 0))
                 entry      = float(pos.get('entry', 0))
                 pnl        = float(pos.get('pnl', 0))
                 mark_price = float(pos.get('mark_price', 0))
@@ -658,7 +658,7 @@ class BitgetExecutor:
                     locked_pnl = float(int(peak_pnl / 5) * 5 - 5)
                     locked_pnl = max(0.0, locked_pnl)
 
-                    pos_lev = float(p.get('leverage', 10.0))
+                    pos_lev = float(pos.get('leverage', 10.0))
                     if side in ['long', 'buy']:
                         new_sl = entry * (1 + (locked_pnl / 100.0) / pos_lev)
                     else:
