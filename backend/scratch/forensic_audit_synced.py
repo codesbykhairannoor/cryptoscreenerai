@@ -13,8 +13,8 @@ API_KEY = os.getenv("BITGET_API_KEY")
 SECRET_KEY = os.getenv("BITGET_SECRET_KEY")
 PASSPHRASE = os.getenv("BITGET_PASSPHRASE")
 
-# FIX: Kompensasi perbedaan waktu 157 detik
-TIME_OFFSET = 157202 
+# FIX: Waktu sudah sinkron
+TIME_OFFSET = 0 
 
 def v2_request(method, path, query="", body=None):
     # Gunakan waktu server (lokal + offset)

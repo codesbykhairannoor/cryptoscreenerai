@@ -220,13 +220,24 @@ class BitgetExecutor:
             for p in data:
                 total_vol = float(p.get('total', 0))
                 if total_vol > 0:
+                    lev = float(p.get('leverage', 10))
+                    ent = float(p.get('openPriceAvg', 0))
+                    mrk = float(p.get('markPrice', 0))
+                    side_sign = 1 if p['holdSide'].lower() in ['long','buy'] else -1
+                    
+                    # Hitung PnL % yang akurat (ROA * Leverage)
+                    pnl_pct = 0
+                    if ent > 0:
+                        pnl_pct = ((mrk - ent) / ent) * lev * 100 * side_sign
+
                     positions.append({
                         'symbol': p['symbol'],
                         'side': p['holdSide'].lower(),
                         'amount': total_vol,
-                        'entry': float(p.get('openPriceAvg', 0)),
-                        'mark_price': float(p.get('markPrice', 0)),
-                        'pnl': round(float(p.get('unrealizedPL', 0)), 2),
+                        'entry': ent,
+                        'mark_price': mrk,
+                        'leverage': lev,
+                        'pnl': round(pnl_pct, 2),
                         'margin': float(p.get('margin', 0))
                     })
             # Update cache shared_state
@@ -356,12 +367,14 @@ class BitgetExecutor:
         if sl_price and sl_price > 0:
             # Validasi: SL long harus di bawah current price
             if current_price > 0:
-                if hold_side == 'long' and sl_price >= current_price * 0.999:
-                    sl_price = current_price * 0.976   # 2.4% = 24% PnL
-                    print(f"[SL ADJUST] {symbol} SL adjusted to {round(sl_price,6)}")
-                elif hold_side == 'short' and sl_price <= current_price * 1.001:
-                    sl_price = current_price * 1.024   # 2.4% = 24% PnL
-                    print(f"[SL ADJUST] {symbol} SL adjusted to {round(sl_price,6)}")
+                # Cegah reset SL ke bawah jika posisi sedang UNTUNG BESAR
+                # Hanya reset jika SL baru BENAR-BENAR menabrak harga (jarak < 0.05%)
+                if hold_side == 'long' and sl_price >= current_price * 0.9995:
+                    print(f"[SL GUARD] {symbol} SL too close, skipping update to protect profit.")
+                    return
+                elif hold_side == 'short' and sl_price <= current_price * 1.0005:
+                    print(f"[SL GUARD] {symbol} SL too close, skipping update.")
+                    return
             self._set_sl_ccxt(symbol, side, size, sl_price)
 
         if tp_price and tp_price > 0:
