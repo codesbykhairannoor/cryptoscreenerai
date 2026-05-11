@@ -1092,8 +1092,8 @@ class ForexExecutor:
             elif pump_sig == "BREAKOUT_DOWN": score += 30
             if rsi_div == "BEARISH_DIVERGENCE": score += 20
 
-        #  2. Volume Spike (max 12 poin) 
-        if vol_spike: score += 12
+        #  2. Volume Spike (max 15 poin) 
+        if vol_spike: score += 15
 
         #  3. RSI Zone (max 15 poin) 
         # RSI threshold diturunkan: max 65 untuk BUY (bukan 72)
@@ -1115,9 +1115,9 @@ class ForexExecutor:
         if side == "buy"  and ob == "BULLISH_OB": score += 8
         if side == "sell" and ob == "BEARISH_OB": score += 8
 
-        #  6. MSS / CHoCH (max 10 poin) 
-        if side == "buy"  and (mss_b or choch_b): score += 10
-        if side == "sell" and (mss_s or choch_s): score += 10
+        #  6. MSS / CHoCH (max 20 poin) 
+        if side == "buy"  and (mss_b or choch_b): score += 20
+        if side == "sell" and (mss_s or choch_s): score += 20
 
         #  7. Liquidity Sweep (max 5 poin) 
         if liq: score += 5
@@ -1172,40 +1172,43 @@ class ForexExecutor:
             score -= 15 if near_weekly else 8
 
         #  8. Whale Signal via PAXG Order Book (max 15 poin) 
+        #  8. Whale Signal via PAXG Order Book (max 25 poin) 
         # Ini sinyal paling kuat ??? whale di gold market = institutional money
         whale = ind.get("whale_signal", "NORMAL")
         obi   = ind.get("obi", 0.0)
         if side == "buy":
-            if whale == "WHALE_BUY":   score += 15
-            elif whale == "WHALE_SELL": score -= 12  # Whale jual = jangan beli
-            if obi > 0.20:             score += 10  # Buyer dominance kuat
-            elif obi > 0.10:           score += 5
-            elif obi < -0.15:          score -= 8   # Seller dominance
+            if whale == "WHALE_BUY":   score += 25
+            elif whale == "WHALE_SELL": score -= 20
+            if rsi_div == "BULLISH_DIVERGENCE": score += 20
+            if obi > 0.20:             score += 25
+            elif obi > 0.10:           score += 15
         else:
-            if whale == "WHALE_SELL":  score += 15
-            elif whale == "WHALE_BUY": score -= 12
-            if obi < -0.20:            score += 10
-            elif obi < -0.10:          score += 5
-            elif obi > 0.15:           score -= 8
+            if whale == "WHALE_SELL":  score += 25
+            elif whale == "WHALE_BUY": score -= 20
+            if rsi_div == "BEARISH_DIVERGENCE": score += 20
+            if obi < -0.20:            score += 25
+            elif obi < -0.10:          score += 15
 
-        #  8. Trend 30m alignment (max 5 poin, penalti -8) 
-        # Penalti dikurangi kalau ada sinyal pembalikan kuat (pump/dump signal)
+        #  8. Trend 30m (max 3 poin)
+        if side == "buy"  and trend == "BULLISH": score += 3
+        if side == "sell" and trend == "BEARISH": score += 3
+        
+        #  9. Trend 1h (max 3 poin)
+        if side == "buy"  and trend_1h == "BULLISH": score += 3
+        if side == "sell" and trend_1h == "BEARISH": score += 3
+        
+        #  10. Trend 4h (max 3 poin)
+        if side == "buy"  and trend_4h == "BULLISH": score += 3
+        if side == "sell" and trend_4h == "BEARISH": score += 3
+
+        #  Penalti Trend (reversed logic handled by reversal_signal check)
         reversal_signal = pump_sig in ("PUMP_IMMINENT", "DUMP_IMMINENT", "BREAKOUT_UP", "BREAKOUT_DOWN")
-        trend_penalty_30m = 0 if reversal_signal else 8   # penalti DIHAPUS saat reversal
-        if side == "buy"  and trend == "BULLISH": score += 5
-        if side == "sell" and trend == "BEARISH": score += 5
-        if side == "buy"  and trend == "BEARISH": score -= trend_penalty_30m
-        if side == "sell" and trend == "BULLISH": score -= trend_penalty_30m
-
-        #  9. Trend 1h confirmation (max 10 poin, penalti -12 normal, -6 saat reversal) 
+        
+        #  10b. Trend Penalty logic
         trend_penalty_1h = 0 if reversal_signal else 12
-        if side == "buy"  and trend_1h == "BULLISH": score += 10
-        if side == "sell" and trend_1h == "BEARISH": score += 10
         if side == "buy"  and trend_1h == "BEARISH": score -= trend_penalty_1h
         if side == "sell" and trend_1h == "BULLISH": score -= trend_penalty_1h
 
-        #  10. Trend 4h BIAS FILTER (max 8 poin, penalti -15 normal, -5 saat reversal kuat) 
-        # Saat PUMP/DUMP_IMMINENT, penalti 4h dikurangi drastis
         # Karena reversal sering terjadi melawan trend 4h
         trend_penalty_4h = 0 if reversal_signal else 15
         if side == "buy"  and trend_4h == "BULLISH": score += 8
