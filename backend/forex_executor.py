@@ -26,10 +26,10 @@ load_dotenv()
 # ── KONFIGURASI UTAMA ──────────────────────────────────────────────────────────
 MAX_POSITIONS        = 1      # 1 trade fokus — lebih baik 1 trade bagus dari 2 trade biasa
 SCAN_INTERVAL        = 3
-COOLDOWN_AFTER_TRADE = 180    # 3 menit cooldown (naik dari 45 detik)
-EQUITY_GUARD_PCT     = 0.93   # Lebih ketat dari 0.92
-MAX_SPREAD_POINTS    = 35     # Max 3.5 poin spread (XAUUSD normal 2-4 poin)
-MIN_MOMENTUM_SCORE   = 58     # Naik dari 55
+COOLDOWN_AFTER_TRADE = 120    # Turun ke 2 menit agar lebih rajin
+EQUITY_GUARD_PCT     = 0.93
+MAX_SPREAD_POINTS    = 35
+MIN_MOMENTUM_SCORE   = 55     # Turun ke 55 (Lebih agresif)
 CANDLE_LIMIT         = 100
 
 # ── TP/SL — RR 2:1 ────────────────────────────────────────────────────────────
@@ -77,6 +77,7 @@ class ForexExecutor:
         self._consec_losses     = 0
         self._consec_pause_until = 0
         self._last_close_clean  = time.time()
+        self._pending_order_ts  = 0  # FIX: Cegah multi-trade saat REST lag
 
         if self.is_active:
             try:
@@ -1427,13 +1428,15 @@ class ForexExecutor:
                 "symbol":     symbol,
                 "actionType": "ORDER_TYPE_BUY" if side.lower() == "buy" else "ORDER_TYPE_SELL",
                 "volume":     amount,
-                "comment":    "GeniusForex v6.0",
+                "comment":    "GeniusForex v8.0",
             }
             if sl: payload["stopLoss"]   = sl
             if tp: payload["takeProfit"] = tp
             res    = requests.post(url, headers=headers, json=payload, timeout=10)
             result = res.json()
             if res.status_code == 200:
+                self._pending_order_ts = time.time() # FIX: Lock entry
+                self._positions_cache  = []         # FIX: Invalidate cache
                 print("[FOREX SUCCESS] " + side.upper() + " " + symbol + " lot=" + str(amount) + " TP=" + str(tp) + " SL=" + str(sl))
                 
                 # KIRIM NOTIF TELEGRAM
@@ -1674,7 +1677,15 @@ class ForexExecutor:
                 total_lots   = sum(float(p.get("volume", 0)) for p in positions)
                 now_t = time.time()
                 if broker_price > 0 and now_t - last_scan_log >= 15:
-                    print(f"[FOREX] Price: {broker_price} | Trades: {active_count} | Lots: {round(total_lots,2)} | Spread: {spread_pts}pts", flush=True)
+                    pending_str = " (Pending...)" if now_t - self._pending_order_ts < 10 else ""
+                    print(f"[FOREX] Price: {broker_price} | Trades: {active_count} | Lots: {round(total_lots,2)} | Spread: {spread_pts}pts{pending_str}", flush=True)
+
+                # ── GHOST TRADE GUARD (MetaAPI Sync Lag) ──
+                if active_count == 0 and now_t - self._pending_order_ts < 10:
+                    if now_t - last_scan_log >= 15:
+                        print("[FOREX GUARD] Order baru saja dikirim. Menunggu sinkronisasi MT5...")
+                    time.sleep(SCAN_INTERVAL)
+                    continue
 
                 if broker_price > 0 and positions:
                     for p in positions:
@@ -1816,11 +1827,15 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # MTF CONFLUENCE — butuh minimal 2 TF aligned
+                # MTF CONFLUENCE — butuh minimal 2 TF aligned (Atau 1 TF + 5M Precision Tinggi)
                 mtf = self._get_mtf_confluence(side)
-                if mtf["aligned_count"] < 2:
+                e5m = self._get_5m_entry_quality()
+                
+                mtf_pass = (mtf["aligned_count"] >= 2) or (mtf["aligned_count"] >= 1 and e5m["quality"] >= 50)
+                
+                if not mtf_pass:
                     if do_log:
-                        print(f"[MTF] Confluence rendah: {mtf['aligned_count']}/4 TF ({mtf['confluence']}). Skip.")
+                        print(f"[MTF] Confluence rendah: {mtf['aligned_count']}/4 TF. 5M Quality: {e5m['quality']}. Skip.")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
@@ -1833,8 +1848,7 @@ class ForexExecutor:
                     continue
 
                 # 5M PRECISION CHECK (SMC FVG/Liq)
-                e5m = self._get_5m_entry_quality()
-                if e5m["quality"] < 30 and mtf["aligned_count"] < 3:
+                if e5m["quality"] < 25 and mtf["aligned_count"] < 3:
                      if do_log:
                          print(f"[5M PRECISION] Entry {side.upper()} kurang tajam (Quality: {e5m['quality']}). Skip.")
                      time.sleep(SCAN_INTERVAL)

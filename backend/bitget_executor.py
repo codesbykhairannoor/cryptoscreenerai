@@ -22,6 +22,7 @@ class BitgetExecutor:
         self.api_key = os.getenv("BITGET_API_KEY")
         self.secret_key = os.getenv("BITGET_SECRET_KEY")
         self.passphrase = os.getenv("BITGET_PASSPHRASE", "")
+        self._is_ordering = False # Lock untuk cegah double trade
 
         self.exchange = ccxt.bitget({
             'apiKey': self.api_key,
@@ -258,6 +259,7 @@ class BitgetExecutor:
         except: return []
 
     def place_order(self, symbol, side, amount, tp=None, sl=None, leverage=10):
+        self._is_ordering = True
         try:
             # 1. SET LEVERAGE
             try:
@@ -266,7 +268,7 @@ class BitgetExecutor:
                 print(f"[LEVERAGE] Set {leverage}x for {symbol}: {lev_err}")
 
             # 2. MARKET ORDER
-            order = self.exchange.create_order(symbol, 'market', side, amount)
+            order = self.exchange.create_order(symbol, 'market', side, amount, params={'orderComment': 'GeniusScalper v5.1'})
             print(f"[BITGET CLASSIC] {side.upper()} {symbol} executed @ {leverage}x.")
 
             # 3. AMBIL HARGA FILL   handle NoneType
@@ -321,6 +323,8 @@ class BitgetExecutor:
         except Exception as e:
             print(f"[CLASSIC ORDER FAILED] {e}")
             return False, str(e)
+        finally:
+            self._is_ordering = False
 
     def _set_sl_tp_bitget(self, symbol, side, size, sl_price=None, tp_price=None):
         """

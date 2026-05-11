@@ -1185,6 +1185,11 @@ def run_crypto_engine():
             # Pass is_off_hours to the evaluator
 
             #  5. POSITION CHECK
+            if getattr(executor, '_is_ordering', False):
+                if int(now) % 30 < 10: print("[GUARD] Order sedang diproses. Skip scan.")
+                time.sleep(SCAN_INTERVAL)
+                continue
+
             positions  = executor.get_all_positions()
             if positions is None:
                 time.sleep(SCAN_INTERVAL)
@@ -1587,9 +1592,9 @@ def run_crypto_engine():
                             f"\n[ENTRY] {clean_base} {side.upper()} @ {mark_price} | "
                             f"Score:{combined_score} | SL:{sl}(-{sl_pct}%) TP:{tp}(+{tp_pct}%)\n"
                             f"  Why: {reason}\n"
-                            f"  [TECH] RSI:{rsi:.1f} VWAP:{vwap_dist:+.2f}% OBI:{tech.get('obi',0):+.2f} Trend1h:{tech.get('trend_1h','?')}\n"
-                            f"  [WS-RT] WhaleVol: B:${rt_wbv:,.0f} / S:${rt_wsv:,.0f} | OBI:{rt_obi:+.2f} | Spread:{rt_spread:.3f}%\n"
-                            f"  [SCAN] OI:{tech.get('open_interest',0):.0f} Funding:{tech.get('funding_rate',0):.5f} ADX:{tech.get('adx',0):.1f}\n"
+                            f"  [TECH] RSI:{float(rsi):.1f} VWAP:{float(vwap_dist):+.2f}% OBI:{float(tech.get('obi',0)):+.2f} Trend1h:{tech.get('trend_1h','?')}\n"
+                            f"  [WS-RT] WhaleVol: B:${float(rt_wbv):,.0f} / S:${float(rt_wsv):,.0f} | OBI:{float(rt_obi):+.2f} | Spread:{float(rt_spread):.3f}%\n"
+                            f"  [SCAN] OI:{float(tech.get('open_interest',0)):.0f} Funding:{float(tech.get('funding_rate',0)):.5f} ADX:{float(tech.get('adx',0)):.1f}\n"
                             f"  [5M-PRECISION] Signal:{tech.get('entry_signal_5m','?')}({tech.get('entry_quality_5m',0)}) | Zone:{tech.get('zone_freshness_5m','?')}",
                             flush=True
                         )
