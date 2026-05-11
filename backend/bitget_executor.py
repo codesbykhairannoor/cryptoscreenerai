@@ -628,15 +628,14 @@ class BitgetExecutor:
                     state.recently_exited[clean] = time.time()
                     continue
 
-                #    INITIAL GUARD                                              
-                if (not has_sl or not has_tp) and now - self.startup_time > self.warmup_period:
-                    if now - self._last_sl_set.get(symbol, 0) > 60:
-                        print(f"[GUARD] Protecting {symbol} | SL 24% | TP 90%")
-                        sl_price = entry * 0.976 if side in ['long','buy'] else entry * 1.024
-                        tp_price = entry * 1.09  if side in ['long','buy'] else entry * 0.91
-                        if not has_sl: self._set_sl_tp_bitget(symbol, side, size, sl_price=sl_price)
-                        if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
-                        self._last_sl_set[symbol] = now
+                #    INITIAL GUARD — Jika SL/TP hilang, pasang LANGSUNG tanpa cooldown
+                if (not has_sl or not has_tp) and now - self.startup_time > 5:
+                    print(f"[GUARD] Missing SL/TP for {symbol}. Placing immediate protection.")
+                    sl_price = entry * 0.976 if side in ['long','buy'] else entry * 1.024
+                    tp_price = entry * 1.09  if side in ['long','buy'] else entry * 0.91
+                    if not has_sl: self._set_sl_tp_bitget(symbol, side, size, sl_price=sl_price)
+                    if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
+                    self._last_sl_set[symbol] = now
 
                 #    TRAILING SL — GRANULAR SETIAP 5% PnL, GAP 10%
                 # ─────────────────────────────────────────────────────
