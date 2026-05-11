@@ -1590,10 +1590,10 @@ class ForexExecutor:
                         del self._close_attempted[pos_id]
                 continue
 
-            # TRAILING SL — aktif dari 15 poin
-            if profit_pt < 15.0:
+            # TRAILING SL — aktif dari 10 poin
+            if profit_pt < 10.0:
                 if profit_pt > 0:
-                    print(f"[TRAIL] {sym} profit_pt={round(profit_pt,2)} < 15.0, holding...")
+                    print(f"[TRAIL] {sym} profit_pt={round(profit_pt,2)} < 10.0, holding...")
                 continue
 
             if is_buy:
@@ -1606,9 +1606,12 @@ class ForexExecutor:
                 elif profit_pt >= 20.0:
                     target_sl = round(open_price + 10.0, 3)
                     stage     = "LOCK-10"
-                else:  # 15-19 poin
-                    target_sl = round(open_price + 5.0, 3)
-                    stage     = "LOCK-5"
+                elif profit_pt >= 15.0:
+                    target_sl = round(open_price + 7.0, 3)
+                    stage     = "LOCK-7"
+                else:  # 10-14 poin
+                    target_sl = round(open_price + 3.0, 3)
+                    stage     = "LOCK-3"
             else:
                 if profit_pt >= 30.0:
                     target_sl = round(open_price - 20.0, 3)
@@ -1619,9 +1622,12 @@ class ForexExecutor:
                 elif profit_pt >= 20.0:
                     target_sl = round(open_price - 10.0, 3)
                     stage     = "LOCK-10"
-                else:
-                    target_sl = round(open_price - 5.0, 3)
-                    stage     = "LOCK-5"
+                elif profit_pt >= 15.0:
+                    target_sl = round(open_price - 7.0, 3)
+                    stage     = "LOCK-7"
+                else:  # 10-14 poin
+                    target_sl = round(open_price - 3.0, 3)
+                    stage     = "LOCK-3"
 
             # SL hanya bergerak ke arah profit, tidak pernah mundur
             if is_buy:
