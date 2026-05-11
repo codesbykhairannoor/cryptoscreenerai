@@ -1082,14 +1082,14 @@ class ForexExecutor:
         rsi_div   = ind.get("rsi_divergence", "NONE")
         pump_sig  = ind.get("pump_signal", "NONE")
 
-        #  1. PUMP SIGNAL (max 35 poin) 
+        #  1. PUMP SIGNAL (max 45 poin) 
         if side == "buy":
-            if pump_sig == "PUMP_IMMINENT":  score += 35
-            elif pump_sig == "BREAKOUT_UP":  score += 25
+            if pump_sig == "PUMP_IMMINENT":  score += 45
+            elif pump_sig == "BREAKOUT_UP":  score += 30
             if rsi_div == "BULLISH_DIVERGENCE": score += 20
         else:
-            if pump_sig == "DUMP_IMMINENT":   score += 35
-            elif pump_sig == "BREAKOUT_DOWN": score += 25
+            if pump_sig == "DUMP_IMMINENT":   score += 45
+            elif pump_sig == "BREAKOUT_DOWN": score += 30
             if rsi_div == "BEARISH_DIVERGENCE": score += 20
 
         #  2. Volume Spike (max 12 poin) 
@@ -1191,14 +1191,14 @@ class ForexExecutor:
         #  8. Trend 30m alignment (max 5 poin, penalti -8) 
         # Penalti dikurangi kalau ada sinyal pembalikan kuat (pump/dump signal)
         reversal_signal = pump_sig in ("PUMP_IMMINENT", "DUMP_IMMINENT", "BREAKOUT_UP", "BREAKOUT_DOWN")
-        trend_penalty_30m = 4 if reversal_signal else 8   # penalti lebih kecil saat ada reversal
+        trend_penalty_30m = 0 if reversal_signal else 8   # penalti DIHAPUS saat reversal
         if side == "buy"  and trend == "BULLISH": score += 5
         if side == "sell" and trend == "BEARISH": score += 5
         if side == "buy"  and trend == "BEARISH": score -= trend_penalty_30m
         if side == "sell" and trend == "BULLISH": score -= trend_penalty_30m
 
         #  9. Trend 1h confirmation (max 10 poin, penalti -12 normal, -6 saat reversal) 
-        trend_penalty_1h = 6 if reversal_signal else 12
+        trend_penalty_1h = 0 if reversal_signal else 12
         if side == "buy"  and trend_1h == "BULLISH": score += 10
         if side == "sell" and trend_1h == "BEARISH": score += 10
         if side == "buy"  and trend_1h == "BEARISH": score -= trend_penalty_1h
@@ -1207,7 +1207,7 @@ class ForexExecutor:
         #  10. Trend 4h BIAS FILTER (max 8 poin, penalti -15 normal, -5 saat reversal kuat) 
         # Saat PUMP/DUMP_IMMINENT, penalti 4h dikurangi drastis
         # Karena reversal sering terjadi melawan trend 4h
-        trend_penalty_4h = 5 if reversal_signal else 15
+        trend_penalty_4h = 0 if reversal_signal else 15
         if side == "buy"  and trend_4h == "BULLISH": score += 8
         if side == "sell" and trend_4h == "BEARISH": score += 8
         if side == "buy"  and trend_4h == "BEARISH": score -= trend_penalty_4h
@@ -1815,7 +1815,8 @@ class ForexExecutor:
 
                 vol_data   = self._calc_vol_regime_forex()
                 vol_regime = vol_data.get("regime", "NORMAL")
-                if vol_regime in ("HIGH_VOL", "LOW_VOL"):
+                # BYPASS Volatility Guard if PUMP/DUMP is imminent
+                if vol_regime in ("HIGH_VOL", "LOW_VOL") and pump_sig not in ("PUMP_IMMINENT", "DUMP_IMMINENT"):
                     print(f"[VOL] XAUUSD {vol_regime} ratio={vol_data.get('atr_ratio',0)}. Skip.")
                     time.sleep(SCAN_INTERVAL)
                     continue
@@ -1865,11 +1866,12 @@ class ForexExecutor:
                 near_atl        = ind.get("near_atl", False)
                 exhaustion_pump = ind.get("is_exhaustion_pump", False)
                 exhaustion_dump = ind.get("is_exhaustion_dump", False)
-                if side == "buy" and (near_ath or exhaustion_pump):
+                # BYPASS Smart Block if PUMP_IMMINENT (This is a momentum play, not exhaustion)
+                if side == "buy" and (near_ath or exhaustion_pump) and pump_sig != "PUMP_IMMINENT":
                     print(f"[SMART BLOCK] ATH/Exhaustion — skip BUY.")
                     time.sleep(SCAN_INTERVAL)
                     continue
-                if side == "sell" and (near_atl or exhaustion_dump):
+                if side == "sell" and (near_atl or exhaustion_dump) and pump_sig != "DUMP_IMMINENT":
                     print(f"[SMART BLOCK] ATL/Exhaustion — skip SELL.")
                     time.sleep(SCAN_INTERVAL)
                     continue
