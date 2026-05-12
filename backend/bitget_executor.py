@@ -191,10 +191,13 @@ class BitgetExecutor:
             market     = self.exchange.market(symbol)
             min_amount = market.get('limits', {}).get('amount', {}).get('min', 0.001)
 
-            if formatted_amount * price < 5.0:
+            final_notional = formatted_amount * price
+            print(f"[SIZE-DEBUG] {symbol} | Requested Margin: ${margin_to_use:.2f} | Final Margin: ${final_notional/leverage:.2f} | Notional: ${final_notional:.2f} | Size: {formatted_amount}")
+            
+            if final_notional < 5.0:
+                print(f"[SIZE] Notional ${final_notional:.2f} < $5 minimum. Skipping.")
                 return 0
 
-            print(f"[SIZE] Margin=${margin_to_use:.2f} (fixed $3) | Notional=${round(notional,1)} | {formatted_amount} {symbol}")
             return formatted_amount if formatted_amount >= min_amount else 0
         except Exception as e:
             print(f"[GET_MAX ERROR] {e}")
@@ -311,8 +314,8 @@ class BitgetExecutor:
                 if sl and sl > 0 and sl < price:
                     final_sl = sl   # Pakai SL dari crypto_engine   sudah benar
                 else:
-                    final_sl = price * 0.976   # Fallback: 2.4% = 24% PnL
-                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 2.4%: {round(final_sl,6)}")
+                    final_sl = price * 0.986   # Fallback: 1.4% = 14% PnL
+                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 1.4%: {round(final_sl,6)}")
                 # TP long harus di atas fill price
                 if tp and tp > 0 and tp > price:
                     final_tp = tp
@@ -324,8 +327,8 @@ class BitgetExecutor:
                 if sl and sl > 0 and sl > price:
                     final_sl = sl
                 else:
-                    final_sl = price * 1.024
-                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 2.4%: {round(final_sl,6)}")
+                    final_sl = price * 1.014   # Fallback: 1.4% = 14% PnL
+                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 1.4%: {round(final_sl,6)}")
                 if tp and tp > 0 and tp < price:
                     final_tp = tp
                 else:
@@ -390,9 +393,9 @@ class BitgetExecutor:
 
             if mark > 0:
                 if hold == 'long' and sl_price >= mark:
-                    sl_price = mark * 0.976    # 2.4% = 24% PnL
+                    sl_price = mark * 0.986    # 1.4% = 14% PnL
                 elif hold == 'short' and sl_price <= mark:
-                    sl_price = mark * 1.024    # 2.4% = 24% PnL
+                    sl_price = mark * 1.014    # 1.4% = 14% PnL
 
             # Cancel semua SL order yang ada untuk symbol ini dulu
             # Ini mencegah duplikat SL order
@@ -617,7 +620,7 @@ class BitgetExecutor:
                           f"SL:{'OK' if has_sl else 'MISSING'} TP:{'OK' if has_tp else 'MISSING'}")
 
                 #    HARD EXIT                                                  
-                if pnl <= -24:
+                if pnl <= -14:
                     print(f"[HARD EXIT] {symbol} hit {pnl}% PNL. Closing.")
                     self.exchange.create_order(symbol, 'market',
                         'sell' if side in ['long','buy'] else 'buy', size)
@@ -630,9 +633,9 @@ class BitgetExecutor:
 
                 #    INITIAL GUARD — Jika SL/TP hilang, pasang LANGSUNG tanpa cooldown
                 if (not has_sl or not has_tp) and now - self.startup_time > 5:
-                    print(f"[GUARD] Missing SL/TP for {symbol}. Placing immediate protection.")
-                    sl_price = entry * 0.976 if side in ['long','buy'] else entry * 1.024
-                    tp_price = entry * 1.09  if side in ['long','buy'] else entry * 0.91
+                    # SL 14% PnL (1.4% price drop at 10x)
+                    sl_price = entry * 0.986 if side in ['long','buy'] else entry * 1.014
+                    tp_price = entry * 1.15  if side in ['long','buy'] else entry * 0.85
                     if not has_sl: self._set_sl_tp_bitget(symbol, side, size, sl_price=sl_price)
                     if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                     self._last_sl_set[symbol] = now
