@@ -24,7 +24,7 @@ from notifier import send_telegram_message, format_trade_message
 load_dotenv()
 
 # ── KONFIGURASI UTAMA ──────────────────────────────────────────────────────────
-MAX_POSITIONS        = 1      # 1 trade fokus — lebih baik 1 trade bagus dari 2 trade biasa
+MAX_POSITIONS        = 3      # Maksimal 3 trade agar lebih banyak peluang cuan
 SCAN_INTERVAL        = 3
 COOLDOWN_AFTER_TRADE = 120    # Turun ke 2 menit agar lebih rajin
 EQUITY_GUARD_PCT     = 0.93
