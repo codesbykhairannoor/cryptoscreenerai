@@ -124,11 +124,12 @@ SIDEWAYS_PNL_RANGE   = 2.0
 SIDEWAYS_PRICE_MOVE  = 0.5
 DAILY_LOSS_LIMIT_PCT = -40
 
-#  MARKET INTELLIGENCE CONFIG 
-# ADX Market Regime: hanya trade di trending market
+#  MARKET INTELLIGENCE CONFIG (v16.0) 
 ADX_TRENDING_THRESHOLD  = 22
 ADX_RANGING_THRESHOLD   = 18
-ADX_PERIOD              = 14
+SQUEEZE_THRESHOLD       = 0.015 # 1.5% range = Squeeze (Konsolidasi)
+STALE_CANDLE_LIMIT      = 4     # Maksimal 4 candle hijau berturut-turut (Anti-Basi)
+# ───────────────────────────────────────────────────────────────
 
 # Volatility Regime
 VOL_HIGH_MULTIPLIER     = 2.5
@@ -959,6 +960,19 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     mtf_penalty = 0
     if e5m == "SELL" or (e5m == "BUY" and q5m < 30):
          mtf_penalty = 15 # Kurangi skor jika timeframe kecil melawan
+    # ── BREAKOUT INTELLIGENCE (v16.0) ─────────────────────────────
+    # 1. Cek Konsolidasi (Squeeze)
+    recent_closes = tech.get('recent_closes', [])
+    if len(recent_closes) >= 10:
+        high_low_range = (max(recent_closes[-10:]) / min(recent_closes[-10:]) - 1)
+        is_fresh_breakout = high_low_range < SQUEEZE_THRESHOLD
+    else:
+        is_fresh_breakout = True
+
+    # 2. Cek Trend Basi (Anti-Stale)
+    consecutive_green = tech.get('consecutive_green', 0)
+    if consecutive_green >= STALE_CANDLE_LIMIT:
+        return None, "TREND_STALE", 0
     # ───────────────────────────────────────────────────────────────
 
     #  HTF TREND FILTER 
