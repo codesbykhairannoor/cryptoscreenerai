@@ -42,15 +42,15 @@ GLOBAL_REPORT_INTERVAL = 300
 FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
 MIN_MOMENTUM_SCORE   = 20     # INSTITUTIONAL MODE: Selektif
-# ── INSTITUTIONAL HUNTER CONFIG (v26.37) ──
-HUNTER_ATR_SL_MULT   = 2.0    # Hasil Backtest: SL 2.0 ATR (Anti-Shake)
-HUNTER_ATR_TP_MULT   = 1.0    # Hasil Backtest: TP 1.0 ATR (Quick Profit)
+# ── INSTITUTIONAL HUNTER CONFIG (v26.45-FINAL) ──
+HUNTER_ATR_SL_MULT   = 1.0    # Hasil Audit: Sniper Mode (Safe & Consistent)
+HUNTER_ATR_TP_MULT   = 1.0    # Hasil Audit: Sniper Mode (High Probability)
 FVG_GAP_THRESHOLD    = 0.005  
 SCALP_TP_PCT         = 0.08   
 SCALP_SL_PCT         = 0.015  
 # ─────────────────────────────────────────
 MIN_PUMP_SCORE       = 25     
-MIN_TECH_SCORE       = 30     # Hasil Backtest: Threshold 30 (Optimal Frequency)
+MIN_TECH_SCORE       = 30     # Hasil Audit: Optimal Balance
 
 #  WHALE OBSERVER CONFIG (Legacy/Reference)
 MIN_APPEARANCES      = 3      
