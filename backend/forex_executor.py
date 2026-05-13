@@ -1572,8 +1572,12 @@ class ForexExecutor:
                       f"profit=${profit} pt={round(profit_pt,2)} sl={current_sl}", flush=True)
 
             # AUTO-CLOSE: rugi melebihi SL + buffer (SL harusnya sudah kena, ini safety net)
-            # Threshold: SL 20 poin = ~$2 per 0.01 lot. Auto-close di $3 (1.5x SL)
-            auto_close_threshold = -3.5  # $3.5 per 0.01 lot
+            # v8.1: Threshold dinamis — 1.5x dari SL dalam poin dikali lot
+            # SL 20 poin = $0.2 per 0.01 lot. Auto-close di 30 poin ($0.3)
+            # Ini mencegah bot "mencuri" trade yang harusnya masih bernapas.
+            sl_points_val = abs(open_price - current_sl) if current_sl > 0 else SCALP_SL_POINTS
+            auto_close_threshold = -(sl_points_val * 1.5) * 0.1 * (float(p.get("volume", 0)) / 0.01)
+            
             if profit < auto_close_threshold and pos_id not in self._close_attempted:
                 self._close_attempted[pos_id] = now
                 print(f"[FOREX AUTO-CLOSE] {pos_id} loss ${profit} exceeded threshold. Closing.")
@@ -1682,9 +1686,11 @@ class ForexExecutor:
                     print(f"[FOREX] Price: {broker_price} | Trades: {active_count} | Lots: {round(total_lots,2)} | Spread: {spread_pts}pts{pending_str}", flush=True)
 
                 # ── GHOST TRADE GUARD (MetaAPI Sync Lag) ──
-                if active_count == 0 and now_t - self._pending_order_ts < 10:
+                # FIX v8.1: Guard aktif meskipun ada posisi (cegah multi-trade lag)
+                # Lock ditingkatkan ke 15 detik agar sinkronisasi broker lebih aman
+                if now_t - self._pending_order_ts < 15:
                     if now_t - last_scan_log >= 15:
-                        print("[FOREX GUARD] Order baru saja dikirim. Menunggu sinkronisasi MT5...")
+                        print(f"[FOREX GUARD] Sinkronisasi MT5 ({round(15 - (now_t-self._pending_order_ts))}s remaining...)")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
