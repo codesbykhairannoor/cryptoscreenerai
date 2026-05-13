@@ -1596,6 +1596,7 @@ class ForexExecutor:
                 continue
 
             # TRAILING SL — aktif dari 15 poin
+            stage = "NONE"
             if is_buy:
                 if profit_pt >= 30.0:
                     target_sl = round(open_price + 20.0, 3)

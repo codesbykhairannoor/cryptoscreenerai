@@ -58,6 +58,7 @@ NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
+ADX_PERIOD           = 14     # LOCKED AT TOP
 LEVERAGE             = 10
 MIN_MOMENTUM_SCORE   = 20     # INSTITUTIONAL MODE: Selektif
 MIN_TECH_SCORE       = 20     
