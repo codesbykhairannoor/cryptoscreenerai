@@ -101,13 +101,14 @@ DATA_PROVEN_BLACKLIST = {
     # Round 2 failures (v9.3 additions):
     'ALGOUSDT', 'CRVUSDT', 'SEIUSDT', 'FETUSDT',
     # Micro-cap (harga < 0.001 USDT) -- mudah dimanipulasi:
-    '1000BONKUSDT',
+    'BTCUSDT', 'PROSUSDT', 'NEIROCTOUSDT', 'SAHARAUSDT',
     # Round 9 failures (v10.0 additions):
-    'SUIUSDT', 'XRPUSDT', 'PEOPLEUSDT', 'DOGEUSDT',
+    'SUIUSDT', 'XRPUSDT', 'PEOPLEUSDT',
 }
  
-# STAR COINS -- Berdasarkan Round 1-9 Backtest (WR 80%+)
-STAR_COINS = {'BNBUSDT', 'NEARUSDT', 'ATOMUSDT', 'INJUSDT', 'TIAUSDT', 'SEIUSDT', 'LINKUSDT'}
+# STAR COINS -- Berdasarkan Round 1-13 Backtest (WR 80%+)
+STAR_COINS = {'BNBUSDT', 'NEARUSDT', 'ATOMUSDT', 'INJUSDT', 'TIAUSDT', 'SEIUSDT', 'LINKUSDT', 
+              'DOTUSDT', 'DYMUSDT', 'FFUSDT', 'LDOUSDT', 'WLDUSDT', 'DOGEUSDT'}
 
 # SELL TRADING DISABLED -- data menunjukkan 0% WR dari 33 SELL trades
 # Setiap SELL yang diambil bot hampir pasti kalah
