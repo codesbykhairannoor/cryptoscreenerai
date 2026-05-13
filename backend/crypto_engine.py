@@ -75,11 +75,33 @@ OI_SURGE_THRESHOLD   = 0.05
 FUNDING_SQUEEZE_THR  = -0.0003  # Fix: -0.03% lebih realistis (sebelumnya -0.1% hampir tidak pernah terjadi)
 VOLUME_SPIKE_RATIO   = 2.5
 
-# TP/SL berbasis PnL target (10x leverage)
-SCALP_TP_PCT  = 0.09   # 9% price move = 90% PnL (TP target)
-SCALP_SL_PCT  = 0.024  # 2.4% price move = 24% PnL
+# TP/SL -- data-driven dari hasil backtest (v9.1)
+# Lama: SL 2.4% terlalu ketat, kena stop-hunt 35% waktu. TP 9% jarang tercapai.
+# Baru: SL 4% = 40% PnL di 10x. TP tetap 9%. Butuh WR 30.8% untuk break-even.
+SCALP_TP_PCT  = 0.09   # 9% price = 90% PnL (tidak berubah)
+SCALP_SL_PCT  = 0.04   # 4% price = 40% PnL (naik dari 2.4% -- too tight)
 SCALP_TP_ATR  = 6.0
-SCALP_SL_ATR  = 2.0    # ATR multiplier sesuai SL 24%
+SCALP_SL_ATR  = 2.5    # ATR multiplier naik sesuai SL baru
+
+# DATA-PROVEN BLACKLIST (dari analisis 345 trades, 0% WR)
+# Koin ini terbukti di database tidak pernah profit -- langsung skip
+DATA_PROVEN_BLACKLIST = {
+    # Confirmed 0% WR dari backtest:
+    'LABUSDT', 'ZECUSDT', 'BSBUSDT', 'XRPUSDT',
+    'SKYAIUSDT', 'RAVEUSDT', 'ORCAUSDT', 'TONUSDT',
+    'ERAUSDT', 'SOLUSDT', 'PENDLEUSDT', 'NOMUSDT',
+    'SNDKUSDT', 'USUALUSDT', 'SIRENUSDT', 'CHIPUSDT',
+    'PARTIUSDT', 'ENAUSDT', 'DYMUSDT', 'JCTUSDT',
+    'LUNCUSDT', 'CRCLUSDT', 'CARVUSDT', 'LWLGUSDT',
+    'NAORISUSDT', 'UBUSDT', 'INTCUSDT', 'XAUUSD',
+    'BTCUSDT', 'PROSUSDT', 'NEIROCTOUSDT', 'SAHARAUSDT',
+    # Micro-cap (harga < 0.001 USDT) -- mudah dimanipulasi:
+    '1000BONKUSDT',
+}
+
+# SELL TRADING DISABLED -- data menunjukkan 0% WR dari 33 SELL trades
+# Setiap SELL yang diambil bot hampir pasti kalah
+SELL_TRADING_ENABLED = False  # False = BUY-only mode
 
 # Session filter
 CRYPTO_SESSION_START_UTC = 1
@@ -982,10 +1004,13 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
         long_candidates.append((s, "BULLISH ORDER BLOCK"))
 
-    # Setup 6: RSI Oversold
-    if rsi <= 35 and vwap_dist < 1.0:
+    # Setup 6: RSI Oversold -- DISABLED (0% WR dari 24 trades di backtest)
+    # RSI oversold di altcoin bukan reversal signal, tapi falling knife!
+    # Hanya aktif jika ada KONFLUENSI tambahan (mss_b atau liq)
+    if rsi <= 35 and vwap_dist < 1.0 and (mss_b or liq or whale == 'WHALE_BUY'):
         s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "RSI OVERSOLD"))
+        long_candidates.append((s, "RSI OVERSOLD + CONFLUENCE"))
+    # RSI OVERSOLD standalone = REMOVED
 
     #  SHORT SETUPS 
     short_candidates = []
@@ -1015,10 +1040,14 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
         s = _score_candidate(tech, rsi, vwap_dist, "sell")
         short_candidates.append((s, "BEARISH ORDER BLOCK"))
 
-    # Setup 6: RSI Overbought
-    if rsi >= 65 and vwap_dist > -1.0:
-        s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "RSI OVERBOUGHT"))
+    # Setup 6: RSI Overbought -- DISABLED for SELL (0% WR from data)
+    # Data: 33 SELL trades = 0% win rate. SELL trading is disabled.
+    # if rsi >= 65 and vwap_dist > -1.0:
+    #     short_candidates.append((s, "RSI OVERBOUGHT"))
+
+    #  SELL TRADING GATE -- backed by data (0% WR)
+    if not SELL_TRADING_ENABLED:
+        short_candidates = []  # Block all sell signals
 
     #  PILIH SETUP TERBAIK 
     all_candidates = [("buy", s, r) for s, r in long_candidates] + \
@@ -1340,6 +1369,11 @@ def run_crypto_engine():
                 if any(x in clean_base for x in ('USD','DAI','BUSD','TUSD','WBTC','WETH')): return None
                 if clean_base in _recently_exited:                                    return None
                 if clean_base in _repeat_losers:                                      return None
+
+                # DATA-PROVEN BLACKLIST (v9.1): koin terbukti 0% WR dari 345 trades
+                sym_key = f"{clean_base}USDT"
+                if sym_key in DATA_PROVEN_BLACKLIST or clean_base in DATA_PROVEN_BLACKLIST:
+                    return None
 
                 pump_sc = float(coin.get('pump_score', 0))
                 dump_sc = float(coin.get('dump_score', 0))
