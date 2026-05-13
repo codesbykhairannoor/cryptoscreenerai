@@ -75,12 +75,11 @@ OI_SURGE_THRESHOLD   = 0.05
 FUNDING_SQUEEZE_THR  = -0.0003  # Fix: -0.03% lebih realistis (sebelumnya -0.1% hampir tidak pernah terjadi)
 VOLUME_SPIKE_RATIO   = 2.5
 
-# TP/SL -- Optimized from Backtest Round 2 (v9.3)
-# Data: 9% TP and 5% SL (RR 1:1.8) produced 89% WR across liquid coins.
-SCALP_TP_PCT  = 0.080  # 8% price = 80% PnL
-SCALP_SL_PCT  = 0.014  # 1.4% price = 14% PnL (Tight Survival)
-SCALP_TP_ATR  = 6.0
-SCALP_SL_ATR  = 3.0    # ATR multiplier sync with 5% SL
+# ── UNIVERSAL ENGINE CONFIG (v15.0) ────────────────────────────
+ATR_SL_MULT     = 1.5    # Multiplier untuk SL (Dynamic ATR)
+ATR_TP_MIN_MULT = 3.0    # Minimum multiplier untuk TP
+TRAIL_GAP_ATR   = 2.0    # Gap untuk Parabolic Trailing (ATR units)
+# ───────────────────────────────────────────────────────────────
 
 # DATA-PROVEN BLACKLIST (dari analisis 345 trades, 0% WR)
 # Koin ini terbukti di database tidak pernah profit -- langsung skip
@@ -106,8 +105,9 @@ DATA_PROVEN_BLACKLIST = {
     'SUIUSDT', 'XRPUSDT', 'PEOPLEUSDT',
 }
  
-# STAR COINS -- High-RR Champions (Berdasarkan Round 17 - Net Profit Strategi 8%)
-STAR_COINS = {'IRYSUSDT', 'ESPORTSUSDT', 'BILLUSDT', 'SAHARAUSDT', 'DYMUSDT', 'HUSDT', 'LABUSDT'}
+# UNIVERSAL SCANNER: Tidak lagi pilih-pilih koin.
+# Bot akan memindai Top 100 koin secara dinamis.
+STAR_COINS = set() # Kosongkan agar bot memindai secara universal
 
 # SELL TRADING DISABLED -- data menunjukkan 0% WR dari 33 SELL trades
 # Setiap SELL yang diambil bot hampir pasti kalah
@@ -1058,38 +1058,18 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
 
 
 #  CORE: HITUNG TP/SL BERBASIS PnL TARGET 
+#  CORE: HITUNG TP/SL BERBASIS VOLATILITAS (ATR)
 def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]:
     """
-    TP/SL berbasis PnL target di 10x leverage.
-    
-    Target FIXED:
-    - SL = -24% PnL = -2.4% price move (SELALU, tidak bisa lebih kecil)
-    - TP = +90% PnL = +9% price move
-
-    Contoh DOGS (harga $0.001, ATR $0.000003):
-    - ATR x 2.0 = $0.000006 = 0.6% -> TERLALU KECIL
-    - min_sl = $0.001 x 0.024 = $0.000024 = 2.4% -> PAKAI INI
-
-    Contoh BTC (harga $60000, ATR $800):
-    - ATR x 2.0 = $1600 = 2.67% -> LEBIH BESAR dari 2.4%
-    - Pakai ATR-based = $1600
+    UNIVERSAL DYNAMIC SL/TP (v15.0)
+    Bekerja berdasarkan volatilitas asli koin (ATR).
     """
     atr = tech.get('atr', 0)
-
-    # HARD MINIMUM: SL tidak boleh lebih kecil dari 2.4% price (= 24% PnL di 10x)
-    min_sl_dist = mark_price * SCALP_SL_PCT   # 2.4%
-    min_tp_dist = mark_price * SCALP_TP_PCT   # 9%
-
-    if atr and atr > 0:
-        atr_sl = atr * SCALP_SL_ATR  # ATR x 1.5
-        atr_tp = atr * SCALP_TP_ATR  # ATR x 5.0
-        # Ambil yang LEBIH BESAR - ATR atau minimum %
-        sl_dist = max(atr_sl, min_sl_dist)
-        tp_dist = max(atr_tp, min_tp_dist)
-    else:
-        sl_dist = min_sl_dist
-        tp_dist = min_tp_dist
-
+    
+    # Adaptive ATR Multipliers
+    sl_dist = (atr * ATR_SL_MULT) if atr else (mark_price * 0.01)
+    tp_dist = (atr * ATR_TP_MIN_MULT) if atr else (mark_price * 0.03)
+    
     if side == "buy":
         return round(mark_price + tp_dist, 6), round(mark_price - sl_dist, 6)
     else:
