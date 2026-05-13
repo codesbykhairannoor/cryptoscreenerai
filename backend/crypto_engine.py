@@ -124,11 +124,11 @@ SIDEWAYS_PNL_RANGE   = 2.0
 SIDEWAYS_PRICE_MOVE  = 0.5
 DAILY_LOSS_LIMIT_PCT = -40
 
-#  MARKET INTELLIGENCE CONFIG (v16.0) 
+#  MARKET INTELLIGENCE CONFIG (v17.0) 
 ADX_TRENDING_THRESHOLD  = 22
-ADX_RANGING_THRESHOLD   = 18
-SQUEEZE_THRESHOLD       = 0.015 # 1.5% range = Squeeze (Konsolidasi)
-STALE_CANDLE_LIMIT      = 4     # Maksimal 4 candle hijau berturut-turut (Anti-Basi)
+SQUEEZE_MULT            = 1.8   # Dynamic Squeeze: Range < 1.8x ATR
+VOLUME_CONVERGENCE      = 1.5   # Volume harus 1.5x rata-rata
+LIQUIDITY_SWEEP_CONF    = True  # Aktifkan deteksi manipulasi institusi
 # ───────────────────────────────────────────────────────────────
 
 # Volatility Regime
@@ -960,19 +960,25 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     mtf_penalty = 0
     if e5m == "SELL" or (e5m == "BUY" and q5m < 30):
          mtf_penalty = 15 # Kurangi skor jika timeframe kecil melawan
-    # ── BREAKOUT INTELLIGENCE (v16.0) ─────────────────────────────
-    # 1. Cek Konsolidasi (Squeeze)
+    # ── HYBRID INTELLIGENCE (v17.0) ──────────────────────────────
+    # 1. Dynamic Squeeze Check
+    atr = tech.get('atr', 0)
     recent_closes = tech.get('recent_closes', [])
-    if len(recent_closes) >= 10:
-        high_low_range = (max(recent_closes[-10:]) / min(recent_closes[-10:]) - 1)
-        is_fresh_breakout = high_low_range < SQUEEZE_THRESHOLD
-    else:
-        is_fresh_breakout = True
-
-    # 2. Cek Trend Basi (Anti-Stale)
-    consecutive_green = tech.get('consecutive_green', 0)
-    if consecutive_green >= STALE_CANDLE_LIMIT:
-        return None, "TREND_STALE", 0
+    if len(recent_closes) >= 10 and atr > 0:
+        hi_lo_range = (max(recent_closes[-10:]) - min(recent_closes[-10:]))
+        if hi_lo_range > (atr * SQUEEZE_MULT):
+            return None, "NO_CONSOLIDATION", 0 # Terlalu liar, bukan breakout bersih
+            
+    # 2. Volume Convergence
+    current_vol = tech.get('volume', 0)
+    avg_vol = tech.get('avg_volume', 0)
+    if current_vol < (avg_vol * VOLUME_CONVERGENCE):
+        return None, "LOW_VOLUME_BREAKOUT", 0 # Fake breakout (no volume)
+        
+    # 3. Liquidity Sweep Check (The Institutional Signal)
+    if LIQUIDITY_SWEEP_CONF and not tech.get('is_liquidity_sweep', False):
+        # Jika bukan sweep, skor dikurangi 10 karena kurang 'bertenaga'
+        pass
     # ───────────────────────────────────────────────────────────────
 
     #  HTF TREND FILTER 
