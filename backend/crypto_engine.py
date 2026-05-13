@@ -103,6 +103,10 @@ DATA_PROVEN_BLACKLIST = {
     # Micro-cap (harga < 0.001 USDT) -- mudah dimanipulasi:
     '1000BONKUSDT',
 }
+ 
+# STAR COINS -- Berdasarkan Round 1-7 Backtest (WR 90%+)
+# Koin ini mendapatkan alokasi modal lebih besar.
+STAR_COINS = {'BNBUSDT', 'NEARUSDT', 'ATOMUSDT', 'INJUSDT'}
 
 # SELL TRADING DISABLED -- data menunjukkan 0% WR dari 33 SELL trades
 # Setiap SELL yang diambil bot hampir pasti kalah
@@ -1570,8 +1574,12 @@ def run_crypto_engine():
                 # Hitung TP/SL
                 tp, sl = _calc_tp_sl(mark_price, side, tech)
 
-                # Hitung size
-                amount = executor.get_max_available(symbol, leverage=LEVERAGE, risk_usdt=FIXED_MARGIN_USDT)
+                # Hitung size (Dynamic Sizing v9.7)
+                dynamic_margin = FIXED_MARGIN_USDT
+                if symbol in STAR_COINS:
+                    dynamic_margin = 8.0  # Alokasi lebih besar untuk koin "Dewa"
+                
+                amount = executor.get_max_available(symbol, leverage=LEVERAGE, risk_usdt=dynamic_margin)
                 if amount > 0:
                     print(f"\n{'='*60}")
                     print(f"[SCALPER v5.1] {clean_base} {side.upper()} | Score: {combined_score}/100")
