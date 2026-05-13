@@ -76,10 +76,11 @@ OI_SURGE_THRESHOLD   = 0.05
 FUNDING_SQUEEZE_THR  = -0.0003  # Fix: -0.03% lebih realistis (sebelumnya -0.1% hampir tidak pernah terjadi)
 VOLUME_SPIKE_RATIO   = 2.5
 
-# ── UNIVERSAL ENGINE CONFIG (v15.0) ────────────────────────────
-ATR_SL_MULT     = 1.5    # Multiplier untuk SL (Dynamic ATR)
-ATR_TP_MIN_MULT = 3.0    # Minimum multiplier untuk TP
-TRAIL_GAP_ATR   = 2.0    # Gap untuk Parabolic Trailing (ATR units)
+# ── PRECISION STRIKE CONFIG (v22.0) ────────────────────────────
+ATR_SL_MULT     = 2.0    # SL lebih lebar (2.0x ATR) untuk WR 70%+
+ATR_TP_MIN_MULT = 4.0    
+TRAIL_GAP_ATR   = 2.5    
+BTC_SYNC_ENABLED = True  # Hanya LONG jika BTC juga Bullish
 # ───────────────────────────────────────────────────────────────
 
 # DATA-PROVEN BLACKLIST (dari analisis 345 trades, 0% WR)
@@ -131,10 +132,9 @@ SQUEEZE_MULT            = 1.8   # Dynamic Squeeze: Range < 1.8x ATR
 VOLUME_CONVERGENCE      = 1.5   # Volume harus 1.5x rata-rata
 LIQUIDITY_SWEEP_CONF    = True  # Aktifkan deteksi manipulasi institusi
 # ───────────────────────────────────────────────────────────────
-#  ADAPTIVE SNIPER CONFIG (v20.0) 
-RELATIVE_WICK_RATIO     = 1.5   # Ekor bawah harus 1.5x lebih panjang dari ekor atas
-VOL_BYPASS_RATIO        = 3.0   # Jika volume 3x rata-rata, abaikan filter Wick
-SESSION_ADAPT_RELAX     = 0.8   # Longgarkan filter 20% saat Golden Session
+#  SNIPER PRECISION (v22.0) 
+REJECTION_MIN_PCT       = 0.25  # Ekor bawah 25%
+VOL_CONFIRM_RATIO       = 2.0   # Volume 2x
 # ───────────────────────────────────────────────────────────────
 
 # Volatility Regime
