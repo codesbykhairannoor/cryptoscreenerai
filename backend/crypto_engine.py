@@ -952,6 +952,14 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     choch_b = tech.get('choch_bullish', False)
     choch_s = tech.get('choch_bearish', False)
     obi   = tech.get('obi', 0)
+ 
+    # ── MTF ALIGNMENT SHIELD (v10.1) ───────────────────────────────
+    e5m = tech.get('entry_signal_5m', 'N/A')
+    q5m = tech.get('entry_quality_5m', 0)
+    mtf_penalty = 0
+    if e5m == "SELL" or (e5m == "BUY" and q5m < 30):
+         mtf_penalty = 15 # Kurangi skor jika timeframe kecil melawan
+    # ───────────────────────────────────────────────────────────────
 
     #  HTF TREND FILTER 
     trend_1h = tech.get('trend_1h', 'NEUTRAL')
@@ -1043,6 +1051,8 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     # HTF alignment bonus
     if best_side == "buy"  and trend_4h == "BULLISH": best_score = min(100, best_score + 10)
     if best_side == "sell" and trend_4h == "BEARISH": best_score = min(100, best_score + 10)
+    # Apply MTF Shield Penalty
+    best_score = max(0, best_score - mtf_penalty)
 
     return best_side, best_reason, best_score
 
