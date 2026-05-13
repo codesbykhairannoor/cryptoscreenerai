@@ -94,7 +94,9 @@ DATA_PROVEN_BLACKLIST = {
     'LUNCUSDT', 'CRCLUSDT', 'CARVUSDT', 'LWLGUSDT',
     'NAORISUSDT', 'UBUSDT', 'INTCUSDT', 'XAUUSD',
     'BTCUSDT', 'PROSUSDT', 'NEIROCTOUSDT', 'SAHARAUSDT',
-    # Round 3 failures (v9.4 additions):
+    # Round 5 failures (v9.6 additions):
+    'SOLUSDT',
+    # Round 4 failures (v9.5 additions):
     'WIFUSDT', 'LTCUSDT',
     # Round 2 failures (v9.3 additions):
     'ALGOUSDT', 'CRVUSDT', 'SEIUSDT', 'FETUSDT',
