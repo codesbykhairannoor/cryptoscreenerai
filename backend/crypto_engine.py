@@ -1,8 +1,10 @@
-VERSION_TAG = "v26.5-STRIKE-FORCE"
+VERSION_TAG = "v26.15-STRIKE-ZERO"
 
-# ── CRITICAL CONFIG (ABS TOP) ──
-ADX_PERIOD           = 14
-LEVERAGE             = 10
+import time
+import requests
+import datetime
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # ── ENGINE STATE GLOBALS ──
 _ws_st       = type('obj', (object,), {'rt_wbv':{}, 'rt_wsv':{}, 'rt_obi':{}, 'rt_spread':{}})
@@ -11,10 +13,10 @@ _mws_state   = {}
 _dt          = time
 # ───────────────────────────────
 
-import time
-import requests
-from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+# ── CRITICAL CONFIG (ABS TOP) ──
+ADX_PERIOD           = 14
+LEVERAGE             = 10
+# ───────────────────────────────
 
 from data_fetcher import (
     get_technical_indicators, fetch_all_tickers,
