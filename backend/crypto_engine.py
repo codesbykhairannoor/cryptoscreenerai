@@ -132,9 +132,10 @@ SQUEEZE_MULT            = 1.8   # Dynamic Squeeze: Range < 1.8x ATR
 VOLUME_CONVERGENCE      = 1.5   # Volume harus 1.5x rata-rata
 LIQUIDITY_SWEEP_CONF    = True  # Aktifkan deteksi manipulasi institusi
 # ───────────────────────────────────────────────────────────────
-#  SNIPER PRECISION (v22.0) 
-REJECTION_MIN_PCT       = 0.25  # Ekor bawah 25%
-VOL_CONFIRM_RATIO       = 2.0   # Volume 2x
+#  FINAL BALANCE CONFIG (v23.0) 
+BODY_DOMINANCE_PCT      = 0.60  # Badan candle > 60% (Full Body Strength)
+VOL_MOMENTUM_RATIO      = 1.8   # Volume 1.8x untuk konfirmasi Full Body
+TREND_STRENGTH_CANDLES  = 3     # 3 candle hijau = Trend Kuat
 # ───────────────────────────────────────────────────────────────
 
 # Volatility Regime
@@ -981,21 +982,26 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     if current_vol < (avg_vol * VOLUME_CONVERGENCE):
         return None, "LOW_VOLUME_BREAKOUT", 0 # Fake breakout (no volume)
         
-    # ── ADAPTIVE SNIPER INTELLIGENCE (v20.0) ────────────────────
-    # 1. Relative Wick (Buyer vs Seller Pressure)
+    # ── FINAL BALANCE INTELLIGENCE (v23.0) ──────────────────────
+    # 1. Body vs Wick Analysis
     c_open = tech.get('open', 0); c_close = tech.get('close', 0)
     c_low = tech.get('low', 0); c_high = tech.get('high', 0)
+    total_range = (c_high - c_low) if (c_high - c_low) > 0 else 1
+    body_size = abs(c_close - c_open) / total_range
     
-    lower_wick = min(c_open, c_close) - c_low
-    upper_wick = c_high - max(c_open, c_close)
-    
-    # Volume Bypass
+    # 2. Momentum Follower Check
     current_vol = tech.get('volume', 0); avg_vol = tech.get('avg_volume', 1)
-    is_vol_spike = current_vol > (avg_vol * VOL_BYPASS_RATIO)
+    is_strong_volume = current_vol > (avg_vol * VOL_MOMENTUM_RATIO)
     
-    if not is_vol_spike:
-        if lower_wick < (upper_wick * RELATIVE_WICK_RATIO):
-            return None, "WEAK_BUYER_PRESSURE", 0
+    # Jika badan candle tebal + volume tinggi, ini sinyal valid meski tanpa wick
+    if body_size > BODY_DOMINANCE_PCT and is_strong_volume:
+        # print(f"  [MOMENTUM] {symbol} FULL BODY strength detected.")
+        pass
+    else:
+        # Jika tidak tebal, wajib ada Wick Rejection (Sniper Mode)
+        lower_wick = (min(c_open, c_close) - c_low) / total_range
+        if lower_wick < 0.20: # Longgarkan ke 20%
+            return None, "NO_MOMENTUM_NO_WICK", 0
     # ───────────────────────────────────────────────────────────────
 
     #  HTF TREND FILTER 
