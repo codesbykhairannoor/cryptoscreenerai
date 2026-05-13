@@ -59,13 +59,13 @@ GLOBAL_REPORT_INTERVAL = 300
 FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 15     # SMART AGGRESSIVE: Sedikit lebih selektif
-MIN_TECH_SCORE       = 15     
-# ── SMART SCALP CONFIG (v25.0) ──
-SMART_ATR_SL_MULT    = 1.8    # Nafas koin
-SMART_ATR_TP_MULT    = 4.0    # Reward tinggi
-EMA_TREND_PERIOD     = 50     # Trend menengah
-# ────────────────────────────────
+MIN_MOMENTUM_SCORE   = 20     # INSTITUTIONAL MODE: Selektif
+MIN_TECH_SCORE       = 20     
+# ── INSTITUTIONAL HUNTER CONFIG (v26.0) ──
+HUNTER_ATR_SL_MULT   = 1.5    # SL ketat
+HUNTER_ATR_TP_MULT   = 4.5    # Reward maksimal
+FVG_GAP_THRESHOLD    = 0.005  # Minimal gap 0.5%
+# ─────────────────────────────────────────
 MIN_PUMP_SCORE       = 25     # Pump score minimum untuk masuk scan
 
 #  WHALE OBSERVER CONFIG (Legacy/Reference)
@@ -960,29 +960,28 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     ob    = tech.get('order_block', 'NONE')
     whale = tech.get('whale_signal', 'NORMAL')
     liq   = tech.get('is_liquidity_sweep', False)
-    # ── SMART AGGRESSOR (v25.0) ──────────────────────────────
-    # 1. EMA-50 Trend Shield
-    ema50 = tech.get('ema50', 0)
-    c_close = tech.get('close', 0)
-    if c_close < ema50:
-        return None, "BELOW_EMA50", 0 # Anti-Falling Knife
-        
-    # 2. 2-Candle Confirmation (The Smart Trigger)
-    c_open = tech.get('open', 0)
-    prev_close = tech.get('prev_close', 0)
-    prev_open = tech.get('prev_open', 0)
-    curr_vol = tech.get('volume', 0); prev_vol = tech.get('prev_volume', 0)
+    # ── INSTITUTIONAL PREDATOR (v26.0) ──────────────────────
+    # 1. Fair Value Gap (FVG) Detection
+    c_open = tech.get('open', 0); c_close = tech.get('close', 0)
+    c_low = tech.get('low', 0); c_high = tech.get('high', 0)
+    prev_high = tech.get('prev_high', 0)
+    prev2_low = tech.get('prev2_low', 0) # Low 2 candle ke belakang
     
-    # Harus 2 candle hijau + Volume meningkat
-    is_2_green = (c_close > c_open) and (prev_close > prev_open)
-    is_vol_rising = curr_vol > prev_vol
+    # Bullish FVG: Current Low > High of 2 candles ago
+    is_fvg = c_low > prev_high
     
-    if is_2_green and is_vol_rising:
+    # 2. Volume Node confirmation
+    curr_vol = tech.get('volume', 0); avg_vol = tech.get('avg_volume', 1)
+    is_whale_vol = curr_vol > (avg_vol * 1.5)
+    
+    if is_fvg and is_whale_vol:
         best_side = "buy"
-        best_reason = "SMART MOMENTUM BREAKOUT"
-        best_score = 85
+        best_reason = "INSTITUTIONAL FVG DETECTED"
+        best_score = 95
+        # Set limit price at the gap midpoint
+        tech['limit_price'] = (prev_high + c_low) / 2
     else:
-        return None, "NO_2_CANDLE_CONFIRM", 0
+        return None, "NO_INSTITUTIONAL_FOOTPRINT", 0
     # ───────────────────────────────────────────────────────────────
 
     return best_side, best_reason, best_score
@@ -1046,15 +1045,18 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
 #  CORE: HITUNG TP/SL BERBASIS VOLATILITAS (ATR)
 def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]:
     """
-    Smart Scalp v25.0: Dynamic ATR-based TP/SL
+    Institutional Hunter v26.0: Precision ATR-based TP/SL
     """
     atr = tech.get('atr', mark_price * 0.02)
+    # Gunakan Limit Price sebagai dasar jika ada
+    base_p = tech.get('limit_price', mark_price)
+    
     if side == "buy":
-        tp = mark_price + (atr * SMART_ATR_TP_MULT)
-        sl = mark_price - (atr * SMART_ATR_SL_MULT)
+        tp = base_p + (atr * HUNTER_ATR_TP_MULT)
+        sl = base_p - (atr * HUNTER_ATR_SL_MULT)
     else:
-        tp = mark_price - (atr * SMART_ATR_TP_MULT)
-        sl = mark_price + (atr * SMART_ATR_SL_MULT)
+        tp = base_p - (atr * HUNTER_ATR_TP_MULT)
+        sl = base_p + (atr * HUNTER_ATR_SL_MULT)
     return round(tp, 6), round(sl, 6)
 
 
