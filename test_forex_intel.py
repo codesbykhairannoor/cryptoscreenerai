@@ -33,9 +33,14 @@ def test_forex_intelligence():
     print(f"Price: {json.dumps(price, indent=2)}")
 
     # 3. Test Multi-Timeframe Indicators
-    print("\n[3] Calculating Indicators (30m/15m)...")
-    indicators = executor._calc_indicators()
-    print(f"Indicators: {json.dumps(indicators, indent=2)}")
+    print("\n[3] Calculating Indicators (30m)...")
+    indicators = executor._calc_indicators(timeframe="30m")
+    print(f"30m Indicators: RSI={indicators.get('rsi')} Trend={indicators.get('trend')}")
+
+    # 3b. Test 1m Indicators (New Hyper-Scalp Mode)
+    print("\n[3b] Calculating Indicators (1m Hyper-Scalp)...")
+    ind_1m = executor._calc_indicators(timeframe="1m")
+    print(f"1m Indicators: RSI={ind_1m.get('rsi')} Trend={ind_1m.get('trend')} Vel={ind_1m.get('velocity')}")
 
     # 4. Test 5m Precision (MTF Confluence)
     print("\n[4] Testing MTF Confluence (including 5m)...")
