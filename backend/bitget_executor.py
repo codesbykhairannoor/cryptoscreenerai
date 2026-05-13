@@ -640,24 +640,16 @@ class BitgetExecutor:
                     if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                     self._last_sl_set[symbol] = now
 
-                #    TRAILING SL — GRANULAR SETIAP 5% PnL, GAP 10%
+                #    TSL v9.9 — STEP-LOCK MASTER (Optimized Round 8)
                 # ─────────────────────────────────────────────────────
-                # peak=10%  → SL ke 0%   (breakeven)
-                # peak=15%  → SL ke 5%
-                # peak=20%  → SL ke 10%
-                # peak=25%  → SL ke 15%
-                # peak=30%  → SL ke 20%
-                # peak=35%  → SL ke 25%
-                # peak=40%  → SL ke 30%
-                # peak=90%  → SL ke 80%  (TP target)
-                # Formula: locked = floor(peak/5)*5 - 10, min 0
+                # Jarak napas (Gap) 10% PnL, Pindah SL setiap kelipatan 20% PnL
                 # ─────────────────────────────────────────────────────
                 new_sl = 0
                 locked_pnl = 0
 
-                if peak_pnl >= 10:
-                    # TIGHT TRAILING: 5% Gap (Sebelumnya 10%)
-                    locked_pnl = float(int(peak_pnl / 5) * 5 - 5)
+                if peak_pnl >= 20:
+                    # Logic: Lock 10% below every 20% step
+                    locked_pnl = float((int(peak_pnl / 20) * 20) - 10)
                     locked_pnl = max(0.0, locked_pnl)
 
                     pos_lev = float(pos.get('leverage', 10.0))
