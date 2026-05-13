@@ -32,11 +32,10 @@ MAX_SPREAD_POINTS    = 35
 MIN_MOMENTUM_SCORE   = 60     # Skor Institusional (Akurasi Tinggi)
 CANDLE_LIMIT         = 100
 
-# ── TP/SL — RR 2:1 ────────────────────────────────────────────────────────────
-# RR 2:1 = butuh win rate 33% untuk break even
-# Sebelumnya RR 1.5:1 = butuh win rate 40%+ = terlalu berat
-SCALP_TP_POINTS      = 40.0   # Naik dari 30 ke 40 poin
-SCALP_SL_POINTS      = 20.0   # Tetap 20 poin
+# ── TP/SL — RR 1.6:1 (Hasil Optimasi Backtest Massive v9.0) ───────────────────
+# Berdasarkan 3000 candle 1m, SL 25 memberikan Win Rate tertinggi (44.1%)
+SCALP_TP_POINTS      = 40.0   # Target profit tetap 40 poin
+SCALP_SL_POINTS      = 25.0   # Stop Loss dinaikkan ke 25 agar tidak gampang kena noise
 MIN_LOT_PER_TRADE    = 0.01
 MAX_LOT_PER_TRADE    = 0.02   # Max 0.02 lot per trade
 
