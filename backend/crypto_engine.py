@@ -772,162 +772,131 @@ def detect_volatility_spike(symbol: str, timeframe: str = "1m") -> bool:
         return False
 
 
-#  CORE: MOMENTUM SCORING SYSTEM 
+#  CORE: MOMENTUM SCORING SYSTEM v9.2 (DATA-DRIVEN OVERHAUL)
 def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int:
     """
-    Hitung momentum score 0-100 untuk sebuah kandidat.
-    Semakin tinggi = semakin bagus untuk entry.
+    v9.2 - MOMENTUM CONFIRMATION scoring (bukan Mean Reversion).
+
+    FILOSOFI LAMA (SALAH, 0% WR dari data):
+    - RSI 30 = 'murah, pasti naik' --> BUY --> LOSS
+    - Harga di bawah VWAP = 'diskon' --> BUY --> LOSS
+
+    FILOSOFI BARU (Momentum Confirmation):
+    - RSI 50-65 = momentum sedang NAIK dan belum overbought --> BUY
+    - Harga DI ATAS VWAP = buyer yang mengendalikan pasar --> BUY
+    - Volume spike NAIK = konfirmasi real demand ada --> BUY
+    - Whale beli = institusi masuk, ikut saja --> BUY
+
+    'Jangan tangkap pisau jatuh. Naiki ombak yang sudah terbentuk.'
     """
     score = 0
 
-    # 1. RSI Zone (max 25 poin)
+    # 1. RSI MOMENTUM ZONE (max 30 poin) -- DIBALIK dari versi lama
+    # Lama: RSI 30-50 = bagus. Baru: RSI 50-65 = bagus (momentum naik, belum overbought)
     if side == "buy":
-        if 30 <= rsi <= 50:   score += 25   # Oversold recovery - ideal
-        elif 50 < rsi <= 60:  score += 15   # Momentum building
-        elif 20 <= rsi < 30:  score += 10   # Terlalu oversold, risky
-        elif rsi > 70:        score -= 10   # Overbought, skip
-    else:  # sell
-        if 50 <= rsi <= 70:   score += 25   # Overbought rejection - ideal
-        elif 40 <= rsi < 50:  score += 15   # Momentum bearish
-        elif rsi > 80:        score += 10   # Terlalu overbought, risky
-        elif rsi < 30:        score -= 10   # Oversold, skip short
+        if 52 <= rsi <= 65:   score += 30   # MOMENTUM ZONE: naik tapi belum overbought
+        elif 45 <= rsi < 52:  score += 15   # Netral, mulai naik
+        elif rsi > 75:        score -= 20   # Terlalu overbought, risiko reversal
+        elif rsi < 35:        score -= 15   # FALLING KNIFE: oversold di altcoin = bahaya!
+    else:  # sell (disabled, tapi jaga logika)
+        if 35 <= rsi <= 48:   score += 30   # Momentum turun, belum oversold
+        elif 48 < rsi <= 55:  score += 15   # Netral, mulai turun
+        elif rsi < 25:        score -= 20   # Terlalu oversold
+        elif rsi > 70:        score -= 15   # Overbought, risiko reversal ke atas
 
-    # 2. VWAP Distance (max 20 poin)
+    # 2. VWAP POSITION (max 20 poin) -- DIBALIK dari versi lama
+    # Lama: di bawah VWAP = 'diskon' = BUY. SALAH!
+    # Baru: DI ATAS VWAP = buyer dominan = BUY (momentum confirmed by institutional reference)
     if side == "buy":
-        if -3.0 <= vwap_dist <= -0.5:  score += 20  # Di bawah VWAP - discount zone
-        elif -0.5 < vwap_dist <= 0.5:  score += 10  # Dekat VWAP
-        elif vwap_dist > 3.0:          score -= 10  # Terlalu jauh di atas VWAP
+        if 0.5 <= vwap_dist <= 3.0:   score += 20  # Di atas VWAP -- buyer control
+        elif 0 < vwap_dist < 0.5:     score += 10  # Baru saja melewati VWAP
+        elif vwap_dist < -2.0:        score -= 15  # Jauh di bawah VWAP = downtrend
     else:
-        if 0.5 <= vwap_dist <= 3.0:    score += 20  # Di atas VWAP - premium zone
-        elif -0.5 <= vwap_dist < 0.5:  score += 10  # Dekat VWAP
-        elif vwap_dist < -3.0:         score -= 10  # Terlalu jauh di bawah VWAP
+        if -3.0 <= vwap_dist <= -0.5: score += 20  # Di bawah VWAP -- seller control
+        elif -0.5 < vwap_dist <= 0:   score += 10
+        elif vwap_dist > 2.0:         score -= 15
 
-    # 3. SMC Signals (max 20 poin)
-    fvg = tech.get('fvg', 'NONE')
-    ob  = tech.get('order_block', 'NONE')
+    # 3. WHALE & OBI -- SINYAL TERKUAT (max 30 poin)
+    # Data dari test: ini satu-satunya sinyal yang meaningful
+    whale = tech.get('whale_signal', 'NORMAL')
+    obi   = tech.get('obi', 0)
     if side == "buy":
-        if fvg == 'BULLISH_FVG':   score += 12
-        if ob  == 'BULLISH_OB':    score += 8
+        if whale == 'WHALE_BUY':   score += 20   # Institusi beli = IKUT!
+        elif whale == 'WHALE_SELL': score -= 20  # Institusi jual saat kita mau beli = BAHAYA
+        if obi > 0.20:             score += 10   # Buyer pressure kuat
+        elif obi > 0.10:           score += 5
+        elif obi < -0.15:          score -= 10   # Seller pressure kuat
     else:
-        if fvg == 'BEARISH_FVG':   score += 12
-        if ob  == 'BEARISH_OB':    score += 8
+        if whale == 'WHALE_SELL':  score += 20
+        elif whale == 'WHALE_BUY': score -= 20
+        if obi < -0.20:            score += 10
+        elif obi < -0.10:          score += 5
+        elif obi > 0.15:           score -= 10
 
-    # 3b. DEMAND/SUPPLY ZONE (max 20 poin)  lebih kuat dari Order Block biasa
-    # Zona ini terbentuk dari konsolidasi institusi sebelum impulse move
-    in_demand = tech.get('in_demand', False)
-    in_supply = tech.get('in_supply', False)
-    dz_strength = tech.get('demand_zone', {}).get('strength', 0)
-    sz_strength = tech.get('supply_zone', {}).get('strength', 0)
-    if side == "buy" and in_demand:
-        score += 15 + min(5, dz_strength)  # max 20 poin, lebih kuat kalau lebih banyak candle
-    if side == "sell" and in_supply:
-        score += 15 + min(5, sz_strength)
+    # 4. VOLUME SPIKE (max 15 poin)
+    # Volume naik = partisipasi real, bukan noise
+    vol_spike = tech.get('vol_spike', False)
+    volume_ratio = tech.get('volume_ratio', 1.0)  # current vol / avg vol
+    if vol_spike:
+        score += 15
+    elif volume_ratio and volume_ratio > 1.5:
+        score += 8  # Volume di atas rata-rata tapi belum spike
 
-    # 3c. FIBONACCI RETRACEMENT (max 15 poin)
-    # Harga di level fib = institusi sering entry di sini
-    if side == "buy"  and tech.get('at_fib_support', False):
-        fib_lvl = tech.get('current_fib_level', 'NONE')
-        bonus = 15 if fib_lvl in ('0.618', '0.786') else 10  # 0.618 dan 0.786 lebih kuat
-        score += bonus
-    if side == "sell" and tech.get('at_fib_resistance', False):
-        fib_lvl = tech.get('current_fib_level', 'NONE')
-        bonus = 15 if fib_lvl in ('0.618', '0.786') else 10
-        score += bonus
+    # 5. MARKET STRUCTURE -- MSS & CHoCH (max 15 poin)
+    # MSS = harga konfirmasi break struktur = momentum shift VALID
+    if side == "buy":
+        if tech.get('mss_bullish'):    score += 15  # Break of structure ke atas
+        elif tech.get('choch_bullish'): score += 8  # Change of Character
+    else:
+        if tech.get('mss_bearish'):    score += 15
+        elif tech.get('choch_bearish'): score += 8
 
-    # 3d. STOP HUNT SIGNAL (max 15 poin)
-    # Stop hunt = institusi sweep stop loss retail sebelum reversal
-    hunt_strength = tech.get('hunt_strength', 0)
-    if side == "buy"  and tech.get('bull_stop_hunt', False):
-        score += 10 + min(5, hunt_strength * 2)  # max 15 poin
-    if side == "sell" and tech.get('bear_stop_hunt', False):
-        score += 10 + min(5, hunt_strength * 2)
-
-    # 3g. INSTITUTIONAL LIQUIDITY GRAB (max 15 poin)
-    # Rejection wick panjang = BlackRock style liquidity hunter footprint
+    # 6. STOP HUNT / LIQUIDITY SWEEP (max 15 poin)
+    # Institusi sweep stop loss retail --> reversal nyata dimulai
     liq = tech.get('liquidity_grab', {})
     if side == "buy" and liq.get('bullish_grab'):
         score += 15
     if side == "sell" and liq.get('bearish_grab'):
         score += 15
+    if side == "buy"  and tech.get('bull_stop_hunt', False):
+        score += 10
+    if side == "sell" and tech.get('bear_stop_hunt', False):
+        score += 10
 
-    # 3h. 5M PRECISION ENTRY (max 30 poin — bonus terbesar)
-    # Harga di dalam demand/supply zone 5m = entry presisi ala institusi
-    # Fresh zone + volume tinggi = sinyal paling kuat
+    # 7. ORDER BLOCK (max 10 poin) -- tetap ada tapi bobotnya dikurangi
+    ob = tech.get('order_block', 'NONE')
+    fvg = tech.get('fvg', 'NONE')
+    if side == "buy":
+        if ob  == 'BULLISH_OB':  score += 10
+        if fvg == 'BULLISH_FVG': score += 5   # FVG dikurangi dari 12 ke 5 (proven 0% WR)
+    else:
+        if ob  == 'BEARISH_OB':  score += 10
+        if fvg == 'BEARISH_FVG': score += 5
+
+    # 8. 5M PRECISION ENTRY (max 20 poin)
     entry_5m_signal  = tech.get('entry_signal_5m', 'NEUTRAL')
     entry_5m_quality = tech.get('entry_quality_5m', 0)
     zone_fresh_5m    = tech.get('zone_freshness_5m', 'UNKNOWN')
-    in_5m_demand     = tech.get('in_5m_demand', False)
-    in_5m_supply     = tech.get('in_5m_supply', False)
-
     if side == "buy" and entry_5m_signal in ("STRONG_BUY", "BUY"):
-        base_5m = 20 if entry_5m_signal == "STRONG_BUY" else 12
-        # Freshness bonus
-        if zone_fresh_5m == "FRESH":          base_5m += 10
-        elif zone_fresh_5m == "TESTED_ONCE":  base_5m += 4
-        # Quality bonus
-        if entry_5m_quality >= 80:            base_5m += 5
-        elif entry_5m_quality >= 60:          base_5m += 2
-        score += min(30, base_5m)
-
+        base_5m = 15 if entry_5m_signal == "STRONG_BUY" else 8
+        if zone_fresh_5m == "FRESH":        base_5m += 5
+        if entry_5m_quality >= 80:          base_5m += 5
+        score += min(20, base_5m)
     elif side == "sell" and entry_5m_signal in ("STRONG_SELL", "SELL"):
-        base_5m = 20 if entry_5m_signal == "STRONG_SELL" else 12
-        if zone_fresh_5m == "FRESH":          base_5m += 10
-        elif zone_fresh_5m == "TESTED_ONCE":  base_5m += 4
-        if entry_5m_quality >= 80:            base_5m += 5
-        elif entry_5m_quality >= 60:          base_5m += 2
-        score += min(30, base_5m)
+        base_5m = 15 if entry_5m_signal == "STRONG_SELL" else 8
+        if zone_fresh_5m == "FRESH":        base_5m += 5
+        if entry_5m_quality >= 80:          base_5m += 5
+        score += min(20, base_5m)
 
-    # Penalti: harga di supply zone 5m tapi mau BUY = melawan zona
-    elif side == "buy" and in_5m_supply:
-        score -= 10
-    elif side == "sell" and in_5m_demand:
-        score -= 10
-
-    # 3e. VOLUME PROFILE / POC (max 10 poin, penalti -8)
-    # Harga di bawah POC = discount zone (bagus untuk BUY)
-    # Harga di atas POC = premium zone (bagus untuk SELL)
-    price_vs_poc = tech.get('price_vs_poc', 'UNKNOWN')
-    poc_dist = abs(tech.get('poc_distance_pct', 0))
-    if side == "buy"  and price_vs_poc == "BELOW": score += min(10, poc_dist * 3)
-    if side == "sell" and price_vs_poc == "ABOVE": score += min(10, poc_dist * 3)
-    if side == "buy"  and price_vs_poc == "ABOVE" and poc_dist > 2: score -= 8
-    if side == "sell" and price_vs_poc == "BELOW" and poc_dist > 2: score -= 8
-
-    # 3f. HTF KEY LEVELS (penalti -15 kalau melawan level kritis)
-    # Jangan LONG kalau harga dekat daily/weekly high (resistance kuat)
-    # Jangan SHORT kalau harga dekat daily/weekly low (support kuat)
-    htf_bias = tech.get('htf_level_bias', 'NEUTRAL')
-    near_daily  = tech.get('near_daily_level', False)
+    # 9. HTF KEY LEVELS (penalti)
+    htf_bias    = tech.get('htf_level_bias', 'NEUTRAL')
     near_weekly = tech.get('near_weekly_level', False)
     if side == "buy"  and htf_bias == "RESISTANCE":
-        score -= 15 if near_weekly else 8  # Weekly level lebih kuat
+        score -= 15 if near_weekly else 8
     if side == "sell" and htf_bias == "SUPPORT":
         score -= 15 if near_weekly else 8
 
-    # 4. Market Structure (max 15 poin)
-    if side == "buy":
-        if tech.get('mss_bullish'):   score += 15
-        elif tech.get('choch_bullish'): score += 8
-    else:
-        if tech.get('mss_bearish'):   score += 15
-        elif tech.get('choch_bearish'): score += 8
-
-    # 5. Whale & OBI (max 15 poin)
-    whale = tech.get('whale_signal', 'NORMAL')
-    obi   = tech.get('obi', 0)
-    if side == "buy":
-        if whale == 'WHALE_BUY':   score += 10
-        if obi > 0.15:             score += 5
-    else:
-        if whale == 'WHALE_SELL':  score += 10
-        if obi < -0.15:            score += 5
-
-    # 6. Institutional Flow (max 5 poin)
-    inst = tech.get('inst_flow', 'NORMAL')
-    if side == "buy"  and inst == 'INSTITUTIONAL_ACCUMULATION': score += 5
-    if side == "sell" and inst == 'INSTITUTIONAL_DISTRIBUTION': score += 5
-
-    # 7. Funding Rate Penalty
+    # 10. Funding Rate Penalty (tetap sama)
     funding = tech.get('funding_rate', 0)
     if side == "buy"  and funding > 0.001:  score -= 10  # Longs terlalu mahal
     if side == "sell" and funding < -0.001: score -= 10  # Shorts terlalu mahal
