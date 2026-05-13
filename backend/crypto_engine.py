@@ -1,36 +1,10 @@
 """
-VERSION_TAG = "v26.3-INSTITUTIONAL-FINAL"
-CRYPTO_ENGINE v9.0 - WHALE OBSERVER MODE
-=========================================
-Filosofi:
-- 1 trade terbaik, semua modal, fokus penuh
-- Selama 15 menit cooldown: bot AKTIF scan, observasi, dan akumulasi kandidat
-- Di akhir cooldown: masuk koin dengan score TERTINGGI + KONSISTEN (bukan yang pertama lolos)
-- "Baca masa depan" ala whale: OI trend, funding momentum, volume accumulation, liquidity hunt
-- SL berbasis peak PnL (tidak pernah turun)
-- TP full di satu level
+VERSION_TAG = "v26.4-INSTITUTIONAL-ULTIMATE"
 
-WHALE OBSERVER LOGIC:
-- Setiap 10 detik selama cooldown, bot scan top 20 koin
-- Setiap koin yang lolos filter dicatat: symbol, score, side, timestamp
-- Koin yang KONSISTEN muncul dengan score tinggi = sinyal whale accumulation
-- Koin yang score-nya NAIK dari scan ke scan = momentum building
-- Di akhir cooldown, pilih koin dengan: highest avg_score x consistency_bonus x momentum_bonus
-
-SINYAL "BACA MASA DEPAN":
-1. OI naik + harga flat = akumulasi diam-diam (whale masuk sebelum pump)
-2. Funding rate negatif + OI tinggi = short squeeze imminent
-3. Volume spike di candle kecil (1m/3m) sebelum candle besar = early signal
-4. Liquidity sweep di bawah support = stop hunt sebelum reversal naik
-5. Bid/Ask imbalance naik konsisten = buyer dominance building
-
-MATEMATIKA:
-- Modal $8, leverage 10x = $80 notional
-- Fee round trip = $80 x 0.12% = $0.096 = 1.2% PnL
-- TP 80% PnL bersih = 78.8% -> $6.30 per win
-- SL 15% PnL = $1.20 per loss
-- 1 win = 5.25 loss -> butuh win 1 dari 6 trade
-"""
+# ── CRITICAL CONFIG (ABS TOP) ──
+ADX_PERIOD           = 14
+LEVERAGE             = 10
+# ───────────────────────────────
 
 import time
 import requests
@@ -59,8 +33,6 @@ NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
-ADX_PERIOD           = 14     # LOCKED AT TOP
-LEVERAGE             = 10
 MIN_MOMENTUM_SCORE   = 20     # INSTITUTIONAL MODE: Selektif
 MIN_TECH_SCORE       = 20     
 # ── INSTITUTIONAL HUNTER CONFIG (v26.0) ──
