@@ -50,7 +50,7 @@ from bitget_executor import BitgetExecutor
 
 #  KONFIGURASI 
 MAX_POSITIONS        = 1      # FOKUS: 1 trade saja (STRICT)
-FIXED_MARGIN_USDT    = 5.0    # NAIK ke $5 (v9.5) karena strategi sudah sangat selektif
+FIXED_MARGIN_USDT    = 5.0    # Cukup 5 USDT per trade sesuai permintaan user
 SCAN_INTERVAL        = 3      # Scan lebih cepat (3 detik) agar responsif di VPS
 COOLDOWN_AFTER_TRADE = 120    # 2 menit cooldown — versi profit May 5
 NEWS_REPORT_INTERVAL = 600
@@ -1479,7 +1479,7 @@ def run_crypto_engine():
 
                 # FRED MACRO FILTER
                 if fred_crypto_impact == "BEARISH" and side == "buy":
-                    if combined_score < current_min_momentum + 10:
+                    if combined_score < current_min_momentum + 5: # Dilonggarkan dari +10 agar tidak telat entry
                         print(f"[EVAL] {clean_base} SKIP:FRED_BEARISH({combined_score})", flush=True)
                         return None
                 elif fred_crypto_impact == "BULLISH" and side == "buy":
@@ -1574,12 +1574,8 @@ def run_crypto_engine():
                 # Hitung TP/SL
                 tp, sl = _calc_tp_sl(mark_price, side, tech)
 
-                # Hitung size (Dynamic Sizing v9.7)
-                dynamic_margin = FIXED_MARGIN_USDT
-                if symbol in STAR_COINS:
-                    dynamic_margin = 8.0  # Alokasi lebih besar untuk koin "Dewa"
-                
-                amount = executor.get_max_available(symbol, leverage=LEVERAGE, risk_usdt=dynamic_margin)
+                # Hitung size (Strict 5 USDT v9.8)
+                amount = executor.get_max_available(symbol, leverage=LEVERAGE, risk_usdt=FIXED_MARGIN_USDT)
                 if amount > 0:
                     print(f"\n{'='*60}")
                     print(f"[SCALPER v5.1] {clean_base} {side.upper()} | Score: {combined_score}/100")
