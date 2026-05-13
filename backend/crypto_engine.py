@@ -1097,7 +1097,10 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]
         return round(mark_price - tp_dist, 6), round(mark_price + sl_dist, 6)
 
 
-#  MAIN ENGINE 
+# ── PERFORMANCE TRACKING (v12.1) ────────────────────────────────
+# Menyimpan history PnL koin untuk Smart Circuit Breaker
+COIN_STATS = {} # {symbol: {'pnl': 0, 'consecutive_losses': 0, 'locked_until': 0}}
+# ───────────────────────────────────────────────────────────────
 def run_crypto_engine():
     """
     CRYPTO SCALPER v5.1 - Direct Execution Mode
@@ -1366,6 +1369,12 @@ def run_crypto_engine():
                 if clean_base in _recently_exited:                                    return None
                 if clean_base in _repeat_losers:                                      return None
 
+                # ── SMART CIRCUIT BREAKER CHECK (v12.1) ─────────────
+                stats = COIN_STATS.get(symbol, {'pnl': 0, 'consecutive_losses': 0, 'locked_until': 0})
+                if time.time() < stats['locked_until']:
+                    return None
+                # ────────────────────────────────────────────────────
+
                 # DATA-PROVEN BLACKLIST (v9.1): koin terbukti 0% WR dari 345 trades
                 sym_key = f"{clean_base}USDT"
                 if sym_key in DATA_PROVEN_BLACKLIST or clean_base in DATA_PROVEN_BLACKLIST:
@@ -1602,8 +1611,16 @@ def run_crypto_engine():
                     print(f"  5M     : Signal:{e5m} | Quality:{q5m}/100 | Zone:{f5m}")
                     print(f"{'='*60}\n")
 
-                    success, order = executor.place_order(symbol, side, amount, tp=tp, sl=sl, leverage=LEVERAGE)
-                    if success:
+                    # Eksekusi (v12.0: Update Penalty Box on fail)
+                    order_success = False
+                    try:
+                        success, order = executor.place_order(symbol, side, amount, tp=tp, sl=sl, leverage=LEVERAGE)
+                        if success:
+                            order_success = True
+                    except Exception as e:
+                        print(f"[ORDER ERROR] {symbol}: {e}")
+
+                    if order_success:
                         from database import log_trade
                         log_trade(symbol, mark_price, tp, sl, side=side, score=combined_score, reason=reason)
                         last_exec_time = time.time()
