@@ -50,7 +50,7 @@ from bitget_executor import BitgetExecutor
 
 #  KONFIGURASI 
 MAX_POSITIONS        = 1      # FOKUS: 1 trade saja (STRICT)
-FIXED_MARGIN_USDT    = 3.0    # Limit: $3 per trade
+FIXED_MARGIN_USDT    = 5.0    # NAIK ke $5 (v9.5) karena strategi sudah sangat selektif
 SCAN_INTERVAL        = 3      # Scan lebih cepat (3 detik) agar responsif di VPS
 COOLDOWN_AFTER_TRADE = 120    # 2 menit cooldown — versi profit May 5
 NEWS_REPORT_INTERVAL = 600
@@ -107,8 +107,10 @@ DATA_PROVEN_BLACKLIST = {
 SELL_TRADING_ENABLED = False  # False = BUY-only mode
 
 # Session filter
-CRYPTO_SESSION_START_UTC = 1
-CRYPTO_SESSION_END_UTC   = 15
+# Session filter -- Berdasarkan Round 4 Backtest (ZONA EMAS 13:00-22:00 UTC)
+CRYPTO_SESSION_START_UTC = 13
+CRYPTO_SESSION_END_UTC   = 22
+MIN_MOMENTUM_SNIPER      = 60  # Skor minimal saat di luar jam emas (Asian Session)
 
 SIDEWAYS_HOURS       = 1.0
 SIDEWAYS_PNL_RANGE   = 2.0
@@ -1172,16 +1174,20 @@ def run_crypto_engine():
                 time.sleep(SCAN_INTERVAL)
                 continue
 
-            #  4c. SESSION FILTER — OFF-HOURS REQUIREMENT (Strict Mode)
-            # DATA: Jam 22:00-08:00 WIB volume rendah. Kita izinkan trade hanya jika sinyal SANGAT KUAT.
+            #  4c. SESSION FILTER — DYNAMIC SNIPER (Innovation v9.5)
+            # DATA: Jam 13:00-22:00 UTC (Sesi US) adalah Win Rate tertinggi.
+            # Di luar jam itu, kita naikkan standar agar tidak kena "Fakeout" Asia.
             import datetime as _dt
             utc_hour = _dt.datetime.utcnow().hour
-            is_off_hours = not (CRYPTO_SESSION_START_UTC <= utc_hour < CRYPTO_SESSION_END_UTC)
+            is_golden_session = (CRYPTO_SESSION_START_UTC <= utc_hour < CRYPTO_SESSION_END_UTC)
             
-            if is_off_hours:
+            # Jika di luar jam emas, naikkan threshold skor
+            current_min_score = MIN_MOMENTUM_SCORE if is_golden_session else MIN_MOMENTUM_SNIPER
+            
+            if not is_golden_session:
                 if int(now) % 300 < 10:
                     wib_hour = (utc_hour + 7) % 24
-                    print(f"[CRYPTO SESSION] Off-hours ({wib_hour:02d}:xx WIB). Strict mode active.")
+                    print(f"[CRYPTO SESSION] Asian Session ({wib_hour:02d}:xx WIB). Sniper Mode: Min Score {MIN_MOMENTUM_SNIPER} active.")
             
             # Pass is_off_hours to the evaluator
 
@@ -1389,12 +1395,12 @@ def run_crypto_engine():
 
                 combined_score += global_boost
 
-                # APPLY STRICT OFF-HOURS LOGIC
+                # APPLY DYNAMIC SESSION LOGIC (v9.5)
                 current_min_momentum = MIN_MOMENTUM_SCORE
                 current_min_tech = MIN_TECH_SCORE
                 if off_hours:
-                    current_min_momentum = 65
-                    current_min_tech = 45
+                    current_min_momentum = MIN_MOMENTUM_SNIPER
+                    current_min_tech = 40 # Slightly stricter tech during Asian session
                     has_whale = tech.get('whale_signal') in ('WHALE_BUY', 'WHALE_SELL')
                     has_liq = tech.get('liquidity_grab', {}).get('bullish_grab') or tech.get('liquidity_grab', {}).get('bearish_grab')
                     has_hunt = tech.get('bull_stop_hunt') or tech.get('bear_stop_hunt')
@@ -1493,7 +1499,7 @@ def run_crypto_engine():
             # Run parallel evaluation
             results = []
             with ThreadPoolExecutor(max_workers=8) as pool:
-                futures = [pool.submit(evaluate_coin, c, is_off_hours) for c in candidates[:40]]
+                futures = [pool.submit(evaluate_coin, c, not is_golden_session) for c in candidates[:40]]
                 for f in as_completed(futures):
                     res = f.result()
                     if res: results.append(res)
