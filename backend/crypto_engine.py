@@ -50,7 +50,8 @@ from bitget_executor import BitgetExecutor
 
 #  KONFIGURASI 
 MAX_POSITIONS        = 1      # FOKUS: 1 trade saja (STRICT)
-FIXED_MARGIN_USDT    = 3.0    # SURVIVAL MODE: Turun ke $3 karena saldo kritis (12 USDT)
+RISK_PER_TRADE_USDT  = 0.50   # INSTITUTIONAL: Tiap kekalahan HANYA rugi $0.50
+FIXED_MARGIN_USDT    = 3.0    # Batas maksimal modal per trade
 SCAN_INTERVAL        = 3      # Scan lebih cepat (3 detik) agar responsif di VPS
 COOLDOWN_AFTER_TRADE = 120    # 2 menit cooldown — versi profit May 5
 NEWS_REPORT_INTERVAL = 600
@@ -1463,6 +1464,20 @@ def run_crypto_engine():
 
                 # Tentukan reject reason
                 reject = None
+
+                # ── DYNAMIC RISK SIZER (v18.0) ─────────────────────
+                # Hitung modal agar jika kena SL, kerugian tetap $0.50
+                # sl_dist_pct = abs(sl - mark_price) / mark_price
+                sl_dist_pct = abs(sl - mark_price) / mark_price if mark_price > 0 else 0
+                if sl_dist_pct > 0:
+                    # Margin * sl_dist_pct * Leverage = Risk
+                    # Margin = Risk / (sl_dist_pct * Leverage)
+                    calculated_margin = RISK_PER_TRADE_USDT / (sl_dist_pct * LEVERAGE)
+                    amount = min(calculated_margin, FIXED_MARGIN_USDT)
+                else:
+                    amount = FIXED_MARGIN_USDT
+                # ───────────────────────────────────────────────────
+
                 if side is None:
                     reject = "NO_SIDE"
                 elif combined_score < current_min_momentum:
