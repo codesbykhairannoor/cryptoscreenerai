@@ -976,10 +976,22 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     if current_vol < (avg_vol * VOLUME_CONVERGENCE):
         return None, "LOW_VOLUME_BREAKOUT", 0 # Fake breakout (no volume)
         
-    # 3. Liquidity Sweep Check (The Institutional Signal)
-    if LIQUIDITY_SWEEP_CONF and not tech.get('is_liquidity_sweep', False):
-        # Jika bukan sweep, skor dikurangi 10 karena kurang 'bertenaga'
-        pass
+    # ── SNIPER PIVOT INTELLIGENCE (v19.0) ───────────────────────
+    # 1. Wick Rejection (The Institutional Support)
+    c_open = tech.get('open', 0)
+    c_close = tech.get('close', 0)
+    c_low = tech.get('low', 0)
+    c_high = tech.get('high', 0)
+    total_range = (c_high - c_low) if (c_high - c_low) > 0 else 1
+    
+    # Hitung ekor bawah (Wick)
+    lower_wick = (min(c_open, c_close) - c_low) / total_range
+    if lower_wick > WICK_REJECTION_MIN_PCT:
+        # print(f"  [SNIPER] {symbol} WICK REJECTION detected: {round(lower_wick*100,1)}%")
+        pass # Bonus skor akan diberikan nanti
+        
+    # 2. Volume Alignment Check
+    # Mencari tanda 'Supply Exhaustion' (Volume mengecil saat harga turun sebentar)
     # ───────────────────────────────────────────────────────────────
 
     #  HTF TREND FILTER 
