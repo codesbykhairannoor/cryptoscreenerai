@@ -59,12 +59,13 @@ GLOBAL_REPORT_INTERVAL = 300
 FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 10     # AGGRESSIVE MODE: Sangat mudah ditembus
-MIN_TECH_SCORE       = 10     # Tech score minimum
-# ── SCALPING TARGETS (v24.0) ──
-SCALP_TP_PCT         = 0.03   # 3% TP
-SCALP_SL_PCT         = 0.015  # 1.5% SL
-# ──────────────────────────────
+MIN_MOMENTUM_SCORE   = 15     # SMART AGGRESSIVE: Sedikit lebih selektif
+MIN_TECH_SCORE       = 15     
+# ── SMART SCALP CONFIG (v25.0) ──
+SMART_ATR_SL_MULT    = 1.8    # Nafas koin
+SMART_ATR_TP_MULT    = 4.0    # Reward tinggi
+EMA_TREND_PERIOD     = 50     # Trend menengah
+# ────────────────────────────────
 MIN_PUMP_SCORE       = 25     # Pump score minimum untuk masuk scan
 
 #  WHALE OBSERVER CONFIG (Legacy/Reference)
@@ -959,23 +960,29 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     ob    = tech.get('order_block', 'NONE')
     whale = tech.get('whale_signal', 'NORMAL')
     liq   = tech.get('is_liquidity_sweep', False)
-    # ── AGGRESSIVE PREDATOR (v24.0) ──────────────────────────
-    # Simple Momentum: Price > MA + Green Candle + Volume > Avg
-    c_open = tech.get('open', 0); c_close = tech.get('close', 0)
-    ma20 = tech.get('ma20', 0)
-    current_vol = tech.get('volume', 0); avg_vol = tech.get('avg_volume', 1)
+    # ── SMART AGGRESSOR (v25.0) ──────────────────────────────
+    # 1. EMA-50 Trend Shield
+    ema50 = tech.get('ema50', 0)
+    c_close = tech.get('close', 0)
+    if c_close < ema50:
+        return None, "BELOW_EMA50", 0 # Anti-Falling Knife
+        
+    # 2. 2-Candle Confirmation (The Smart Trigger)
+    c_open = tech.get('open', 0)
+    prev_close = tech.get('prev_close', 0)
+    prev_open = tech.get('prev_open', 0)
+    curr_vol = tech.get('volume', 0); prev_vol = tech.get('prev_volume', 0)
     
-    # Check BTC Sync if enabled
-    if BTC_SYNC_ENABLED:
-        # BTC sync check logic would go here (simplified for now)
-        pass
-
-    if c_close > ma20 and c_close > c_open and current_vol > avg_vol:
+    # Harus 2 candle hijau + Volume meningkat
+    is_2_green = (c_close > c_open) and (prev_close > prev_open)
+    is_vol_rising = curr_vol > prev_vol
+    
+    if is_2_green and is_vol_rising:
         best_side = "buy"
-        best_reason = "AGGRESSIVE MOMENTUM"
-        best_score = 90 # High score to ensure entry
+        best_reason = "SMART MOMENTUM BREAKOUT"
+        best_score = 85
     else:
-        return None, "NO_MOMENTUM", 0
+        return None, "NO_2_CANDLE_CONFIRM", 0
     # ───────────────────────────────────────────────────────────────
 
     return best_side, best_reason, best_score
@@ -1039,14 +1046,15 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
 #  CORE: HITUNG TP/SL BERBASIS VOLATILITAS (ATR)
 def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]:
     """
-    Scalping targets v24.0: Fixed 3% TP and 1.5% SL
+    Smart Scalp v25.0: Dynamic ATR-based TP/SL
     """
+    atr = tech.get('atr', mark_price * 0.02)
     if side == "buy":
-        tp = mark_price * (1 + SCALP_TP_PCT)
-        sl = mark_price * (1 - SCALP_SL_PCT)
+        tp = mark_price + (atr * SMART_ATR_TP_MULT)
+        sl = mark_price - (atr * SMART_ATR_SL_MULT)
     else:
-        tp = mark_price * (1 - SCALP_TP_PCT)
-        sl = mark_price * (1 + SCALP_SL_PCT)
+        tp = mark_price - (atr * SMART_ATR_TP_MULT)
+        sl = mark_price + (atr * SMART_ATR_SL_MULT)
     return round(tp, 6), round(sl, 6)
 
 
