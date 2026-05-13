@@ -29,7 +29,7 @@ SCAN_INTERVAL        = 3
 COOLDOWN_AFTER_TRADE = 120    # Turun ke 2 menit agar lebih rajin
 EQUITY_GUARD_PCT     = 0.93
 MAX_SPREAD_POINTS    = 35
-MIN_MOMENTUM_SCORE   = 55     # Turun ke 55 (Lebih agresif)
+MIN_MOMENTUM_SCORE   = 60     # Skor Institusional (Akurasi Tinggi)
 CANDLE_LIMIT         = 100
 
 # ── TP/SL — RR 2:1 ────────────────────────────────────────────────────────────
@@ -657,13 +657,12 @@ class ForexExecutor:
         except Exception as e:
             return {"quality": 0, "signal": "ERROR", "desc": str(e)}
 
-    def _calc_indicators(self):
+    def _calc_indicators(self, timeframe="30m"):
         """
         XAUUSD Multi-Timeframe Indicator Engine v6.0.
-        Data source: MetaAPI candle 30m (fallback 5m, lalu price momentum).
-        Tambahan v6.0: 4h trend bias, DXY context, lebih banyak sinyal.
+        Data source: MetaAPI candle (default 30m).
         """
-        candles = self.get_candles(timeframe="30m", limit=100)
+        candles = self.get_candles(timeframe=timeframe, limit=100)
         if len(candles) < 20:
             candles = self.get_candles(timeframe="15m", limit=100)  # fallback ke 15m
 
@@ -1486,7 +1485,7 @@ class ForexExecutor:
             success, _ = self.place_forex_order(sym, side, volume, tp=tp, sl=sl)
             if success:
                 from database import log_trade
-                log_trade(sym, price, tp, sl, market="forex")
+                log_trade(sym, price, tp, sl, market="forex", side=side, lot_size=volume)
                 any_success = True
             time.sleep(0.1)
         return any_success
@@ -1774,8 +1773,8 @@ class ForexExecutor:
 
                 do_log = (now - last_scan_log >= 30)
                 if do_log:
-                    print(f"[FOREX SCAN] {self._working_symbol} | RSI calculating...", flush=True)
-                ind = self._calc_indicators()
+                    print(f"[FOREX SCAN] {self._working_symbol} | RSI calculating (1m)...", flush=True)
+                ind = self._calc_indicators(timeframe="1m")
                 if not ind:
                     time.sleep(5)
                     continue
@@ -1787,7 +1786,7 @@ class ForexExecutor:
                 pump_sig = ind.get("pump_signal", "NONE")
 
                 if do_log:
-                    print(f"[FOREX SCAN] RSI:{rsi_val} 30m:{trend} 1h:{trend_1h} 4h:{trend_4h} Pump:{pump_sig}", flush=True)
+                    print(f"[FOREX SCAN] RSI:{rsi_val:.1f} 1m:{trend} 1h:{trend_1h} 4h:{trend_4h} Pump:{pump_sig}", flush=True)
                     last_scan_log = now
 
                 side, score, trades_to_open = self._determine_side(ind, spread_pts)

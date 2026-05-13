@@ -19,8 +19,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# DeepSeek client — opsional, tidak wajib untuk bot berjalan
-# Kalau kehabisan kredit atau key tidak ada, bot tetap jalan normal
+# Gemini client
+gemini_api_key = os.getenv("GEMINI_API_KEY")
+gemini_client = None
+if gemini_api_key:
+    try:
+        from google import genai
+        gemini_client = genai.Client(api_key=gemini_api_key)
+    except Exception:
+        pass
+
+# DeepSeek client
 api_key = os.getenv("DEEPSEEK_API_KEY")
 _deepseek_disabled = False  # Flag untuk disable setelah error insufficient balance
 
@@ -78,6 +87,7 @@ def analyze_and_sort(raw_data):
                     break
         if target not in df.columns:
             df[target] = 0
+    if len(df) == 0: return []
 
     for col in ['quoteVolume', 'priceChangePercent', 'lastPrice', 'high24h', 'low24h']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
@@ -278,32 +288,46 @@ def smart_trade_decision(symbol, technicals, news):
 
 
 def analyze_market_data(data_json):
-    """Untuk frontend dashboard - menggunakan DeepSeek (opsional)."""
-    global _deepseek_disabled, client
-    if _deepseek_disabled or not client:
-        return "DeepSeek tidak tersedia (kredit habis atau key tidak ada). Bot tetap berjalan normal."
-    try:
-        prompt = f"""
-        Analyze this crypto/market data and provide 3 hot trading recommendations.
-        Focus on whale activity, RSI momentum, and MTF trend confirmation.
-        Data: {data_json}
-        Format your response in professional Indonesian, use emojis, and be highly creative.
-        Include Entry, TP, and SL for each recommendation.
-        """
-        response = client.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {"role": "system", "content": "You are a brilliant, creative, and highly accurate institutional trading analyst assistant."},
-                {"role": "user", "content": prompt},
-            ],
-            stream=False
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        err_str = str(e).lower()
-        if "insufficient" in err_str or "balance" in err_str or "quota" in err_str:
-            _deepseek_disabled = True
-            client = None
-            print("[DEEPSEEK] Kredit habis. DeepSeek dinonaktifkan. Bot tetap jalan normal.", flush=True)
-            return "DeepSeek dinonaktifkan (kredit habis). Bot tetap berjalan normal."
-        return f"Gagal analisis: {e}"
+    """Untuk frontend dashboard - menggunakan Gemini (prioritas) atau DeepSeek."""
+    global _deepseek_disabled, client, gemini_client
+    
+    prompt = f"""
+    Analyze this crypto/market data and provide 3 hot trading recommendations.
+    Focus on whale activity, RSI momentum, and MTF trend confirmation.
+    Data: {data_json}
+    Format your response in professional Indonesian, use emojis, and be highly creative.
+    Include Entry, TP, and SL for each recommendation.
+    """
+
+    # 1. Try Gemini first
+    if gemini_client:
+        try:
+            response = gemini_client.models.generate_content(
+                model='gemini-1.5-flash',
+                contents=prompt
+            )
+            return response.text
+        except Exception as e:
+            print(f"[GEMINI ERROR] {e}")
+
+    # 2. Fallback to DeepSeek
+    if client and not _deepseek_disabled:
+        try:
+            response = client.chat.completions.create(
+                model="deepseek-chat",
+                messages=[
+                    {"role": "system", "content": "You are a brilliant, creative, and highly accurate institutional trading analyst assistant."},
+                    {"role": "user", "content": prompt},
+                ],
+                stream=False
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            err_str = str(e).lower()
+            if "insufficient" in err_str or "balance" in err_str or "quota" in err_str:
+                _deepseek_disabled = True
+                client = None
+                print("[DEEPSEEK] Kredit habis. DeepSeek dinonaktifkan.", flush=True)
+            return f"Gagal analisis: {e}"
+            
+    return "AI analysis tidak tersedia (kredit habis atau key tidak ada). Bot tetap berjalan normal."
