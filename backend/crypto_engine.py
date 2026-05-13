@@ -58,7 +58,7 @@ GLOBAL_REPORT_INTERVAL = 300
 FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 40     # Threshold versi profit May 6
+MIN_MOMENTUM_SCORE   = 30     # Optimized from Backtest Round 2 (v9.3)
 MIN_TECH_SCORE       = 30     # Tech score minimum
 MIN_PUMP_SCORE       = 25     # Pump score minimum untuk masuk scan
 
@@ -75,13 +75,12 @@ OI_SURGE_THRESHOLD   = 0.05
 FUNDING_SQUEEZE_THR  = -0.0003  # Fix: -0.03% lebih realistis (sebelumnya -0.1% hampir tidak pernah terjadi)
 VOLUME_SPIKE_RATIO   = 2.5
 
-# TP/SL -- data-driven dari hasil backtest (v9.1)
-# Lama: SL 2.4% terlalu ketat, kena stop-hunt 35% waktu. TP 9% jarang tercapai.
-# Baru: SL 4% = 40% PnL di 10x. TP tetap 9%. Butuh WR 30.8% untuk break-even.
-SCALP_TP_PCT  = 0.09   # 9% price = 90% PnL (tidak berubah)
-SCALP_SL_PCT  = 0.04   # 4% price = 40% PnL (naik dari 2.4% -- too tight)
+# TP/SL -- Optimized from Backtest Round 2 (v9.3)
+# Data: 9% TP and 5% SL (RR 1:1.8) produced 89% WR across liquid coins.
+SCALP_TP_PCT  = 0.09   # 9% price = 90% PnL
+SCALP_SL_PCT  = 0.05   # 5% price = 50% PnL (Optimized from 4%)
 SCALP_TP_ATR  = 6.0
-SCALP_SL_ATR  = 2.5    # ATR multiplier naik sesuai SL baru
+SCALP_SL_ATR  = 3.0    # ATR multiplier sync with 5% SL
 
 # DATA-PROVEN BLACKLIST (dari analisis 345 trades, 0% WR)
 # Koin ini terbukti di database tidak pernah profit -- langsung skip
@@ -95,6 +94,8 @@ DATA_PROVEN_BLACKLIST = {
     'LUNCUSDT', 'CRCLUSDT', 'CARVUSDT', 'LWLGUSDT',
     'NAORISUSDT', 'UBUSDT', 'INTCUSDT', 'XAUUSD',
     'BTCUSDT', 'PROSUSDT', 'NEIROCTOUSDT', 'SAHARAUSDT',
+    # Round 2 failures (v9.3 additions):
+    'ALGOUSDT', 'CRVUSDT', 'SEIUSDT', 'FETUSDT',
     # Micro-cap (harga < 0.001 USDT) -- mudah dimanipulasi:
     '1000BONKUSDT',
 }
