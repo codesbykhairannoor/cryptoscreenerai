@@ -1,5 +1,6 @@
 """
-CRYPTO ENGINE v9.0 - WHALE OBSERVER MODE
+VERSION_TAG = "v26.3-INSTITUTIONAL-FINAL"
+CRYPTO_ENGINE v9.0 - WHALE OBSERVER MODE
 =========================================
 Filosofi:
 - 1 trade terbaik, semua modal, fokus penuh
