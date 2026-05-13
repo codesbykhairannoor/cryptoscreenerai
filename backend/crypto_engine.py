@@ -50,7 +50,7 @@ from bitget_executor import BitgetExecutor
 
 #  KONFIGURASI 
 MAX_POSITIONS        = 1      # FOKUS: 1 trade saja (STRICT)
-FIXED_MARGIN_USDT    = 5.0    # Cukup 5 USDT per trade sesuai permintaan user
+FIXED_MARGIN_USDT    = 3.0    # SURVIVAL MODE: Turun ke $3 karena saldo kritis (12 USDT)
 SCAN_INTERVAL        = 3      # Scan lebih cepat (3 detik) agar responsif di VPS
 COOLDOWN_AFTER_TRADE = 120    # 2 menit cooldown — versi profit May 5
 NEWS_REPORT_INTERVAL = 600
@@ -77,8 +77,8 @@ VOLUME_SPIKE_RATIO   = 2.5
 
 # TP/SL -- Optimized from Backtest Round 2 (v9.3)
 # Data: 9% TP and 5% SL (RR 1:1.8) produced 89% WR across liquid coins.
-SCALP_TP_PCT  = 0.09   # 9% price = 90% PnL
-SCALP_SL_PCT  = 0.05   # 5% price = 50% PnL (Optimized from 4%)
+SCALP_TP_PCT  = 0.080  # 8% price = 80% PnL
+SCALP_SL_PCT  = 0.014  # 1.4% price = 14% PnL (Tight Survival)
 SCALP_TP_ATR  = 6.0
 SCALP_SL_ATR  = 3.0    # ATR multiplier sync with 5% SL
 
@@ -106,9 +106,8 @@ DATA_PROVEN_BLACKLIST = {
     'SUIUSDT', 'XRPUSDT', 'PEOPLEUSDT',
 }
  
-# STAR COINS -- Berdasarkan Round 1-13 Backtest (WR 80%+)
-STAR_COINS = {'BNBUSDT', 'NEARUSDT', 'ATOMUSDT', 'INJUSDT', 'TIAUSDT', 'SEIUSDT', 'LINKUSDT', 
-              'DOTUSDT', 'DYMUSDT', 'FFUSDT', 'LDOUSDT', 'WLDUSDT', 'DOGEUSDT'}
+# STAR COINS -- High-RR Champions (Berdasarkan Round 17 - Net Profit Strategi 8%)
+STAR_COINS = {'IRYSUSDT', 'ESPORTSUSDT', 'BILLUSDT', 'SAHARAUSDT', 'DYMUSDT', 'HUSDT', 'LABUSDT'}
 
 # SELL TRADING DISABLED -- data menunjukkan 0% WR dari 33 SELL trades
 # Setiap SELL yang diambil bot hampir pasti kalah
