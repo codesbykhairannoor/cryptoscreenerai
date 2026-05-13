@@ -38,6 +38,8 @@ MIN_TECH_SCORE       = 20
 HUNTER_ATR_SL_MULT   = 1.5    # SL ketat
 HUNTER_ATR_TP_MULT   = 4.5    # Reward maksimal
 FVG_GAP_THRESHOLD    = 0.005  # Minimal gap 0.5%
+SCALP_TP_PCT         = 0.08   # 8% target
+SCALP_SL_PCT         = 0.015  # 1.5% stop
 # ─────────────────────────────────────────
 MIN_PUMP_SCORE       = 25     # Pump score minimum untuk masuk scan
 
