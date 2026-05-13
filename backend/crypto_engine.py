@@ -58,7 +58,7 @@ GLOBAL_REPORT_INTERVAL = 300
 FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 30     # Optimized from Backtest Round 2 (v9.3)
+MIN_MOMENTUM_SCORE   = 45     # SNIPER MODE (v9.4) - Focused on 90%+ WR setups
 MIN_TECH_SCORE       = 30     # Tech score minimum
 MIN_PUMP_SCORE       = 25     # Pump score minimum untuk masuk scan
 
@@ -94,6 +94,8 @@ DATA_PROVEN_BLACKLIST = {
     'LUNCUSDT', 'CRCLUSDT', 'CARVUSDT', 'LWLGUSDT',
     'NAORISUSDT', 'UBUSDT', 'INTCUSDT', 'XAUUSD',
     'BTCUSDT', 'PROSUSDT', 'NEIROCTOUSDT', 'SAHARAUSDT',
+    # Round 3 failures (v9.4 additions):
+    'WIFUSDT', 'LTCUSDT',
     # Round 2 failures (v9.3 additions):
     'ALGOUSDT', 'CRVUSDT', 'SEIUSDT', 'FETUSDT',
     # Micro-cap (harga < 0.001 USDT) -- mudah dimanipulasi:
