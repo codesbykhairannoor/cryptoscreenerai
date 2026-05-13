@@ -1,6 +1,7 @@
-VERSION_TAG = "v26.15-STRIKE-ZERO"
-
 import time
+VERSION_TAG = "v26.16-FORCE-BOOT"
+print(f"\n[BOOT] Starting Institutional Predator {VERSION_TAG}...")
+
 import requests
 import datetime
 from collections import defaultdict
