@@ -41,7 +41,7 @@ DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
 MIN_MOMENTUM_SCORE   = 20     # INSTITUTIONAL MODE: Selektif
 MIN_TECH_SCORE       = 20     
 # ── INSTITUTIONAL HUNTER CONFIG (v26.0) ──
-HUNTER_ATR_SL_MULT   = 1.5    # SL ketat
+HUNTER_ATR_SL_MULT   = 1.5    # stop_loss_val ketat
 HUNTER_ATR_TP_MULT   = 4.5    # Reward maksimal
 FVG_GAP_THRESHOLD    = 0.005  # Minimal gap 0.5%
 SCALP_TP_PCT         = 0.08   # 8% target
@@ -63,7 +63,7 @@ FUNDING_SQUEEZE_THR  = -0.0003  # Fix: -0.03% lebih realistis (sebelumnya -0.1% 
 VOLUME_SPIKE_RATIO   = 2.5
 
 # ── PRECISION STRIKE CONFIG (v22.0) ────────────────────────────
-ATR_SL_MULT     = 2.0    # SL lebih lebar (2.0x ATR) untuk WR 70%+
+ATR_SL_MULT     = 2.0    # stop_loss_val lebih lebar (2.0x ATR) untuk WR 70%+
 ATR_TP_MIN_MULT = 4.0    
 TRAIL_GAP_ATR   = 2.5    
 BTC_SYNC_ENABLED = True  # Hanya LONG jika BTC juga Bullish
@@ -300,7 +300,7 @@ def _calc_volatility_regime(symbol: str, interval: str = "15m") -> dict:
         atr_ratio    = atr_current / atr_baseline if atr_baseline > 0 else 1.0
 
         if atr_ratio > VOL_HIGH_MULTIPLIER:
-            regime = "HIGH_VOL"   # Terlalu volatile - SL sering kena noise
+            regime = "HIGH_VOL"   # Terlalu volatile - stop_loss_val sering kena noise
         elif atr_ratio < VOL_LOW_MULTIPLIER:
             regime = "LOW_VOL"    # Terlalu sepi - spread makan profit
         else:
@@ -332,7 +332,7 @@ def _calc_expected_value(side: str, tech: dict, combined_score: int) -> float:
 
     Contoh:
     - Score 70, trend aligned, whale buy -> P_win ~55%
-    - TP 8%, SL 1.5%
+    - take_profit_val 8%, stop_loss_val 1.5%
     - EV = (0.55 x 0.08) - (0.45 x 0.015) = 0.044 - 0.0068 = 0.037 = 3.7% 
 
     - Score 42, no whale, ranging market -> P_win ~30%
@@ -1032,23 +1032,23 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     return best_side, best_reason, best_score
 
 
-#  CORE: HITUNG TP/SL BERBASIS PnL TARGET 
-#  CORE: HITUNG TP/SL BERBASIS VOLATILITAS (ATR)
+#  CORE: HITUNG take_profit_val/stop_loss_val BERBASIS PnL TARGET 
+#  CORE: HITUNG take_profit_val/stop_loss_val BERBASIS VOLATILITAS (ATR)
 def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]:
     """
-    Institutional Hunter v26.0: Precision ATR-based TP/SL
+    Institutional Hunter v26.0: Precision ATR-based take_profit_val/stop_loss_val
     """
     atr = tech.get('atr', mark_price * 0.02)
     # Gunakan Limit Price sebagai dasar jika ada
     base_p = tech.get('limit_price', mark_price)
     
     if side == "buy":
-        tp = base_p + (atr * HUNTER_ATR_TP_MULT)
-        sl = base_p - (atr * HUNTER_ATR_SL_MULT)
+        take_profit_val = base_p + (atr * HUNTER_ATR_TP_MULT)
+        stop_loss_val = base_p - (atr * HUNTER_ATR_SL_MULT)
     else:
-        tp = base_p - (atr * HUNTER_ATR_TP_MULT)
-        sl = base_p + (atr * HUNTER_ATR_SL_MULT)
-    return round(tp, 6), round(sl, 6)
+        take_profit_val = base_p - (atr * HUNTER_ATR_TP_MULT)
+        stop_loss_val = base_p + (atr * HUNTER_ATR_SL_MULT)
+    return round(take_profit_val, 6), round(stop_loss_val, 6)
 
 
 # ── PERFORMANCE TRACKING (v21.0) ────────────────────────────────
@@ -1064,18 +1064,18 @@ def run_crypto_engine():
     - Scan top 40 coins every 10 seconds (parallel, 8 workers)
     - 5m precision entry: demand/supply zone detection
     - FRED macro filter + Dune on-chain boost
-    - SL: 24% PnL (-2.4% price), TP: 90% PnL (+9% price)
+    - stop_loss_val: 24% PnL (-2.4% price), take_profit_val: 90% PnL (+9% price)
     - Session: 08:00-22:00 WIB only
     - Cooldown: 120 seconds between trades
     """
     executor = BitgetExecutor()
-    tp, sl = 0.0, 0.0
+    take_profit_val, stop_loss_val = 0.0, 0.0
 
     from database import check_pending_trades, get_performance_stats
     from sentiment import get_market_news_digest
 
     print("[CRYPTO SCALPER v5.1] Direct Execution Mode AKTIF!", flush=True)
-    print(f"  Strategy : 1 trade terbaik | {LEVERAGE}x leverage | SL:30% TP:80%", flush=True)
+    print(f"  Strategy : 1 trade terbaik | {LEVERAGE}x leverage | stop_loss_val:30% take_profit_val:80%", flush=True)
     print(f"  Scan     : Top 40 koin setiap {SCAN_INTERVAL}s (8 workers parallel)", flush=True)
     print(f"  Cooldown : {COOLDOWN_AFTER_TRADE}s antara trade", flush=True)
     print(f"  Session  : 08:00-22:00 WIB (01:00-15:00 UTC)", flush=True)
@@ -1435,9 +1435,9 @@ def run_crypto_engine():
                 reject = None
 
                 # ── DYNAMIC RISK SIZER (v18.0) ─────────────────────
-                # Hitung modal agar jika kena SL, kerugian tetap $0.50
-                # sl_dist_pct = abs(sl - mark_price) / mark_price
-                sl_dist_pct = abs(sl - mark_price) / mark_price if mark_price > 0 else 0
+                # Hitung modal agar jika kena stop_loss_val, kerugian tetap $0.50
+                # sl_dist_pct = abs(stop_loss_val - mark_price) / mark_price
+                sl_dist_pct = abs(stop_loss_val - mark_price) / mark_price if mark_price > 0 else 0
                 if sl_dist_pct > 0:
                     # Margin * sl_dist_pct * Leverage = Risk
                     # Margin = Risk / (sl_dist_pct * Leverage)
@@ -1575,9 +1575,9 @@ def run_crypto_engine():
                 rsi        = top['rsi']
                 vwap_dist  = top['vwap_dist']
 
-                # Hitung TP/SL (Inisialisasi awal untuk hindari free variable error)
-                tp, sl = 0.0, 0.0
-                tp, sl = _calc_tp_sl(mark_price, side, tech)
+                # Hitung take_profit_val/stop_loss_val (Inisialisasi awal untuk hindari free variable error)
+                take_profit_val, stop_loss_val = 0.0, 0.0
+                take_profit_val, stop_loss_val = _calc_tp_sl(mark_price, side, tech)
 
                 # Hitung size (Strict 5 USDT v9.8)
                 amount = executor.get_max_available(symbol, leverage=LEVERAGE, risk_usdt=FIXED_MARGIN_USDT)
@@ -1586,7 +1586,7 @@ def run_crypto_engine():
                     print(f"[SCALPER v5.1] {clean_base} {side.upper()} | Score: {combined_score}/100")
                     print(f"  Reason : {reason}")
                     print(f"  Price  : {mark_price} | RSI: {rsi} | VWAP: {vwap_dist}%")
-                    print(f"  TP: {tp} | SL: {sl} | Amount: {amount}")
+                    print(f"  take_profit_val: {take_profit_val} | stop_loss_val: {stop_loss_val} | Amount: {amount}")
                     print(f"  FRED   : {fred_bias} | Crypto:{fred_crypto_impact} | Fed:{fred_ctx.get('fed_rate')}%({fred_ctx.get('fed_trend')}) | DXY:{fred_ctx.get('dxy')}({fred_ctx.get('dxy_trend')})")
                     print(f"  DUNE   : {dune_trend} | Activity:{dune_activity} | Stable:{dune_stable_b}B | Whales:{dune_whale_count}/h | DEX:{dune_ctx.get('dex_volume_24h_b', 0)}B/24h")
                     e5m = tech.get('entry_signal_5m', 'N/A')
@@ -1598,7 +1598,7 @@ def run_crypto_engine():
                     # Eksekusi (v12.0: Update Penalty Box on fail)
                     order_success = False
                     try:
-                        success, order = executor.place_order(symbol, side, amount, tp=tp, sl=sl, leverage=LEVERAGE)
+                        success, order = executor.place_order(symbol, side, amount, take_profit_val=take_profit_val, stop_loss_val=stop_loss_val, leverage=LEVERAGE)
                         if success:
                             order_success = True
                     except Exception as e:
@@ -1606,7 +1606,7 @@ def run_crypto_engine():
 
                     if order_success:
                         from database import log_trade
-                        log_trade(symbol, mark_price, tp, sl, side=side, score=combined_score, reason=reason)
+                        log_trade(symbol, mark_price, take_profit_val, stop_loss_val, side=side, score=combined_score, reason=reason)
                         last_exec_time = time.time()
                         _consec_losses = 0
                         # Log lengkap kenapa bot masuk trade ini
@@ -1621,13 +1621,13 @@ def run_crypto_engine():
                         except:
                             rt_wbv = rt_wsv = rt_spread = rt_obi = 0
 
-                        # Hitung persentase TP/SL untuk log
-                        tp_pct = round(abs(tp - mark_price) / mark_price * 100, 2)
-                        sl_pct = round(abs(sl - mark_price) / mark_price * 100, 2)
+                        # Hitung persentase take_profit_val/stop_loss_val untuk log
+                        tp_pct = round(abs(take_profit_val - mark_price) / mark_price * 100, 2)
+                        sl_pct = round(abs(stop_loss_val - mark_price) / mark_price * 100, 2)
 
                         print(
                             f"\n[ENTRY] {clean_base} {side.upper()} @ {mark_price} | "
-                            f"Score:{combined_score} | SL:{sl}(-{sl_pct}%) TP:{tp}(+{tp_pct}%)\n"
+                            f"Score:{combined_score} | stop_loss_val:{stop_loss_val}(-{sl_pct}%) take_profit_val:{take_profit_val}(+{tp_pct}%)\n"
                             f"  Why: {reason}\n"
                             f"  [TECH] RSI:{float(rsi):.1f} VWAP:{float(vwap_dist):+.2f}% OBI:{float(tech.get('obi',0)):+.2f} Trend1h:{tech.get('trend_1h','?')}\n"
                             f"  [WS-RT] WhaleVol: B:${float(rt_wbv):,.0f} / S:${float(rt_wsv):,.0f} | OBI:{float(rt_obi):+.2f} | Spread:{float(rt_spread):.3f}%\n"
@@ -1639,7 +1639,7 @@ def run_crypto_engine():
                         # KIRIM NOTIF TELEGRAM
                         tg_data = {
                             'symbol': symbol, 'side': side, 'price': mark_price, 'amount': amount,
-                            'score': combined_score, 'reason': reason, 'tp': tp, 'sl': sl,
+                            'score': combined_score, 'reason': reason, 'take_profit_val': take_profit_val, 'stop_loss_val': stop_loss_val,
                             'tp_pct': tp_pct, 'sl_pct': sl_pct,
                             'rsi': round(rsi, 1), 'vwap': round(vwap_dist, 2),
                             'obi_rest': round(tech.get('obi', 0), 2),

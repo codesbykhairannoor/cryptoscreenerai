@@ -3,18 +3,18 @@ FOREX SCALPER v8.0 - GENIUS SCALPER EDITION
 =============================================
 Perbaikan besar dari v7.0:
 - FIX: DXY proxy diganti dari PAXG ke Yahoo Finance DX-Y.NYB (akurat)
-- FIX: RR dinaikkan dari 1.5:1 ke 2:1 (TP 40 poin, SL 20 poin)
+- FIX: RR dinaikkan dari 1.5:1 ke 2:1 (take_profit_val 40 poin, stop_loss_val 20 poin)
 - FIX: Cache candle 30m dari 300s ke 60s (data lebih fresh)
-- FIX: Auto-close threshold konsisten dengan SL (bukan $7 flat)
+- FIX: Auto-close threshold konsisten dengan stop_loss_val (bukan $7 flat)
 - FIX: Hard block in_demand/in_supply di _determine_side()
 - FIX: Multi-trade dihapus — 1 trade fokus, lot bisa dinaikkan
-- FIX: Trailing SL aktif dari 15 poin (bukan 12), gap minimal 10 poin
+- FIX: Trailing stop_loss_val aktif dari 15 poin (bukan 12), gap minimal 10 poin
 - FIX: EMA 200 butuh 200 candle — sekarang pakai EMA 50 dengan label benar
 - FIX: Consecutive loss pause (port dari crypto engine)
 - FIX: _close_attempted dibersihkan setiap 10 menit
 - FIX: Session overlap London+NY (12-16 UTC) dikurangi trades
 - NEW: Micro-scalp mode — deteksi momentum 1m untuk entry presisi
-- NEW: Spread-adjusted TP/SL — TP/SL otomatis menyesuaikan spread saat ini
+- NEW: Spread-adjusted take_profit_val/stop_loss_val — take_profit_val/stop_loss_val otomatis menyesuaikan spread saat ini
 - NEW: News impact filter — skip entry 15 menit sebelum/sesudah high-impact news
 - NEW: Multi-timeframe confluence — butuh minimal 2 TF aligned sebelum entry
 """
@@ -32,8 +32,8 @@ MAX_SPREAD_POINTS    = 35
 MIN_MOMENTUM_SCORE   = 60     # Skor Institusional (Akurasi Tinggi)
 CANDLE_LIMIT         = 100
 
-# ── TP/SL — RR 1.6:1 (Hasil Optimasi Backtest Massive v9.0) ───────────────────
-# Berdasarkan 3000 candle 1m, SL 25 memberikan Win Rate tertinggi (44.1%)
+# ── take_profit_val/stop_loss_val — RR 1.6:1 (Hasil Optimasi Backtest Massive v9.0) ───────────────────
+# Berdasarkan 3000 candle 1m, stop_loss_val 25 memberikan Win Rate tertinggi (44.1%)
 SCALP_TP_POINTS      = 40.0   # Target profit tetap 40 poin
 SCALP_SL_POINTS      = 25.0   # Stop Loss dinaikkan ke 25 agar tidak gampang kena noise
 MIN_LOT_PER_TRADE    = 0.01
@@ -311,7 +311,7 @@ class ForexExecutor:
         """
         Expected Value untuk XAUUSD trade ??? sudah include spread cost.
         EV = (P_win x TP_pct) - (P_loss x SL_pct) - spread_cost
-        TP = 20 poin, SL = 8 poin, spread ~2.8 poin
+        take_profit_val = 20 poin, stop_loss_val = 8 poin, spread ~2.8 poin
         Spread cost = 2.8 / entry_price ~ 0.006% per trade
         """
         base_p_win = 0.30 + (score / 100) * 0.35
@@ -337,7 +337,7 @@ class ForexExecutor:
         p_win  = min(0.75, max(0.20, base_p_win + adj))
         p_loss = 1.0 - p_win
 
-        # XAUUSD: TP 30 poin / entry ~4700 = ~0.64%, SL 20 poin = ~0.43%
+        # XAUUSD: take_profit_val 30 poin / entry ~4700 = ~0.64%, stop_loss_val 20 poin = ~0.43%
         # Sesuai konstanta SCALP_TP_POINTS=30 dan SCALP_SL_POINTS=20
         entry_approx = self._last_known_price if self._last_known_price > 0 else 4700
         tp_pct = SCALP_TP_POINTS / entry_approx
@@ -962,8 +962,8 @@ class ForexExecutor:
             bsz = (p_max - p_min) / n_b if p_max > p_min else 1
             buckets = [0.0] * n_b
             for i in range(len(closes)):
-                tp = (highs[i] + lows[i] + closes[i]) / 3
-                bi = min(int((tp - p_min) / bsz), n_b - 1)
+                take_profit_val = (highs[i] + lows[i] + closes[i]) / 3
+                bi = min(int((take_profit_val - p_min) / bsz), n_b - 1)
                 buckets[bi] += vols[i]
             poc_idx = buckets.index(max(buckets))
             poc = round(p_min + (poc_idx + 0.5) * bsz, 3)
@@ -1325,23 +1325,23 @@ class ForexExecutor:
         # Spread cost 2x, margin 2x, tapi tidak ada diversifikasi
         return best_side, best_score, 1
 
-    #  TP/SL & LOT SIZING 
+    #  take_profit_val/stop_loss_val & LOT SIZING 
 
     def _calc_tp_sl(self, price, side, atr, spread_pts=0):
         """
-        TP/SL GENIUS SCALPER v8.0 — RR 2:1 dengan spread adjustment.
+        take_profit_val/stop_loss_val GENIUS SCALPER v8.0 — RR 2:1 dengan spread adjustment.
 
-        RR 2:1 = TP 40 poin, SL 20 poin.
+        RR 2:1 = take_profit_val 40 poin, stop_loss_val 20 poin.
         Kenapa RR 2:1 lebih baik dari 1.5:1?
         - RR 1.5:1 butuh win rate 40% untuk break even
         - RR 2:1 butuh win rate 33% untuk break even
-        - Dengan spread ~3 poin, RR efektif 2:1 = TP 37 poin, SL 23 poin
+        - Dengan spread ~3 poin, RR efektif 2:1 = take_profit_val 37 poin, stop_loss_val 23 poin
         - Masih lebih baik dari RR 1.5:1 sebelumnya
 
-        Spread adjustment: TP diperlebar sedikit untuk cover spread cost.
+        Spread adjustment: take_profit_val diperlebar sedikit untuk cover spread cost.
         """
-        # Spread adjustment — TP harus cover spread cost
-        spread_adj = max(0, spread_pts * 0.1)  # 10% dari spread ditambah ke TP
+        # Spread adjustment — take_profit_val harus cover spread cost
+        spread_adj = max(0, spread_pts * 0.1)  # 10% dari spread ditambah ke take_profit_val
 
         if atr and 1.0 <= atr <= 25:
             # ATR-based dengan floor minimum
@@ -1405,25 +1405,25 @@ class ForexExecutor:
 
     #  ORDER EXECUTION 
 
-    def place_forex_order(self, symbol, side, amount, tp=None, sl=None, reason_data=None):
+    def place_forex_order(self, symbol, side, amount, take_profit_val=None, stop_loss_val=None, reason_data=None):
         if not self.is_active: return False, "Forex not active"
         try:
             url = self.base_url + "/users/current/accounts/" + self.account_id + "/trade"
             headers = {"auth-token": self.api_token, "Content-Type": "application/json"}
 
-            # Validasi SL sebelum kirim ??? SL BUY harus < harga saat ini
-            # Ini mencegah SL yang salah arah (misal breakeven dari posisi lain)
-            if sl and sl > 0:
+            # Validasi stop_loss_val sebelum kirim ??? stop_loss_val BUY harus < harga saat ini
+            # Ini mencegah stop_loss_val yang salah arah (misal breakeven dari posisi lain)
+            if stop_loss_val and stop_loss_val > 0:
                 live = self.get_live_price(symbol)
                 mid  = live.get("mid", 0)
                 if mid > 0:
-                    if side.lower() == "buy" and sl >= mid:
-                        # SL di atas harga ??? salah arah, recalculate
-                        sl = round(mid - SCALP_SL_POINTS, 3)
-                        print("[SL GUARD] BUY SL salah arah, reset ke " + str(sl))
-                    elif side.lower() == "sell" and sl <= mid:
-                        sl = round(mid + SCALP_SL_POINTS, 3)
-                        print("[SL GUARD] SELL SL salah arah, reset ke " + str(sl))
+                    if side.lower() == "buy" and stop_loss_val >= mid:
+                        # stop_loss_val di atas harga ??? salah arah, recalculate
+                        stop_loss_val = round(mid - SCALP_SL_POINTS, 3)
+                        print("[stop_loss_val GUARD] BUY stop_loss_val salah arah, reset ke " + str(stop_loss_val))
+                    elif side.lower() == "sell" and stop_loss_val <= mid:
+                        stop_loss_val = round(mid + SCALP_SL_POINTS, 3)
+                        print("[stop_loss_val GUARD] SELL stop_loss_val salah arah, reset ke " + str(stop_loss_val))
 
             payload = {
                 "symbol":     symbol,
@@ -1431,14 +1431,14 @@ class ForexExecutor:
                 "volume":     amount,
                 "comment":    "GeniusForex v8.0",
             }
-            if sl: payload["stopLoss"]   = sl
-            if tp: payload["takeProfit"] = tp
+            if stop_loss_val: payload["stopLoss"]   = stop_loss_val
+            if take_profit_val: payload["takeProfit"] = take_profit_val
             res    = requests.post(url, headers=headers, json=payload, timeout=10)
             result = res.json()
             if res.status_code == 200:
                 self._pending_order_ts = time.time() # FIX: Lock entry
                 self._positions_cache  = []         # FIX: Invalidate cache
-                print("[FOREX SUCCESS] " + side.upper() + " " + symbol + " lot=" + str(amount) + " TP=" + str(tp) + " SL=" + str(sl))
+                print("[FOREX SUCCESS] " + side.upper() + " " + symbol + " lot=" + str(amount) + " take_profit_val=" + str(take_profit_val) + " stop_loss_val=" + str(stop_loss_val))
                 
                 # KIRIM NOTIF TELEGRAM
                 if reason_data:
@@ -1446,9 +1446,9 @@ class ForexExecutor:
                     tg_data = {
                         'symbol': symbol, 'side': side, 'price': mid, 'amount': amount,
                         'score': reason_data.get('score', 0), 'reason': reason_data.get('reason', 'N/A'),
-                        'tp': tp, 'sl': sl,
-                        'tp_pct': round(abs(tp-mid)/mid*100, 2) if mid else 0,
-                        'sl_pct': round(abs(sl-mid)/mid*100, 2) if mid else 0,
+                        'take_profit_val': take_profit_val, 'stop_loss_val': stop_loss_val,
+                        'tp_pct': round(abs(take_profit_val-mid)/mid*100, 2) if mid else 0,
+                        'sl_pct': round(abs(stop_loss_val-mid)/mid*100, 2) if mid else 0,
                         'rsi': reason_data.get('rsi', 0), 'vwap': reason_data.get('vwap', 0),
                         'obi_rest': reason_data.get('obi', 0),
                         'trend_1h': reason_data.get('trend_1h', '?'),
@@ -1468,7 +1468,7 @@ class ForexExecutor:
             print("[FOREX API CRASH] " + str(e))
             return False, str(e)
 
-    def place_xauusd_scalp_batch(self, side, trades_count=3, volume=0.01, tp=None, sl=None):
+    def place_xauusd_scalp_batch(self, side, trades_count=3, volume=0.01, take_profit_val=None, stop_loss_val=None):
         """Dipakai oleh news_sniper.py untuk eksekusi cepat."""
         sym = self._working_symbol or self._resolve_symbol("XAUUSD")
         price_data = self.get_live_price(sym)
@@ -1476,24 +1476,24 @@ class ForexExecutor:
         if price == 0:
             print("[SCALP BATCH] Cannot get price, aborting.")
             return False
-        if tp is None or sl is None or tp == 0 or sl == 0:
-            tp, sl = self._calc_tp_sl(price, side, 1.5)
-        print("[SCALP BATCH] Firing " + str(trades_count) + "x " + side.upper() + " " + sym + " @ " + str(price) + " TP=" + str(tp) + " SL=" + str(sl))
+        if take_profit_val is None or stop_loss_val is None or take_profit_val == 0 or stop_loss_val == 0:
+            take_profit_val, stop_loss_val = self._calc_tp_sl(price, side, 1.5)
+        print("[SCALP BATCH] Firing " + str(trades_count) + "x " + side.upper() + " " + sym + " @ " + str(price) + " take_profit_val=" + str(take_profit_val) + " stop_loss_val=" + str(stop_loss_val))
         any_success = False
         for i in range(trades_count):
-            success, _ = self.place_forex_order(sym, side, volume, tp=tp, sl=sl)
+            success, _ = self.place_forex_order(sym, side, volume, take_profit_val=take_profit_val, stop_loss_val=stop_loss_val)
             if success:
                 from database import log_trade
-                log_trade(sym, price, tp, sl, market="forex", side=side, lot_size=volume)
+                log_trade(sym, price, take_profit_val, stop_loss_val, market="forex", side=side, lot_size=volume)
                 any_success = True
             time.sleep(0.1)
         return any_success
 
     def update_forex_sl(self, position_id, new_sl, current_tp=None):
         """
-        Update SL posisi via POSITION_MODIFY.
+        Update stop_loss_val posisi via POSITION_MODIFY.
         WAJIB kirim takeProfit bersamaan ??? kalau tidak, beberapa broker MT5
-        akan reset TP ke 0 (hilang) saat SL diupdate.
+        akan reset take_profit_val ke 0 (hilang) saat stop_loss_val diupdate.
         current_tp harus diambil dari data posisi sebelum memanggil fungsi ini.
         """
         if not self.is_active: return False
@@ -1505,7 +1505,7 @@ class ForexExecutor:
                 "positionId": str(position_id),
                 "stopLoss":   new_sl,
             }
-            # Selalu sertakan TP kalau ada ??? mencegah broker reset TP ke 0
+            # Selalu sertakan take_profit_val kalau ada ??? mencegah broker reset take_profit_val ke 0
             if current_tp and float(current_tp) > 0:
                 payload["takeProfit"] = float(current_tp)
             res = requests.post(url, headers=headers, json=payload, timeout=10)
@@ -1515,31 +1515,31 @@ class ForexExecutor:
                 err = res.json().get("message", res.text[:100])
             except Exception:
                 err = res.text[:100]
-            print("[UPDATE SL FAIL] pos=" + str(position_id) + " sl=" + str(new_sl) + " status=" + str(res.status_code) + ": " + err)
+            print("[UPDATE stop_loss_val FAIL] pos=" + str(position_id) + " stop_loss_val=" + str(new_sl) + " status=" + str(res.status_code) + ": " + err)
             return False
         except Exception as e:
-            print("[UPDATE SL ERROR] pos=" + str(position_id) + ": " + str(e))
+            print("[UPDATE stop_loss_val ERROR] pos=" + str(position_id) + ": " + str(e))
             return False
 
     #  TRAILING STOP 
 
     def _trail_positions(self, positions):
         """
-        Trailing SL v8.0 — Genius Scalper Edition.
+        Trailing stop_loss_val v8.0 — Genius Scalper Edition.
 
         Perubahan dari v7.0:
         - Trailing aktif dari 15 poin (bukan 12) — kurangi noise exit
         - Gap trailing minimal 10 poin dari current price (bukan dari entry)
-        - Selalu kirim TP bersamaan agar TP tidak hilang
-        - Auto-close threshold konsisten dengan SL (bukan $7 flat)
+        - Selalu kirim take_profit_val bersamaan agar take_profit_val tidak hilang
+        - Auto-close threshold konsisten dengan stop_loss_val (bukan $7 flat)
         - _close_attempted dibersihkan setiap 10 menit
 
         Tabel trailing baru:
         profit < 15 poin  : DIAM — noise XAUUSD bisa 8-12 poin
-        profit 15-19 poin : LOCK-5 (SL ke entry+5)
-        profit 20-24 poin : LOCK-10 (SL ke entry+10)
-        profit 25-29 poin : LOCK-15 (SL ke entry+15)
-        profit >= 30 poin : LOCK-20 (SL ke entry+20) — hampir di TP
+        profit 15-19 poin : LOCK-5 (stop_loss_val ke entry+5)
+        profit 20-24 poin : LOCK-10 (stop_loss_val ke entry+10)
+        profit 25-29 poin : LOCK-15 (stop_loss_val ke entry+15)
+        profit >= 30 poin : LOCK-20 (stop_loss_val ke entry+20) — hampir di take_profit_val
         """
         now = time.time()
 
@@ -1568,11 +1568,11 @@ class ForexExecutor:
             direction = "BUY" if is_buy else "SELL"
             if int(now) % 10 < 3:
                 print(f"[TRAIL] {sym} {direction} open={open_price} cur={cp} "
-                      f"profit=${profit} pt={round(profit_pt,2)} sl={current_sl}", flush=True)
+                      f"profit=${profit} pt={round(profit_pt,2)} stop_loss_val={current_sl}", flush=True)
 
-            # AUTO-CLOSE: rugi melebihi SL + buffer (SL harusnya sudah kena, ini safety net)
-            # v8.1: Threshold dinamis — 1.5x dari SL dalam poin dikali lot
-            # SL 20 poin = $0.2 per 0.01 lot. Auto-close di 30 poin ($0.3)
+            # AUTO-CLOSE: rugi melebihi stop_loss_val + buffer (stop_loss_val harusnya sudah kena, ini safety net)
+            # v8.1: Threshold dinamis — 1.5x dari stop_loss_val dalam poin dikali lot
+            # stop_loss_val 20 poin = $0.2 per 0.01 lot. Auto-close di 30 poin ($0.3)
             # Ini mencegah bot "mencuri" trade yang harusnya masih bernapas.
             sl_points_val = abs(open_price - current_sl) if current_sl > 0 else SCALP_SL_POINTS
             auto_close_threshold = -(sl_points_val * 1.5) * 0.1 * (float(p.get("volume", 0)) / 0.01)
@@ -1587,7 +1587,7 @@ class ForexExecutor:
                         json={"actionType": "POSITION_CLOSE_ID", "positionId": pos_id}, timeout=8)
                     if res.status_code == 200:
                         print(f"[FOREX AUTO-CLOSE] {pos_id} closed OK")
-                        send_telegram_message(f"<b>🛑 FOREX POSITION CLOSED</b>\n\nSymbol: <code>{sym}</code>\nID: <code>{pos_id}</code>\nProfit: <b>${profit}</b>\nReason: <b>Auto-Close (SL Hit/Buffer)</b>")
+                        send_telegram_message(f"<b>🛑 FOREX POSITION CLOSED</b>\n\nSymbol: <code>{sym}</code>\nID: <code>{pos_id}</code>\nProfit: <b>${profit}</b>\nReason: <b>Auto-Close (stop_loss_val Hit/Buffer)</b>")
                     else:
                         del self._close_attempted[pos_id]  # Retry next time
                 except Exception as e:
@@ -1595,7 +1595,7 @@ class ForexExecutor:
                         del self._close_attempted[pos_id]
                 continue
 
-            # TRAILING SL — aktif dari 15 poin
+            # TRAILING stop_loss_val — aktif dari 15 poin
             stage = "NONE"
             if is_buy:
                 if profit_pt >= 30.0:
@@ -1628,7 +1628,7 @@ class ForexExecutor:
                 else:
                     target_sl = 0
 
-            # SL hanya bergerak ke arah profit, tidak pernah mundur
+            # stop_loss_val hanya bergerak ke arah profit, tidak pernah mundur
             if is_buy:
                 should_update = (current_sl == 0 or target_sl > current_sl + 0.5)
             else:
@@ -1637,8 +1637,8 @@ class ForexExecutor:
             if should_update:
                 ok = self.update_forex_sl(pos_id, target_sl, current_tp=current_tp)
                 if ok:
-                    print(f"OK [{stage}] {sym} SL {current_sl} -> {target_sl} "
-                          f"| TP={current_tp} | profit_pt={round(profit_pt,1)}pt")
+                    print(f"OK [{stage}] {sym} stop_loss_val {current_sl} -> {target_sl} "
+                          f"| take_profit_val={current_tp} | profit_pt={round(profit_pt,1)}pt")
                 else:
                     print(f"FAIL [{stage}] {sym} -> {target_sl}")
 
@@ -1648,7 +1648,7 @@ class ForexExecutor:
         """
         FOREX ENGINE v8.0 - Genius Scalper Edition.
         Upgrade: consecutive loss pause, MTF confluence, micro momentum,
-        session overlap handling, spread-adjusted TP/SL, DXY dari Yahoo Finance.
+        session overlap handling, spread-adjusted take_profit_val/stop_loss_val, DXY dari Yahoo Finance.
         """
         try:
             info = self.get_account_information()
@@ -1657,7 +1657,7 @@ class ForexExecutor:
         except Exception as e:
             print(f"[FOREX STARTUP ERROR] {e}", flush=True)
 
-        print(f"[FOREX ENGINE v8.0] XAUUSD Genius Scalper AKTIF! TP:{SCALP_TP_POINTS} SL:{SCALP_SL_POINTS} RR:2:1", flush=True)
+        print(f"[FOREX ENGINE v8.0] XAUUSD Genius Scalper AKTIF! take_profit_val:{SCALP_TP_POINTS} stop_loss_val:{SCALP_SL_POINTS} RR:2:1", flush=True)
         last_auto_trade = 0
         last_scan_log   = 0
 
@@ -1726,7 +1726,7 @@ class ForexExecutor:
                     time.sleep(60)
                     continue
 
-                tp, sl = 0.0, 0.0 # SCOPE LOCK
+                take_profit_val, stop_loss_val = 0.0, 0.0 # SCOPE LOCK
                 now_h = datetime.datetime.utcnow().hour
                 current_session = ("ASIA" if 2 <= now_h < 5 else "LONDON" if 7 <= now_h < 16 else "NY" if 12 <= now_h < 21 else "OFF")
                 if not hasattr(self, "_last_session"): self._last_session = current_session
@@ -1908,7 +1908,7 @@ class ForexExecutor:
 
                 entry_price = price_data["ask"] if side == "buy" else price_data["bid"]
                 atr         = ind.get("atr", 1.5)
-                tp, sl      = self._calc_tp_sl(entry_price, side, atr, spread_pts=spread_pts)
+                take_profit_val, stop_loss_val      = self._calc_tp_sl(entry_price, side, atr, spread_pts=spread_pts)
                 lot         = self._calc_lot_size(balance)
                 sym         = self._working_symbol or "XAUUSD"
                 dxy_ctx     = self._get_dxy_context()
@@ -1921,7 +1921,7 @@ class ForexExecutor:
                 print(f"  MTF: {mtf['confluence']} ({mtf['aligned_count']}/4) | Micro: {micro['direction']} str:{micro['strength']}")
                 print(f"  DXY: {dxy_ctx.get('trend','?')} ({dxy_ctx.get('change',0)}%) val:{dxy_ctx.get('value','?')}")
                 print(f"  Whale: {ind.get('whale_signal','NORMAL')} | OBI: {ind.get('obi',0)}")
-                print(f"  TP: {tp} | SL: {sl} | Lot: {lot}")
+                print(f"  take_profit_val: {take_profit_val} | stop_loss_val: {stop_loss_val} | Lot: {lot}")
                 print("=" * 65)
 
                 fresh_price = self.get_live_price()
@@ -1930,11 +1930,11 @@ class ForexExecutor:
                 fresh_tp, fresh_sl = self._calc_tp_sl(fresh_entry, side, atr, spread_pts=spread_pts)
 
                 if side == "buy" and fresh_sl >= fresh_entry:
-                    print(f"[SL GUARD] BUY SL {fresh_sl} >= entry {fresh_entry} — skip")
+                    print(f"[stop_loss_val GUARD] BUY stop_loss_val {fresh_sl} >= entry {fresh_entry} — skip")
                     time.sleep(SCAN_INTERVAL)
                     continue
                 if side == "sell" and fresh_sl <= fresh_entry:
-                    print(f"[SL GUARD] SELL SL {fresh_sl} <= entry {fresh_entry} — skip")
+                    print(f"[stop_loss_val GUARD] SELL stop_loss_val {fresh_sl} <= entry {fresh_entry} — skip")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
@@ -1947,14 +1947,14 @@ class ForexExecutor:
                 }
 
                 print(f"[EXECUTOR] Mengirim order {side.upper()} {sym} ke MT5...", flush=True)
-                success, _ = self.place_forex_order(sym, side, lot, tp=fresh_tp, sl=fresh_sl, reason_data=reason_data)
+                success, _ = self.place_forex_order(sym, side, lot, take_profit_val=fresh_tp, stop_loss_val=fresh_sl, reason_data=reason_data)
                 if success:
                     from database import log_trade
                     log_trade(sym, fresh_entry, fresh_tp, fresh_sl, market="forex",
                               side=side, lot_size=lot, score=score,
                               reason=f"Pump:{pump_sig} RSI:{rsi_val} MTF:{mtf['confluence']} 30m:{trend} 1h:{trend_1h} 4h:{trend_4h}")
                     last_auto_trade = time.time()
-                    print(f"[FOREX] Trade opened OK — TP:{fresh_tp} SL:{fresh_sl}")
+                    print(f"[FOREX] Trade opened OK — take_profit_val:{fresh_tp} stop_loss_val:{fresh_sl}")
 
                 time.sleep(SCAN_INTERVAL)
 

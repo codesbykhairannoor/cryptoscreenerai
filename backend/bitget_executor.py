@@ -284,7 +284,7 @@ class BitgetExecutor:
             return plans
         except: return []
 
-    def place_order(self, symbol, side, amount, tp=None, sl=None, leverage=10):
+    def place_order(self, symbol, side, amount, take_profit_val=None, stop_loss_val=None, leverage=10):
         self._is_ordering = True
         try:
             # 1. SET LEVERAGE
@@ -304,38 +304,38 @@ class BitgetExecutor:
                 raw_price = ticker['last']
             price = float(raw_price)
 
-            # 4. VALIDASI SL/TP DARI HARGA FILL AKTUAL
-            # Pakai SL/TP yang dikirim dari crypto_engine (sudah dihitung dengan benar).
-            # Hanya override kalau SL arahnya salah (long SL di atas price, dll).
+            # 4. VALIDASI stop_loss_val/take_profit_val DARI HARGA FILL AKTUAL
+            # Pakai stop_loss_val/take_profit_val yang dikirim dari crypto_engine (sudah dihitung dengan benar).
+            # Hanya override kalau stop_loss_val arahnya salah (long stop_loss_val di atas price, dll).
             # JANGAN recalculate dengan price * 0.985 karena itu bisa lebih kecil
-            # dari SL yang sudah dihitung dengan benar di _calc_tp_sl.
+            # dari stop_loss_val yang sudah dihitung dengan benar di _calc_tp_sl.
             if side.lower() in ['long', 'buy']:
-                # SL long harus di bawah fill price
-                if sl and sl > 0 and sl < price:
-                    final_sl = sl   # Pakai SL dari crypto_engine   sudah benar
+                # stop_loss_val long harus di bawah fill price
+                if stop_loss_val and stop_loss_val > 0 and stop_loss_val < price:
+                    final_sl = stop_loss_val   # Pakai stop_loss_val dari crypto_engine   sudah benar
                 else:
                     final_sl = price * 0.95   # Fallback: 5% = 50% PnL (Optimized v9.3)
-                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 5%: {round(final_sl,6)}")
-                # TP long harus di atas fill price
-                if tp and tp > 0 and tp > price:
-                    final_tp = tp
+                    print(f"[stop_loss_val FALLBACK] {symbol} stop_loss_val invalid ({stop_loss_val}), pakai 5%: {round(final_sl,6)}")
+                # take_profit_val long harus di atas fill price
+                if take_profit_val and take_profit_val > 0 and take_profit_val > price:
+                    final_tp = take_profit_val
                 else:
                     final_tp = price * 1.08   # Fallback: 8% = 80% PnL
-                    print(f"[TP FALLBACK] {symbol} TP invalid ({tp}), pakai 8%: {round(final_tp,6)}")
+                    print(f"[take_profit_val FALLBACK] {symbol} take_profit_val invalid ({take_profit_val}), pakai 8%: {round(final_tp,6)}")
             else:
-                # SL short harus di atas fill price
-                if sl and sl > 0 and sl > price:
-                    final_sl = sl
+                # stop_loss_val short harus di atas fill price
+                if stop_loss_val and stop_loss_val > 0 and stop_loss_val > price:
+                    final_sl = stop_loss_val
                 else:
                     final_sl = price * 1.05   # Fallback: 5% = 50% PnL (Optimized v9.3)
-                    print(f"[SL FALLBACK] {symbol} SL invalid ({sl}), pakai 5%: {round(final_sl,6)}")
-                if tp and tp > 0 and tp < price:
-                    final_tp = tp
+                    print(f"[stop_loss_val FALLBACK] {symbol} stop_loss_val invalid ({stop_loss_val}), pakai 5%: {round(final_sl,6)}")
+                if take_profit_val and take_profit_val > 0 and take_profit_val < price:
+                    final_tp = take_profit_val
                 else:
                     final_tp = price * 0.92
-                    print(f"[TP FALLBACK] {symbol} TP invalid ({tp}), pakai 8%: {round(final_tp,6)}")
+                    print(f"[take_profit_val FALLBACK] {symbol} take_profit_val invalid ({take_profit_val}), pakai 8%: {round(final_tp,6)}")
 
-            # 5. SET SL/TP via Plan Order API (cara yang benar untuk Bitget Classic)
+            # 5. SET stop_loss_val/take_profit_val via Plan Order API (cara yang benar untuk Bitget Classic)
             self._set_sl_tp_bitget(symbol, side, amount, sl_price=final_sl, tp_price=final_tp)
 
             # 6. INVALIDATE CACHE (PENTING!)
@@ -344,7 +344,7 @@ class BitgetExecutor:
             from shared_state import state
             state.last_update = 0
 
-            print(f"[ORDER OK] {symbol} {side.upper()} | Entry: {price} | TP: {final_tp} (+{round((final_tp/price-1)*100,2)}%) | SL: {final_sl} (-{round((1-final_sl/price)*100,2)}%)")
+            print(f"[ORDER OK] {symbol} {side.upper()} | Entry: {price} | take_profit_val: {final_tp} (+{round((final_tp/price-1)*100,2)}%) | stop_loss_val: {final_sl} (-{round((1-final_sl/price)*100,2)}%)")
             return True, order
         except Exception as e:
             print(f"[CLASSIC ORDER FAILED] {e}")
@@ -354,7 +354,7 @@ class BitgetExecutor:
 
     def _set_sl_tp_bitget(self, symbol, side, size, sl_price=None, tp_price=None):
         """
-        Set SL/TP untuk Bitget Classic.
+        Set stop_loss_val/take_profit_val untuk Bitget Classic.
         Berdasarkan testing: ccxt stopLossPrice/takeProfitPrice params BEKERJA.
         Skip API plan endpoint yang selalu NOT FOUND.
         """
@@ -368,15 +368,15 @@ class BitgetExecutor:
         hold_side = 'long' if side in ['long', 'buy'] else 'short'
 
         if sl_price and sl_price > 0:
-            # Validasi: SL long harus di bawah current price
+            # Validasi: stop_loss_val long harus di bawah current price
             if current_price > 0:
-                # Cegah reset SL ke bawah jika posisi sedang UNTUNG BESAR
-                # Hanya reset jika SL baru BENAR-BENAR menabrak harga (jarak < 0.05%)
+                # Cegah reset stop_loss_val ke bawah jika posisi sedang UNTUNG BESAR
+                # Hanya reset jika stop_loss_val baru BENAR-BENAR menabrak harga (jarak < 0.05%)
                 if hold_side == 'long' and sl_price >= current_price * 0.9995:
-                    print(f"[SL GUARD] {symbol} SL too close, skipping update to protect profit.")
+                    print(f"[stop_loss_val GUARD] {symbol} stop_loss_val too close, skipping update to protect profit.")
                     return
                 elif hold_side == 'short' and sl_price <= current_price * 1.0005:
-                    print(f"[SL GUARD] {symbol} SL too close, skipping update.")
+                    print(f"[stop_loss_val GUARD] {symbol} stop_loss_val too close, skipping update.")
                     return
             self._set_sl_ccxt(symbol, side, size, sl_price)
 
@@ -384,7 +384,7 @@ class BitgetExecutor:
             self._set_tp_ccxt(symbol, side, size, tp_price)
 
     def _set_sl_ccxt(self, symbol, side, size, sl_price):
-        """Set SL via ccxt   cancel SL lama dulu, lalu buat yang baru."""
+        """Set stop_loss_val via ccxt   cancel stop_loss_val lama dulu, lalu buat yang baru."""
         try:
             tp_side = 'sell' if side in ['long', 'buy'] else 'buy'
             ticker  = self.exchange.fetch_ticker(symbol)
@@ -397,8 +397,8 @@ class BitgetExecutor:
                 elif hold == 'short' and sl_price <= mark:
                     sl_price = mark * 1.05     # 5% = 50% PnL (Optimized v9.3)
 
-            # Cancel semua SL order yang ada untuk symbol ini dulu
-            # Ini mencegah duplikat SL order
+            # Cancel semua stop_loss_val order yang ada untuk symbol ini dulu
+            # Ini mencegah duplikat stop_loss_val order
             try:
                 clean_sym = symbol.replace("/", "").split(":")[0]
                 if not clean_sym.endswith('USDT'): clean_sym += 'USDT'
@@ -408,7 +408,7 @@ class BitgetExecutor:
                 if existing.get('code') == '00000' and existing.get('data'):
                     for order in existing['data']:
                         plan_type = order.get('planType', '').lower()
-                        if any(x in plan_type for x in ['loss', 'sl', 'stop', 'psl']):
+                        if any(x in plan_type for x in ['loss', 'stop_loss_val', 'stop', 'psl']):
                             order_id = order.get('orderId', order.get('planId'))
                             if order_id:
                                 self._v3_request("POST", "/api/v2/mix/order/plan/cancelPlan", body={
@@ -418,38 +418,38 @@ class BitgetExecutor:
                                     "orderId": str(order_id)
                                 })
             except Exception:
-                pass  # Kalau cancel gagal, tetap lanjut buat SL baru
+                pass  # Kalau cancel gagal, tetap lanjut buat stop_loss_val baru
 
-            # Buat SL baru
+            # Buat stop_loss_val baru
             self.exchange.create_order(
                 symbol, 'market', tp_side, size, None,
                 params={'productType': 'USDT-FUTURES', 'reduceOnly': True, 'stopLossPrice': sl_price}
             )
-            print(f"[SL CCXT] {symbol} SL@{round(sl_price,6)} OK", flush=True)
+            print(f"[stop_loss_val CCXT] {symbol} stop_loss_val@{round(sl_price,6)} OK", flush=True)
         except Exception as e:
-            print(f"[SL CCXT FAIL] {symbol}: {e}", flush=True)
+            print(f"[stop_loss_val CCXT FAIL] {symbol}: {e}", flush=True)
 
     def _set_tp_ccxt(self, symbol, side, size, tp_price):
-        """Set TP via ccxt."""
+        """Set take_profit_val via ccxt."""
         try:
             tp_side = 'sell' if side in ['long', 'buy'] else 'buy'
             self.exchange.create_order(
                 symbol, 'market', tp_side, size, None,
                 params={'productType': 'USDT-FUTURES', 'reduceOnly': True, 'takeProfitPrice': tp_price}
             )
-            print(f"[TP CCXT] {symbol} TP@{round(tp_price,6)} OK", flush=True)
+            print(f"[take_profit_val CCXT] {symbol} take_profit_val@{round(tp_price,6)} OK", flush=True)
         except Exception as e:
-            print(f"[TP CCXT FAIL] {symbol}: {e}", flush=True)
+            print(f"[take_profit_val CCXT FAIL] {symbol}: {e}", flush=True)
 
     def _set_sl_tp_ccxt(self, symbol, side, size, sl_price=None, tp_price=None):
-        """Fallback lengkap: set SL dan TP via ccxt."""
+        """Fallback lengkap: set stop_loss_val dan take_profit_val via ccxt."""
         if sl_price and sl_price > 0:
             self._set_sl_ccxt(symbol, side, size, sl_price)
         if tp_price and tp_price > 0:
             self._set_tp_ccxt(symbol, side, size, tp_price)
 
     def update_sl_price(self, symbol, side, amount, new_price, is_tp=False):
-        """Update SL atau TP yang sudah ada via Plan Order API."""
+        """Update stop_loss_val atau take_profit_val yang sudah ada via Plan Order API."""
         self._set_sl_tp_bitget(
             symbol, side, amount,
             sl_price=new_price if not is_tp else None,
@@ -478,13 +478,13 @@ class BitgetExecutor:
 
     def manage_open_positions(self):
         """
-        Position Manager: Trailing SL berbasis PEAK PnL.
+        Position Manager: Trailing stop_loss_val berbasis PEAK PnL.
         
         Prinsip kunci:
-        - SL dihitung dari PEAK PnL (tertinggi yang pernah dicapai), bukan PnL saat ini
-        - Kalau PnL pernah 50% lalu turun ke 30%, SL tetap di level dari puncak 50%
-        - SL hanya bergerak NAIK (long) atau TURUN (short)   tidak pernah mundur
-        - Gap SL = 15% dari peak PnL (misal peak 50%   SL di 35%)
+        - stop_loss_val dihitung dari PEAK PnL (tertinggi yang pernah dicapai), bukan PnL saat ini
+        - Kalau PnL pernah 50% lalu turun ke 30%, stop_loss_val tetap di level dari puncak 50%
+        - stop_loss_val hanya bergerak NAIK (long) atau TURUN (short)   tidak pernah mundur
+        - Gap stop_loss_val = 15% dari peak PnL (misal peak 50%   stop_loss_val di 35%)
         """
         try:
             if not hasattr(self, '_last_sl_check'): self._last_sl_check = {}
@@ -506,7 +506,7 @@ class BitgetExecutor:
             # Contoh: "SAHARA/USDT:USDT" dan "SAHARAUSDT" keduanya jadi "SAHARA"
             current_symbols = {self._clean_symbol(p['symbol']): p.get('pnl', 0) for p in positions}
             
-            # Detect ANY position that was closed (TP hit, SL hit, manual close)
+            # Detect ANY position that was closed (take_profit_val hit, stop_loss_val hit, manual close)
             closed_symbols = set(self._tracked_positions.keys()) - set(current_symbols.keys())
             for clean in closed_symbols:
                 last_pnl = self._tracked_positions[clean]
@@ -595,7 +595,7 @@ class BitgetExecutor:
                     self._peak_pnl[symbol] = pnl
                 peak_pnl = self._peak_pnl.get(symbol, pnl)
 
-                #    DETECT SL/TP                                               
+                #    DETECT stop_loss_val/take_profit_val                                               
                 clean_sym = self._clean_symbol(symbol)
                 plans     = self.get_pending_plan_orders(symbol)
                 ws_plans  = [o for o in state.orders if self._clean_symbol(
@@ -606,18 +606,18 @@ class BitgetExecutor:
                 sl_p   = 0
                 for p in (plans + ws_plans):
                     p_type = str(p.get('type', p.get('planType', ''))).lower()
-                    if any(x in p_type for x in ['sl', 'loss', 'stop', 'psl']):
+                    if any(x in p_type for x in ['stop_loss_val', 'loss', 'stop', 'psl']):
                         has_sl = True
                         candidate = float(p.get('price', 0))
                         if candidate > 0:
                             sl_p = max(sl_p, candidate) if side in ['long','buy'] else (
                                 candidate if sl_p == 0 else min(sl_p, candidate))
-                    if any(x in p_type for x in ['tp', 'profit', 'ptp']):
+                    if any(x in p_type for x in ['take_profit_val', 'profit', 'ptp']):
                         has_tp = True
 
                 if int(now) % 60 < 2:
                     print(f"[MONITOR] {symbol} | PNL:{pnl}% PEAK:{peak_pnl}% | "
-                          f"SL:{'OK' if has_sl else 'MISSING'} TP:{'OK' if has_tp else 'MISSING'}")
+                          f"stop_loss_val:{'OK' if has_sl else 'MISSING'} take_profit_val:{'OK' if has_tp else 'MISSING'}")
 
                 #    HARD EXIT                                                  
                 if pnl <= -50:
@@ -631,9 +631,9 @@ class BitgetExecutor:
                     state.recently_exited[clean] = time.time()
                     continue
 
-                #    INITIAL GUARD — Jika SL/TP hilang, pasang LANGSUNG tanpa cooldown
+                #    INITIAL GUARD — Jika stop_loss_val/take_profit_val hilang, pasang LANGSUNG tanpa cooldown
                 if (not has_sl or not has_tp) and now - self.startup_time > 5:
-                    # SL 5% price = 50% PnL at 10x (Optimized v9.3)
+                    # stop_loss_val 5% price = 50% PnL at 10x (Optimized v9.3)
                     sl_price = entry * 0.95 if side in ['long','buy'] else entry * 1.05
                     tp_price = entry * 1.09 if side in ['long','buy'] else entry * 0.91
                     if not has_sl: self._set_sl_tp_bitget(symbol, side, size, sl_price=sl_price)
@@ -642,7 +642,7 @@ class BitgetExecutor:
 
                 #    TSL v9.9 — STEP-LOCK MASTER (Optimized Round 8)
                 # ─────────────────────────────────────────────────────
-                # Jarak napas (Gap) 10% PnL, Pindah SL setiap kelipatan 20% PnL
+                # Jarak napas (Gap) 10% PnL, Pindah stop_loss_val setiap kelipatan 20% PnL
                 # ─────────────────────────────────────────────────────
                 new_sl = 0
                 locked_pnl = 0
@@ -666,7 +666,7 @@ class BitgetExecutor:
 
                     if is_better and now - self._last_sl_set.get(symbol, 0) > 30:
                         print(
-                            f"[TRAIL] {symbol} SL {round(sl_p,6)} -> {round(new_sl,6)} "
+                            f"[TRAIL] {symbol} stop_loss_val {round(sl_p,6)} -> {round(new_sl,6)} "
                             f"| PNL:{pnl:.1f}% PEAK:{peak_pnl:.1f}% LOCKED:{locked_pnl:.0f}%",
                             flush=True
                         )
