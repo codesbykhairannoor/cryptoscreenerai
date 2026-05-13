@@ -59,8 +59,12 @@ GLOBAL_REPORT_INTERVAL = 300
 FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
 LEVERAGE             = 10
-MIN_MOMENTUM_SCORE   = 45     # SNIPER MODE (v9.4) - Focused on 90%+ WR setups
-MIN_TECH_SCORE       = 30     # Tech score minimum
+MIN_MOMENTUM_SCORE   = 10     # AGGRESSIVE MODE: Sangat mudah ditembus
+MIN_TECH_SCORE       = 10     # Tech score minimum
+# ── SCALPING TARGETS (v24.0) ──
+SCALP_TP_PCT         = 0.03   # 3% TP
+SCALP_SL_PCT         = 0.015  # 1.5% SL
+# ──────────────────────────────
 MIN_PUMP_SCORE       = 25     # Pump score minimum untuk masuk scan
 
 #  WHALE OBSERVER CONFIG (Legacy/Reference)
@@ -955,96 +959,27 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     ob    = tech.get('order_block', 'NONE')
     whale = tech.get('whale_signal', 'NORMAL')
     liq   = tech.get('is_liquidity_sweep', False)
-    mss_b = tech.get('mss_bullish', False)
-    mss_s = tech.get('mss_bearish', False)
-    choch_b = tech.get('choch_bullish', False)
-    choch_s = tech.get('choch_bearish', False)
-    obi   = tech.get('obi', 0)
- 
-    # ── MTF ALIGNMENT SHIELD (v10.1) ───────────────────────────────
-    e5m = tech.get('entry_signal_5m', 'N/A')
-    q5m = tech.get('entry_quality_5m', 0)
-    mtf_penalty = 0
-    if e5m == "SELL" or (e5m == "BUY" and q5m < 30):
-         mtf_penalty = 15 # Kurangi skor jika timeframe kecil melawan
-    # ── HYBRID INTELLIGENCE (v17.0) ──────────────────────────────
-    # 1. Dynamic Squeeze Check
-    atr = tech.get('atr', 0)
-    recent_closes = tech.get('recent_closes', [])
-    if len(recent_closes) >= 10 and atr > 0:
-        hi_lo_range = (max(recent_closes[-10:]) - min(recent_closes[-10:]))
-        if hi_lo_range > (atr * SQUEEZE_MULT):
-            return None, "NO_CONSOLIDATION", 0 # Terlalu liar, bukan breakout bersih
-            
-    # 2. Volume Convergence
-    current_vol = tech.get('volume', 0)
-    avg_vol = tech.get('avg_volume', 0)
-    if current_vol < (avg_vol * VOLUME_CONVERGENCE):
-        return None, "LOW_VOLUME_BREAKOUT", 0 # Fake breakout (no volume)
-        
-    # ── FINAL BALANCE INTELLIGENCE (v23.0) ──────────────────────
-    # 1. Body vs Wick Analysis
+    # ── AGGRESSIVE PREDATOR (v24.0) ──────────────────────────
+    # Simple Momentum: Price > MA + Green Candle + Volume > Avg
     c_open = tech.get('open', 0); c_close = tech.get('close', 0)
-    c_low = tech.get('low', 0); c_high = tech.get('high', 0)
-    total_range = (c_high - c_low) if (c_high - c_low) > 0 else 1
-    body_size = abs(c_close - c_open) / total_range
-    
-    # 2. Momentum Follower Check
+    ma20 = tech.get('ma20', 0)
     current_vol = tech.get('volume', 0); avg_vol = tech.get('avg_volume', 1)
-    is_strong_volume = current_vol > (avg_vol * VOL_MOMENTUM_RATIO)
     
-    # Jika badan candle tebal + volume tinggi, ini sinyal valid meski tanpa wick
-    if body_size > BODY_DOMINANCE_PCT and is_strong_volume:
-        # print(f"  [MOMENTUM] {symbol} FULL BODY strength detected.")
+    # Check BTC Sync if enabled
+    if BTC_SYNC_ENABLED:
+        # BTC sync check logic would go here (simplified for now)
         pass
+
+    if c_close > ma20 and c_close > c_open and current_vol > avg_vol:
+        best_side = "buy"
+        best_reason = "AGGRESSIVE MOMENTUM"
+        best_score = 90 # High score to ensure entry
     else:
-        # Jika tidak tebal, wajib ada Wick Rejection (Sniper Mode)
-        lower_wick = (min(c_open, c_close) - c_low) / total_range
-        if lower_wick < 0.20: # Longgarkan ke 20%
-            return None, "NO_MOMENTUM_NO_WICK", 0
+        return None, "NO_MOMENTUM", 0
     # ───────────────────────────────────────────────────────────────
 
-    #  HTF TREND FILTER 
-    trend_1h = tech.get('trend_1h', 'NEUTRAL')
-    trend_4h = tech.get('trend_4h', 'NEUTRAL')
-
-    #  LONG SETUPS 
-    long_candidates = []
-
-    # Setup 1: Whale Accumulation
-    if whale == 'WHALE_BUY' and vwap_dist < 0.5:
-        s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "WHALE ACCUMULATION"))
-
-    # Setup 2: Bullish FVG
-    if fvg == 'BULLISH_FVG' and rsi < 65 and vwap_dist < 0.5:
-        s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "BULLISH FVG"))
-
-    # Setup 3: MSS Bullish
-    if mss_b and (obi > 0 or rsi < 50):
-        s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "MSS BULLISH"))
-
-    # Setup 4: CHoCH + Liquidity Sweep
-    if choch_b and liq:
-        s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "CHoCH REVERSAL"))
-
-    # Setup 5: Bullish OB
-    if ob == 'BULLISH_OB' and rsi < 55:
-        s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "BULLISH ORDER BLOCK"))
-
-    # Setup 6: RSI Oversold -- DISABLED (0% WR dari 24 trades di backtest)
-    # RSI oversold di altcoin bukan reversal signal, tapi falling knife!
-    # Hanya aktif jika ada KONFLUENSI tambahan (mss_b atau liq)
-    if rsi <= 35 and vwap_dist < 1.0 and (mss_b or liq or whale == 'WHALE_BUY'):
-        s = _score_candidate(tech, rsi, vwap_dist, "buy")
-        long_candidates.append((s, "RSI OVERSOLD + CONFLUENCE"))
-    # RSI OVERSOLD standalone = REMOVED
-
-    #  SHORT SETUPS 
+    return best_side, best_reason, best_score
+#  SHORT SETUPS 
     short_candidates = []
 
     # Setup 1: Whale Distribution
@@ -1104,19 +1039,15 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
 #  CORE: HITUNG TP/SL BERBASIS VOLATILITAS (ATR)
 def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]:
     """
-    UNIVERSAL DYNAMIC SL/TP (v15.0)
-    Bekerja berdasarkan volatilitas asli koin (ATR).
+    Scalping targets v24.0: Fixed 3% TP and 1.5% SL
     """
-    atr = tech.get('atr', 0)
-    
-    # Adaptive ATR Multipliers
-    sl_dist = (atr * ATR_SL_MULT) if atr else (mark_price * 0.01)
-    tp_dist = (atr * ATR_TP_MIN_MULT) if atr else (mark_price * 0.03)
-    
     if side == "buy":
-        return round(mark_price + tp_dist, 6), round(mark_price - sl_dist, 6)
+        tp = mark_price * (1 + SCALP_TP_PCT)
+        sl = mark_price * (1 - SCALP_SL_PCT)
     else:
-        return round(mark_price - tp_dist, 6), round(mark_price + sl_dist, 6)
+        tp = mark_price * (1 - SCALP_TP_PCT)
+        sl = mark_price * (1 + SCALP_SL_PCT)
+    return round(tp, 6), round(sl, 6)
 
 
 # ── PERFORMANCE TRACKING (v21.0) ────────────────────────────────
