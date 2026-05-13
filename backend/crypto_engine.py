@@ -1113,9 +1113,11 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]
         return round(mark_price - tp_dist, 6), round(mark_price + sl_dist, 6)
 
 
-# ── PERFORMANCE TRACKING (v12.1) ────────────────────────────────
+# ── PERFORMANCE TRACKING (v21.0) ────────────────────────────────
 # Menyimpan history PnL koin untuk Smart Circuit Breaker
 COIN_STATS = {} # {symbol: {'pnl': 0, 'consecutive_losses': 0, 'locked_until': 0}}
+PENALTY_THRESHOLD_USD = -0.50 # Bench koin jika rugi > $0.50
+PENALTY_DURATION_HOURS = 24
 # ───────────────────────────────────────────────────────────────
 def run_crypto_engine():
     """
@@ -1376,6 +1378,16 @@ def run_crypto_engine():
             #  SUB-FUNCTION FOR PARALLEL EVALUATION
             def evaluate_coin(coin, off_hours=False):
                 symbol = coin.get('symbol', '')
+                # ── CIRCUIT BREAKER (v21.0) ──────────────────────────
+                stats = COIN_STATS.get(symbol, {'pnl': 0, 'locked_until': 0})
+                if time.time() < stats['locked_until']:
+                    return None
+                
+                if stats['pnl'] < PENALTY_THRESHOLD_USD:
+                    COIN_STATS[symbol]['locked_until'] = time.time() + (PENALTY_DURATION_HOURS * 3600)
+                    print(f"  [BENCHED] {symbol} locked for 24h due to PnL: ${stats['pnl']}")
+                    return None
+                # ──────────────────────────────────────────────────────
                 clean_base = executor._clean_symbol(symbol)
 
                 # Fast filters
