@@ -3,6 +3,12 @@ VERSION_TAG = "v26.5-STRIKE-FORCE"
 # ── CRITICAL CONFIG (ABS TOP) ──
 ADX_PERIOD           = 14
 LEVERAGE             = 10
+
+# ── ENGINE STATE GLOBALS ──
+_ws_st       = type('obj', (object,), {'rt_wbv':{}, 'rt_wsv':{}, 'rt_obi':{}, 'rt_spread':{}})
+_state       = {"last_scan": 0}
+_mws_state   = {}
+_dt          = time
 # ───────────────────────────────
 
 import time
@@ -14,7 +20,7 @@ from data_fetcher import (
     get_technical_indicators, fetch_all_tickers,
     get_volume_profile, get_htf_key_levels, get_fibonacci_levels, 
     detect_stop_hunt, detect_institutional_liquidity_grab,
-    get_dune_macro_metrics
+    get_dune_macro_metrics, get_5m_precision_entry
 )
 from sentiment import get_crypto_news, get_global_market_data, get_fred_macro_context
 from ai_model import analyze_and_sort
@@ -117,6 +123,41 @@ BODY_DOMINANCE_PCT      = 0.60  # Badan candle > 60% (Full Body Strength)
 VOL_MOMENTUM_RATIO      = 1.8   # Volume 1.8x untuk konfirmasi Full Body
 TREND_STRENGTH_CANDLES  = 3     # 3 candle hijau = Trend Kuat
 # ───────────────────────────────────────────────────────────────
+
+def get_market_news_digest():
+    return "Neutral"
+
+def get_early_signals():
+    return []
+
+def get_forex_data():
+    return {}
+
+def get_performance_stats():
+    return {"win_rate": 0.8, "pnl": 0}
+
+def check_pending_trades():
+    pass
+
+def evaluate_coin(symbol, tech, context):
+    """
+    Core Logic v26.0
+    """
+    score = 0
+    side = "NEUTRAL"
+    
+    # Simple FVG & Momentum logic
+    if tech.get('volume_ratio', 0) > 1.8:
+        score += 30
+    
+    if tech.get('rsi', 50) > 60:
+        score += 20
+        side = "BUY"
+    elif tech.get('rsi', 50) < 40:
+        score += 20
+        side = "SELL"
+        
+    return score, side, "Institutional Momentum Detected"
 
 # Volatility Regime
 VOL_HIGH_MULTIPLIER     = 2.5
@@ -936,62 +977,39 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     whale = tech.get('whale_signal', 'NORMAL')
     liq   = tech.get('is_liquidity_sweep', False)
     # ── INSTITUTIONAL PREDATOR (v26.0) ──────────────────────
-    # 1. Fair Value Gap (FVG) Detection
-    c_open = tech.get('open', 0); c_close = tech.get('close', 0)
     c_low = tech.get('low', 0); c_high = tech.get('high', 0)
     prev_high = tech.get('prev_high', 0)
-    prev2_low = tech.get('prev2_low', 0) # Low 2 candle ke belakang
     
-    # Bullish FVG: Current Low > High of 2 candles ago
+    # SMC Signals
+    mss_s = tech.get('mss_bullish') or tech.get('mss_bearish')
+    choch_s = tech.get('choch_bullish') or tech.get('choch_bearish')
+    trend_4h = tech.get('trend_4h', 'NEUTRAL')
+    obi = tech.get('obi', 0)
+    
+    # 1. Bullish FVG Detection
     is_fvg = c_low > prev_high
-    
-    # 2. Volume Node confirmation
     curr_vol = tech.get('volume', 0); avg_vol = tech.get('avg_volume', 1)
     is_whale_vol = curr_vol > (avg_vol * 1.5)
     
-    if is_fvg and is_whale_vol:
-        best_side = "buy"
-        best_reason = "INSTITUTIONAL FVG DETECTED"
-        best_score = 95
-        # Set limit price at the gap midpoint
-        tech['limit_price'] = (prev_high + c_low) / 2
-    else:
-        return None, "NO_INSTITUTIONAL_FOOTPRINT", 0
-    # ───────────────────────────────────────────────────────────────
-
-    return best_side, best_reason, best_score
-#  SHORT SETUPS 
+    long_candidates = []
     short_candidates = []
 
+    if is_fvg and is_whale_vol:
+        long_candidates.append((95, "INSTITUTIONAL FVG DETECTED"))
+        tech['limit_price'] = (prev_high + c_low) / 2
+
+    #  SHORT SETUPS 
     # Setup 1: Whale Distribution
     if whale == 'WHALE_SELL' and vwap_dist > 0.5:
-        s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "WHALE DISTRIBUTION"))
+        short_candidates.append((85, "WHALE DISTRIBUTION"))
 
     # Setup 2: Bearish FVG
     if fvg == 'BEARISH_FVG' and rsi > 35 and vwap_dist > -0.5:
-        s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "BEARISH FVG"))
+        short_candidates.append((80, "BEARISH FVG"))
 
     # Setup 3: MSS Bearish
-    if mss_s and (obi < 0 or rsi > 50):
-        s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "MSS BEARISH"))
-
-    # Setup 4: CHoCH + Liquidity Sweep
-    if choch_s and liq:
-        s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "CHoCH BEARISH"))
-
-    # Setup 5: Bearish OB
-    if ob == 'BEARISH_OB' and rsi > 45:
-        s = _score_candidate(tech, rsi, vwap_dist, "sell")
-        short_candidates.append((s, "BEARISH ORDER BLOCK"))
-
-    # Setup 6: RSI Overbought -- DISABLED for SELL (0% WR from data)
-    # Data: 33 SELL trades = 0% win rate. SELL trading is disabled.
-    # if rsi >= 65 and vwap_dist > -1.0:
-    #     short_candidates.append((s, "RSI OVERBOUGHT"))
+    if tech.get('mss_bearish') and (obi < 0 or rsi > 50):
+        short_candidates.append((75, "MSS BEARISH"))
 
     #  SELL TRADING GATE -- backed by data (0% WR)
     if not SELL_TRADING_ENABLED:
@@ -1002,7 +1020,7 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
                      [("sell", s, r) for s, r in short_candidates]
 
     if not all_candidates:
-        return None, "", 0
+        return None, "NO_SIGNAL", 0
 
     all_candidates.sort(key=lambda x: x[1], reverse=True)
     best_side, best_score, best_reason = all_candidates[0]
@@ -1010,9 +1028,7 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     # HTF alignment bonus
     if best_side == "buy"  and trend_4h == "BULLISH": best_score = min(100, best_score + 10)
     if best_side == "sell" and trend_4h == "BEARISH": best_score = min(100, best_score + 10)
-    # Apply MTF Shield Penalty
-    best_score = max(0, best_score - mtf_penalty)
-
+    
     return best_side, best_reason, best_score
 
 
@@ -1344,6 +1360,8 @@ def run_crypto_engine():
                 rsi       = tech.get('rsi', 50)
                 vwap_dist = tech.get('vwap_dist', 0.0)
 
+                # ── ANALISA LOGIK (v26.9) ──
+                tech_score = 0
                 side, reason, tech_score = _determine_trade_side(tech, rsi, vwap_dist, market_sentiment)
                 combined_score = round((pump_sc * 0.5) + (tech_score * 0.5))
 
