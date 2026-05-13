@@ -131,6 +131,11 @@ SQUEEZE_MULT            = 1.8   # Dynamic Squeeze: Range < 1.8x ATR
 VOLUME_CONVERGENCE      = 1.5   # Volume harus 1.5x rata-rata
 LIQUIDITY_SWEEP_CONF    = True  # Aktifkan deteksi manipulasi institusi
 # ───────────────────────────────────────────────────────────────
+#  ADAPTIVE SNIPER CONFIG (v20.0) 
+RELATIVE_WICK_RATIO     = 1.5   # Ekor bawah harus 1.5x lebih panjang dari ekor atas
+VOL_BYPASS_RATIO        = 3.0   # Jika volume 3x rata-rata, abaikan filter Wick
+SESSION_ADAPT_RELAX     = 0.8   # Longgarkan filter 20% saat Golden Session
+# ───────────────────────────────────────────────────────────────
 
 # Volatility Regime
 VOL_HIGH_MULTIPLIER     = 2.5
@@ -976,22 +981,21 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     if current_vol < (avg_vol * VOLUME_CONVERGENCE):
         return None, "LOW_VOLUME_BREAKOUT", 0 # Fake breakout (no volume)
         
-    # ── SNIPER PIVOT INTELLIGENCE (v19.0) ───────────────────────
-    # 1. Wick Rejection (The Institutional Support)
-    c_open = tech.get('open', 0)
-    c_close = tech.get('close', 0)
-    c_low = tech.get('low', 0)
-    c_high = tech.get('high', 0)
-    total_range = (c_high - c_low) if (c_high - c_low) > 0 else 1
+    # ── ADAPTIVE SNIPER INTELLIGENCE (v20.0) ────────────────────
+    # 1. Relative Wick (Buyer vs Seller Pressure)
+    c_open = tech.get('open', 0); c_close = tech.get('close', 0)
+    c_low = tech.get('low', 0); c_high = tech.get('high', 0)
     
-    # Hitung ekor bawah (Wick)
-    lower_wick = (min(c_open, c_close) - c_low) / total_range
-    if lower_wick > WICK_REJECTION_MIN_PCT:
-        # print(f"  [SNIPER] {symbol} WICK REJECTION detected: {round(lower_wick*100,1)}%")
-        pass # Bonus skor akan diberikan nanti
-        
-    # 2. Volume Alignment Check
-    # Mencari tanda 'Supply Exhaustion' (Volume mengecil saat harga turun sebentar)
+    lower_wick = min(c_open, c_close) - c_low
+    upper_wick = c_high - max(c_open, c_close)
+    
+    # Volume Bypass
+    current_vol = tech.get('volume', 0); avg_vol = tech.get('avg_volume', 1)
+    is_vol_spike = current_vol > (avg_vol * VOL_BYPASS_RATIO)
+    
+    if not is_vol_spike:
+        if lower_wick < (upper_wick * RELATIVE_WICK_RATIO):
+            return None, "WEAK_BUYER_PRESSURE", 0
     # ───────────────────────────────────────────────────────────────
 
     #  HTF TREND FILTER 
