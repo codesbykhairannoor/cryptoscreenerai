@@ -1069,6 +1069,7 @@ def run_crypto_engine():
     - Cooldown: 120 seconds between trades
     """
     executor = BitgetExecutor()
+    tp, sl = 0.0, 0.0
 
     from database import check_pending_trades, get_performance_stats
     from sentiment import get_market_news_digest
@@ -1574,7 +1575,8 @@ def run_crypto_engine():
                 rsi        = top['rsi']
                 vwap_dist  = top['vwap_dist']
 
-                # Hitung TP/SL
+                # Hitung TP/SL (Inisialisasi awal untuk hindari free variable error)
+                tp, sl = 0.0, 0.0
                 tp, sl = _calc_tp_sl(mark_price, side, tech)
 
                 # Hitung size (Strict 5 USDT v9.8)

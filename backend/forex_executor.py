@@ -1726,6 +1726,7 @@ class ForexExecutor:
                     time.sleep(60)
                     continue
 
+                tp, sl = 0.0, 0.0 # SCOPE LOCK
                 now_h = datetime.datetime.utcnow().hour
                 current_session = ("ASIA" if 2 <= now_h < 5 else "LONDON" if 7 <= now_h < 16 else "NY" if 12 <= now_h < 21 else "OFF")
                 if not hasattr(self, "_last_session"): self._last_session = current_session
