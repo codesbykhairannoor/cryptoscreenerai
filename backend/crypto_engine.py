@@ -949,18 +949,17 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
 
 
 #  CORE: TENTUKAN SIDE & REASON 
-def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
-                           market_sentiment: str, mark_price: float) -> tuple[str | None, str, int]:
+def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_sentiment: str, mark_price: float, pump_sc: float, dump_sc: float) -> tuple[str | None, str, int]:
     """
-    Return (side, reason, score) atau (None, '', 0) kalau tidak ada setup.
-    Bi-directional: bisa long DAN short.
-
-    ANTI-FALLING-KNIFE FILTER:
-    - Tidak boleh BUY kalau 4h trend BEARISH (seperti SKYAI)
-    - Tidak boleh SELL kalau 4h trend BULLISH
-    - Exception: kalau ada stop hunt atau demand/supply zone yang sangat kuat
+    Menentukan arah trade (BUY/SELL) menggunakan indikator teknikal 
+    DENGAN WAJIB MEMATUHI ARAH PREDIKSI AI (PUMP/DUMP SCORE).
+    - AI Bias = LONG jika pump_score >= dump_score
+    - AI Bias = SHORT jika dump_score > pump_score
     """
-    # ── BLACKROCK INSTITUTIONAL SCORER (v26.80) ──
+    # ── BLACKROCK INSTITUTIONAL SCORER (v26.85) ──
+    # WAJIB IKUTI ARAH AI!
+    ai_bias = "LONG" if pump_sc >= dump_sc else "SHORT"
+    
     long_score = 0
     short_score = 0
     
@@ -1005,7 +1004,6 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     if vwap_dist > 1.0: short_score += 10
 
     # 5. ANTI-FALLING-KNIFE & STRICT CANDLE CONFIRMATION
-    # Jangan tangkap pisau jatuh. WAJIB tunggu konfirmasi candle searah!
     is_candle_green = tech.get('is_bullish', False)
     is_candle_red = tech.get('is_bearish', False)
     
@@ -1014,14 +1012,17 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     if tech.get('still_rising') and not (liq_bear or sweep_bear or dsz == 'IN_SUPPLY_ZONE'): 
         short_score -= 50
 
-    # SYARAT MUTLAK: Gak boleh Buy kalau candle masih merah pekat, Gak boleh Sell kalau masih hijau
-    if not is_candle_green: 
-        long_score -= 50  # Bunuh skor Buy
-    if not is_candle_red:
-        short_score -= 50 # Bunuh skor Sell
+    if not is_candle_green: long_score -= 50
+    if not is_candle_red: short_score -= 50
+
+    # 6. AI OVERRIDE (MEMBUNUH SINYAL YANG MELAWAN AI PREDICTOR)
+    if ai_bias == "SHORT":
+        long_score -= 200 # Haram BUY jika AI bilang Dump
+    elif ai_bias == "LONG":
+        short_score -= 200 # Haram SELL jika AI bilang Pump
 
     # PILIH ARAH TERBAIK (Mode Sniper: Min Score 60)
-    if long_score >= short_score and long_score >= 60:
+    if long_score >= short_score and long_score >= 60 and ai_bias == "LONG":
         best_side = "buy"
         best_score = min(100, long_score)
         best_reason = "INSTITUTIONAL_DEMAND" if dsz == 'IN_DEMAND_ZONE' else "LIQUIDITY_SWEEP_LONG"
@@ -1364,9 +1365,9 @@ def run_crypto_engine():
                 rsi       = tech.get('rsi', 50)
                 vwap_dist = tech.get('vwap_dist', 0.0)
 
-                # ── ANALISA LOGIK (v26.9) ──
+                # ── ANALISA LOGIK (v26.85) ──
                 tech_score = 0
-                side, reason, tech_score = _determine_trade_side(tech, rsi, vwap_dist, market_sentiment, mark_price)
+                side, reason, tech_score = _determine_trade_side(tech, rsi, vwap_dist, market_sentiment, mark_price, pump_sc, dump_sc)
                 combined_score = round((pump_sc * 0.5) + (tech_score * 0.5))
 
                 # WS GLOBAL BOOST
