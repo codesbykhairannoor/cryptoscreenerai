@@ -43,8 +43,8 @@ FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
 MIN_MOMENTUM_SCORE   = 30     # Turun ke 30 untuk lebih banyak sinyal!
 # ── INSTITUTIONAL HUNTER CONFIG (v26.45-FINAL) ──
-HUNTER_ATR_SL_MULT   = 1.0    # Hasil Audit: Sniper Mode (Safe & Consistent)
-HUNTER_ATR_TP_MULT   = 1.0    # Hasil Audit: Sniper Mode (High Probability)
+HUNTER_ATR_SL_MULT   = 0.7    # Tightened for better risk management
+HUNTER_ATR_TP_MULT   = 1.5    # Higher Reward:Risk ratio
 FVG_GAP_THRESHOLD    = 0.005  
 SCALP_TP_PCT         = 0.08   
 SCALP_SL_PCT         = 0.015  
@@ -1434,10 +1434,14 @@ def run_crypto_engine():
 
                 if side is None:
                     reject = "NO_SIDE"
+                elif market_sentiment == "PENDING":
+                    reject = "SENTIMENT_PENDING"
                 elif combined_score < current_min_momentum:
                     reject = f"SCORE_LOW({combined_score}<{current_min_momentum})"
                 elif tech_score < current_min_tech:
                     reject = f"TECH_LOW({tech_score}<{current_min_tech})"
+                elif "NONE" in reason and combined_score < 80:
+                    reject = "SMC_REQUIRED"
                 else:
                     btc_signal = btc_ctx.get("signal", "NEUTRAL")
                     if btc_signal == "AVOID_LONG" and side == "buy":

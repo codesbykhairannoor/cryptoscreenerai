@@ -1407,6 +1407,20 @@ class ForexExecutor:
 
     def place_forex_order(self, symbol, side, amount, take_profit_val=None, stop_loss_val=None, reason_data=None):
         if not self.is_active: return False, "Forex not active"
+        
+        # ── POSITION GUARD (v26.64) ──
+        # Mencegah duplikasi posisi XAUUSD saat API lag
+        try:
+            from shared_state import state
+            existing = self.get_open_positions() # Fetch fresh from MetaAPI
+            if existing:
+                for pos in existing:
+                    if pos.get('symbol') == symbol:
+                        print(f"[FOREX GUARD] Posisi {symbol} sudah ada. Skip order baru.")
+                        return False, "POSITION_EXISTS"
+        except Exception as e:
+            print(f"[FOREX GUARD ERROR] {e}")
+
         try:
             url = self.base_url + "/users/current/accounts/" + self.account_id + "/trade"
             headers = {"auth-token": self.api_token, "Content-Type": "application/json"}

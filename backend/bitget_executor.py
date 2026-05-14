@@ -285,6 +285,19 @@ class BitgetExecutor:
         except: return []
 
     def place_order(self, symbol, side, amount, take_profit_val=None, stop_loss_val=None, leverage=10):
+        # ── POSITION GUARD (v26.63) ──
+        # Mencegah 'Ghost Trades' (duplikasi posisi)
+        try:
+            existing = self.get_all_positions()
+            if existing:
+                clean_sym = self._clean_symbol(symbol)
+                for pos in existing:
+                    if self._clean_symbol(pos['symbol']) == clean_sym:
+                        print(f"[GUARD] Posisi {symbol} sudah ada. Skip order baru.")
+                        return False, "POSITION_EXISTS"
+        except Exception as e:
+            print(f"[GUARD ERROR] {e}")
+
         self._is_ordering = True
         try:
             # 1. SET LEVERAGE
