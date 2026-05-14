@@ -91,9 +91,6 @@ def init_db():
     cursor.close()
     conn.close()
 
-def log_trade(symbol, entry, tp, sl, market='crypto', side='buy',
-              lot_size=0, score=0, reason='', session=''):
-    """
 def log_trade(symbol, entry, tp, sl, market='crypto', side='buy', lot_size=0, score=0, reason='', session=None, 
               rsi=50.0, vwap=0.0, rvol=1.0, sentiment='NEUTRAL'):
     """
