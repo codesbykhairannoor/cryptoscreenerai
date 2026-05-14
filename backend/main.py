@@ -21,6 +21,12 @@ import subprocess
 import os as _os
 import sys
 import traceback
+import io
+
+# Force UTF-8 for Windows console to prevent 'charmap' crash
+if sys.platform == "win32":
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  GLOBAL EXCEPTION HANDLER — catch semua unhandled exception di semua thread

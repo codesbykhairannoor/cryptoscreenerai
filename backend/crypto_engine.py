@@ -1473,7 +1473,7 @@ def run_crypto_engine():
                 results.sort(key=lambda x: x['score'], reverse=True)
 
                 # ── LOG ANALISIS DETAIL SEMUA KANDIDAT ──────────────────────
-                print(f"\n{'─'*65}", flush=True)
+                print(f"\n{'='*65}", flush=True)
                 print(f"[SCAN RESULT] {len(results)} kandidat lolos filter dari {min(40, len(candidates))} koin:", flush=True)
                 for i, r in enumerate(results[:8]):  # Tampilkan top 8
                     sym   = r['clean_base']
@@ -1494,13 +1494,13 @@ def run_crypto_engine():
                         signals.append(f"5mSZ({q})")
                     if tech.get('in_demand'):   signals.append("DZ")
                     if tech.get('in_supply'):   signals.append("SZ")
-                    if tech.get('mss_bullish'): signals.append("MSS↑")
-                    if tech.get('mss_bearish'): signals.append("MSS↓")
+                    if tech.get('mss_bullish'): signals.append("MSS-UP")
+                    if tech.get('mss_bearish'): signals.append("MSS-DOWN")
                     if tech.get('fvg') not in ('NONE', None): signals.append(f"FVG:{tech['fvg'][:4]}")
                     whale = tech.get('whale_signal', 'NORMAL')
                     if whale != 'NORMAL': signals.append(f"WHALE:{whale[6:]}")
-                    if tech.get('bull_stop_hunt'): signals.append("HUNT↑")
-                    if tech.get('bear_stop_hunt'): signals.append("HUNT↓")
+                    if tech.get('bull_stop_hunt'): signals.append("HUNT-UP")
+                    if tech.get('bear_stop_hunt'): signals.append("HUNT-DOWN")
                     fr = tech.get('funding_rate', 0)
                     if fr < -0.0003: signals.append(f"SQUEEZE({fr:.4f})")
                     obi = tech.get('obi', 0)
@@ -1516,7 +1516,7 @@ def run_crypto_engine():
                         f"Signals:[{' '.join(signals) if signals else 'NONE'}]",
                         flush=True
                     )
-                print(f"{'─'*65}\n", flush=True)
+                print(f"{'='*65}\n", flush=True)
             else:
                 # AGRESIF LOGGING: Tetap lapor meskipun tidak ada yang lolos filter
                 print(f"[CRYPTO] Scan {min(40, len(candidates))} koin. 0 kandidat lolos filter (Threshold: {current_min_momentum})", flush=True)
