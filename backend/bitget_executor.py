@@ -1,4 +1,4 @@
-﻿import ccxt
+import ccxt
 import os
 import time
 import json
@@ -333,22 +333,44 @@ class BitgetExecutor:
 
         self._is_ordering = True
         try:
-            # 1. SET LEVERAGE
+            # 1. SETUP DIRECT API (Bypass CCXT for reliability)
+            # symbol format: XRP/USDT:USDT -> XRPUSDT
+            clean_symbol = symbol.replace("/", "").split(":")[0]
+            if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
+            
+            # 2. MARKET ORDER (Direct API V2)
+            path = "/api/v2/mix/order/place-order"
+            method = "POST"
+            
+            payload = {
+                "symbol": clean_symbol,
+                "productType": "USDT-FUTURES",
+                "marginCoin": "USDT",
+                "size": str(amount),
+                "side": side.lower(),
+                "orderType": "market"
+            }
+            
+            # Gunakan _v3_request (yang sebenarnya V2/V3 compatible signer)
+            res_data = self._v3_request(method, path, body=payload)
+            
+            if res_data.get('code') != '00000':
+                print(f"[BITGET ERROR] Direct API Rejected: {res_data}")
+                return False, res_data.get('msg', 'Unknown Error')
+
+            order_id = res_data['data']['orderId']
+            print(f"[BITGET SUCCESS] {side.upper()} {clean_symbol} executed via Direct API. ID: {order_id}")
+            
+            # Dummy order object for compatibility
+            order = {'id': order_id, 'symbol': symbol, 'side': side, 'amount': amount}
+
+            # 3. AMBIL HARGA FILL (Tetap pakai ticker untuk SL/TP calculation)
             try:
-                self.exchange.set_leverage(leverage, symbol, params={'productType': 'USDT-FUTURES', 'marginCoin': 'USDT'})
-            except Exception as lev_err:
-                print(f"[LEVERAGE] Set {leverage}x for {symbol}: {lev_err}")
-
-            # 2. MARKET ORDER
-            order = self.exchange.create_order(symbol, 'market', side, amount, params={'orderComment': 'GeniusScalper v5.1'})
-            print(f"[BITGET CLASSIC] {side.upper()} {symbol} executed @ {leverage}x.")
-
-            # 3. AMBIL HARGA FILL   handle NoneType
-            raw_price = order.get('price') or order.get('average') or order.get('info', {}).get('priceAvg')
-            if raw_price is None or float(raw_price) == 0:
-                ticker = self.exchange.fetch_ticker(symbol)
-                raw_price = ticker['last']
-            price = float(raw_price)
+                # Ambil harga via public API (biasanya lebih stabil)
+                price_res = requests.get(f"https://api.bitget.com/api/v2/mix/market/ticker?symbol={clean_symbol}&productType=USDT-FUTURES", timeout=10)
+                price = float(price_res.json()['data'][0]['lastPr'])
+            except Exception:
+                price = 0 
 
             # 4. VALIDASI stop_loss_val/take_profit_val DARI HARGA FILL AKTUAL
             # Pakai stop_loss_val/take_profit_val yang dikirim dari crypto_engine (sudah dihitung dengan benar).
