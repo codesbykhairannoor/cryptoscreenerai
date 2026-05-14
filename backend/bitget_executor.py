@@ -318,275 +318,163 @@ class BitgetExecutor:
         except: return []
 
     def place_order(self, symbol, side, amount, take_profit_val=None, stop_loss_val=None, leverage=10):
-        # == POSITION GUARD (v26.63) ==
-        # Mencegah 'Ghost Trades' (duplikasi posisi)
-        try:
-            existing = self.get_all_positions()
-            if existing:
-                clean_sym = self._clean_symbol(symbol)
-                for pos in existing:
-                    if self._clean_symbol(pos['symbol']) == clean_sym:
-                        print(f"[GUARD] Posisi {symbol} sudah ada. Skip order baru.")
-                        return False, "POSITION_EXISTS"
-        except Exception as e:
-            print(f"[GUARD ERROR] {e}")
-
+        """Place Market Order via Direct API V2"""
         self._is_ordering = True
         try:
-            # 1. SETUP DIRECT API (Bypass CCXT for reliability)
-            clean_symbol = symbol.replace("/", "").split(":")[0]
-            if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
+            clean_sym = symbol.replace("/", "").split(":")[0]
+            if not clean_sym.endswith('USDT'): clean_sym += 'USDT'
             
-            # 2. AMBIL HARGA MARKET DULU (Untuk SL/TP calculation sebelum nembak)
-            try:
-                price_res = requests.get(f"https://api.bitget.com/api/v2/mix/market/ticker?symbol={clean_symbol}&productType=USDT-FUTURES", timeout=10)
-                price = float(price_res.json()['data'][0]['lastPr'])
-            except Exception:
-                # Fallback ke CCXT kalau public API error
-                ticker = self.exchange.fetch_ticker(symbol)
-                price = float(ticker['last'])
+            # 1. SET LEVERAGE (Direct API)
+            self._v3_request("POST", "/api/v2/mix/account/set-leverage", body={
+                "symbol": clean_sym, "productType": "USDT-FUTURES", "marginCoin": "USDT",
+                "leverage": str(leverage), "holdSide": "long" if side.lower() in ['buy','long'] else "short"
+            })
 
-            # 3. HITUNG SL/TP (Finalized Logic)
-            final_sl = None
-            final_tp = None
-
-            if side.lower() in ['long', 'buy']:
-                if stop_loss_val and stop_loss_val > 0 and stop_loss_val < price:
-                    final_sl = stop_loss_val
-                else:
-                    final_sl = price * 0.95
-                if take_profit_val and take_profit_val > 0 and take_profit_val > price:
-                    final_tp = take_profit_val
-                else:
-                    final_tp = price * 1.08
-            else:
-                if stop_loss_val and stop_loss_val > 0 and stop_loss_val > price:
-                    final_sl = stop_loss_val
-                else:
-                    final_sl = price * 1.05
-                if take_profit_val and take_profit_val > 0 and take_profit_val < price:
-                    final_tp = take_profit_val
-                else:
-                    final_tp = price * 0.92
-
-            # 4. MARKET ORDER (Direct API V2)
-            path = "/api/v2/mix/order/place-order"
-            method = "POST"
-            
+            # 2. MARKET ORDER (Direct API)
             payload = {
-                "symbol": clean_symbol,
+                "symbol": clean_sym,
                 "productType": "USDT-FUTURES",
                 "marginCoin": "USDT",
                 "marginMode": "isolated",
-                "size": str(amount),
-                "side": side.lower(),
-                "orderType": "market"
+                "side": "buy" if side.lower() in ['buy','long'] else "sell",
+                "orderType": "market",
+                "size": str(amount)
             }
+            res = self._v3_request("POST", "/api/v2/mix/order/place-order", body=payload)
             
-            res_data = self._v3_request(method, path, body=payload)
-            
-            if res_data.get('code') != '00000':
-                print(f"[BITGET ERROR] Direct API Rejected: {res_data}")
-                return False, res_data.get('msg', 'Unknown Error')
+            if res.get('code') != '00000':
+                print(f"[BITGET ERROR] {res}")
+                return False, res.get('msg', 'Unknown Error')
 
-            order_id = res_data['data']['orderId']
-            print(f"[BITGET SUCCESS] {side.upper()} {clean_symbol} executed. ID: {order_id}")
-            
-            # Dummy order object for compatibility
-            order = {'id': order_id, 'symbol': symbol, 'side': side, 'amount': amount}
+            order_id = res['data']['orderId']
+            print(f"[BITGET SUCCESS] {side.upper()} {symbol} ID: {order_id}")
 
-            # 5. SET SL & TP (Using CCXT with Manual Market Injection to bypass Spot hang)
-            try:
-                # Inject manual market data biar CCXT nggak manggil API Spot
-                clean_sym = symbol.replace("/", "").split(":")[0]
-                if not clean_sym.endswith('USDT'): clean_sym += 'USDT'
-                
-                market_id = clean_sym
-                self.exchange.markets = {
-                    symbol: {
-                        'id': market_id, 'symbol': symbol, 'base': symbol.split("/")[0], 'quote': 'USDT',
-                        'type': 'swap', 'spot': False, 'swap': True, 'active': True, 'contract': True, 'linear': True,
-                        'precision': {'amount': 0, 'price': 6},
-                        'limits': {'amount': {'min': 1}, 'price': {'min': 0.000001}}
-                    }
-                }
-                self.exchange.markets_by_id = {market_id: self.exchange.markets[symbol]}
-                
-                # Sekarang panggil SL/TP via CCXT (Harusnya lancar karena data market sudah di-inject)
-                self._set_sl_tp_ccxt_v2(symbol, side, amount, sl_price=final_sl, tp_price=final_tp)
-            except Exception as e:
-                print(f"[SL/TP INJECTION FAIL] {e}")
-            
-            # 6. INVALIDATE CACHE (PENTING!)
-            from shared_state import state
-            state.last_update = 0
+            # 3. SET SL/TP via background Position Manager (Reactive)
+            # The Position Manager loop will detect this new position and set SL/TP.
+            # But we can also trigger it once here for immediate protection.
+            # sl_price/tp_price calculations...
+            # (Keeping it simple: let the manager handle it as requested by the user)
 
-            print(f"[ORDER OK] {symbol} {side.upper()} | Entry: {price} | TP: {final_tp} | SL: {final_sl}")
-            return True, order
+            return True, {"id": order_id}
         except Exception as e:
-            print(f"[CLASSIC ORDER FAILED] {e}")
+            print(f"[ORDER FAILED] {e}")
             return False, str(e)
         finally:
             self._is_ordering = False
 
     def _set_sl_tp_bitget(self, symbol, side, size, sl_price=None, tp_price=None):
-        """
-        Set stop_loss_val/take_profit_val untuk Bitget Classic.
-        Berdasarkan testing: ccxt stopLossPrice/takeProfitPrice params BEKERJA.
-        Skip API plan endpoint yang selalu NOT FOUND.
-        """
-        # Ambil mark price sekarang untuk validasi
+        """Set SL/TP via OFFICIAL Bitget V2 TPSL API (One-way Mode Support)"""
         try:
-            # Gunakan requests agar tidak crash
             clean_symbol = symbol.replace("/", "").split(":")[0]
             if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
-            price_res = requests.get(f"https://api.bitget.com/api/v2/mix/market/ticker?symbol={clean_symbol}&productType=USDT-FUTURES", timeout=10)
-            current_price = float(price_res.json()['data'][0]['lastPr'])
-        except Exception:
-            current_price = 0
+            
+            # Untuk One-way Mode: holdSide adalah 'buy' (long) atau 'sell' (short)
+            s = side.lower()
+            hold_side = "buy" if s in ['long', 'buy', 'open_long'] else "sell"
+            
+            def round_p(p):
+                return round(p, 2) if p > 10 else round(p, 4)
 
-        hold_side = 'long' if side in ['long', 'buy'] else 'short'
+            if sl_price and sl_price > 0:
+                payload = {
+                    "symbol": clean_symbol,
+                    "productType": "USDT-FUTURES",
+                    "marginCoin": "USDT",
+                    "planType": "pos_loss",
+                    "triggerPrice": str(round_p(sl_price)),
+                    "triggerType": "mark_price",
+                    "holdSide": hold_side,
+                    "executePrice": "0"
+                }
+                res = self._v3_request("POST", "/api/v2/mix/order/place-tpsl-order", body=payload)
+                if res.get('code') == '00000':
+                    print(f"[SL OK] TPSL set at {payload['triggerPrice']} (Side: {hold_side})")
+                else:
+                    print(f"[SL FAIL] {res}")
 
-        if sl_price and sl_price > 0:
-            # Validasi: stop_loss_val long harus di bawah current price
-            if current_price > 0:
-                # Cegah reset stop_loss_val ke bawah jika posisi sedang UNTUNG BESAR
-                # Hanya reset jika stop_loss_val baru BENAR-BENAR menabrak harga (jarak < 0.05%)
-                if hold_side == 'long' and sl_price >= current_price * 0.9995:
-                    print(f"[stop_loss_val GUARD] {symbol} stop_loss_val too close, skipping update to protect profit.")
-                    return
-                elif hold_side == 'short' and sl_price <= current_price * 1.0005:
-                    print(f"[stop_loss_val GUARD] {symbol} stop_loss_val too close, skipping update.")
-                    return
-            self._set_sl_ccxt(symbol, side, size, sl_price)
-
-        if tp_price and tp_price > 0:
-            self._set_tp_ccxt(symbol, side, size, tp_price)
+            if tp_price and tp_price > 0:
+                payload = {
+                    "symbol": clean_symbol,
+                    "productType": "USDT-FUTURES",
+                    "marginCoin": "USDT",
+                    "planType": "pos_profit",
+                    "triggerPrice": str(round_p(tp_price)),
+                    "triggerType": "mark_price",
+                    "holdSide": hold_side,
+                    "executePrice": "0"
+                }
+                res = self._v3_request("POST", "/api/v2/mix/order/place-tpsl-order", body=payload)
+                if res.get('code') == '00000':
+                    print(f"[TP OK] TPSL set at {payload['triggerPrice']} (Side: {hold_side})")
+                else:
+                    print(f"[TP FAIL] {res}")
+        except Exception as e:
+            print(f"[SL/TP ERROR] {e}")
 
     def _set_sl_ccxt(self, symbol, side, size, sl_price):
-        """Set stop_loss_val via Direct API V2 Plan Order"""
+        """Set stop_loss_val via ccxt   cancel stop_loss_val lama dulu, lalu buat yang baru."""
         try:
-            clean_symbol = symbol.replace("/", "").split(":")[0]
-            if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
-            
-            path = "/api/v2/mix/order/place-plan-order"
-            method = "POST"
-            
-            # SL Side adalah kebalikan dari Entry Side
-            sl_side = "sell" if side.lower() in ['buy', 'long'] else "buy"
-            
-            payload = {
-                "symbol": clean_symbol,
-                "productType": "USDT-FUTURES",
-                "marginCoin": "USDT",
-                "marginMode": "isolated",
-                "planType": "loss_plan",
-                "triggerPrice": str(sl_price),
-                "triggerType": "mark_price",
-                "side": sl_side,
-                "orderType": "market",
-                "size": str(size),
-                "reduceOnly": "true"
-            }
-            
-            res = self._v3_request(method, path, body=payload)
-            if res.get('code') == '00000':
-                print(f"[SL OK] Direct API SL set at {sl_price}")
-            else:
-                print(f"[SL FAIL] {res}")
+            tp_side = 'sell' if side in ['long', 'buy'] else 'buy'
+            ticker  = self.exchange.fetch_ticker(symbol)
+            mark    = float(ticker.get('last', 0))
+            hold    = 'long' if side in ['long', 'buy'] else 'short'
+
+            if mark > 0:
+                if hold == 'long' and sl_price >= mark:
+                    sl_price = mark * 0.95     # 5% = 50% PnL (Optimized v9.3)
+                elif hold == 'short' and sl_price <= mark:
+                    sl_price = mark * 1.05     # 5% = 50% PnL (Optimized v9.3)
+
+            # Cancel semua stop_loss_val order yang ada untuk symbol ini dulu
+            # Ini mencegah duplikat stop_loss_val order
+            try:
+                clean_sym = symbol.replace("/", "").split(":")[0]
+                if not clean_sym.endswith('USDT'): clean_sym += 'USDT'
+                existing = self.exchange.private_get_v2_mix_order_plan_current_orders({
+                    'symbol': clean_sym, 'productType': 'USDT-FUTURES'
+                })
+                if existing.get('code') == '00000' and existing.get('data'):
+                    for order in existing['data']:
+                        plan_type = order.get('planType', '').lower()
+                        if any(x in plan_type for x in ['loss', 'stop_loss_val', 'stop', 'psl']):
+                            order_id = order.get('orderId', order.get('planId'))
+                            if order_id:
+                                self._v3_request("POST", "/api/v2/mix/order/plan/cancelPlan", body={
+                                    "symbol": clean_sym,
+                                    "productType": "USDT-FUTURES",
+                                    "marginCoin": "USDT",
+                                    "orderId": str(order_id)
+                                })
+            except Exception:
+                pass  # Kalau cancel gagal, tetap lanjut buat stop_loss_val baru
+
+            # Buat stop_loss_val baru
+            self.exchange.create_order(
+                symbol, 'market', tp_side, size, None,
+                params={'productType': 'USDT-FUTURES', 'reduceOnly': True, 'stopLossPrice': sl_price}
+            )
+            print(f"[stop_loss_val CCXT] {symbol} stop_loss_val@{round(sl_price,6)} OK", flush=True)
         except Exception as e:
-            print(f"[SL ERROR] {e}")
+            print(f"[stop_loss_val CCXT FAIL] {symbol}: {e}", flush=True)
 
     def _set_tp_ccxt(self, symbol, side, size, tp_price):
-        """Set take_profit_val via Direct API V2 Plan Order"""
+        """Set take_profit_val via ccxt."""
         try:
-            clean_symbol = symbol.replace("/", "").split(":")[0]
-            if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
-
-            path = "/api/v2/mix/order/place-plan-order"
-            method = "POST"
-            
-            # TP Side adalah kebalikan dari Entry Side
-            tp_side = "sell" if side.lower() in ['buy', 'long'] else "buy"
-            
-            payload = {
-                "symbol": clean_symbol,
-                "productType": "USDT-FUTURES",
-                "marginCoin": "USDT",
-                "marginMode": "isolated",
-                "planType": "profit_plan",
-                "triggerPrice": str(tp_price),
-                "triggerType": "mark_price",
-                "side": tp_side,
-                "orderType": "market",
-                "size": str(size),
-                "reduceOnly": "true"
-            }
-            
-            res = self._v3_request(method, path, body=payload)
-            if res.get('code') == '00000':
-                print(f"[TP OK] Direct API TP set at {tp_price}")
-            else:
-                print(f"[TP FAIL] {res}")
+            tp_side = 'sell' if side in ['long', 'buy'] else 'buy'
+            self.exchange.create_order(
+                symbol, 'market', tp_side, size, None,
+                params={'productType': 'USDT-FUTURES', 'reduceOnly': True, 'takeProfitPrice': tp_price}
+            )
+            print(f"[take_profit_val CCXT] {symbol} take_profit_val@{round(tp_price,6)} OK", flush=True)
         except Exception as e:
-            print(f"[TP ERROR] {e}")
+            print(f"[take_profit_val CCXT FAIL] {symbol}: {e}", flush=True)
 
-    def _set_sl_tp_ccxt_v2(self, symbol, side, amount, sl_price=None, tp_price=None):
-        """Set SL/TP using Stable V1 API (Separate Orders)"""
-        clean_symbol = symbol.replace("/", "").split(":")[0]
-        if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
-        
-        # SL/TP Side adalah kebalikan dari Entry
-        order_side = "sell" if side.lower() in ['buy', 'long'] else "buy"
-        
+    def _set_sl_tp_ccxt(self, symbol, side, size, sl_price=None, tp_price=None):
+        """Fallback lengkap: set stop_loss_val dan take_profit_val via ccxt."""
         if sl_price and sl_price > 0:
-            try:
-                # V1 Plan Order Endpoint
-                path = "/api/mix/v1/order/place-plan-order"
-                payload = {
-                    "symbol": clean_symbol + "_UMCBL", # Format V1
-                    "marginCoin": "USDT",
-                    "size": str(amount),
-                    "executePrice": "0", # Market
-                    "triggerPrice": str(sl_price),
-                    "triggerType": "mark_price",
-                    "side": order_side,
-                    "orderType": "market",
-                    "reduceOnly": "true",
-                    "stopLossPrice": str(sl_price) # V1 specific
-                }
-                res = self._v2_private_request("POST", path, body=payload)
-                if res.get('code') == '00000':
-                    print(f"[SL V1 OK] set at {sl_price}")
-                else:
-                    # Coba V2 TPSL kalau V1 gagal
-                    print(f"[SL V1 FAIL] {res}, trying V2...")
-                    self._set_sl_ccxt(symbol, side, amount, sl_price)
-            except Exception as e:
-                print(f"[SL V1 ERROR] {e}")
-
+            self._set_sl_ccxt(symbol, side, size, sl_price)
         if tp_price and tp_price > 0:
-            try:
-                path = "/api/mix/v1/order/place-plan-order"
-                payload = {
-                    "symbol": clean_symbol + "_UMCBL",
-                    "marginCoin": "USDT",
-                    "size": str(amount),
-                    "executePrice": "0",
-                    "triggerPrice": str(tp_price),
-                    "triggerType": "mark_price",
-                    "side": order_side,
-                    "orderType": "market",
-                    "reduceOnly": "true",
-                    "takeProfitPrice": str(tp_price)
-                }
-                res = self._v2_private_request("POST", path, body=payload)
-                if res.get('code') == '00000':
-                    print(f"[TP V1 OK] set at {tp_price}")
-                else:
-                    print(f"[TP V1 FAIL] {res}")
-            except Exception as e:
-                print(f"[TP V1 ERROR] {e}")
+            self._set_tp_ccxt(symbol, side, size, tp_price)
 
     def update_sl_price(self, symbol, side, amount, new_price, is_tp=False):
         """Update stop_loss_val atau take_profit_val yang sudah ada via Plan Order API."""
@@ -669,7 +557,6 @@ class BitgetExecutor:
                 except: pass
 
                 print(f"\n[TRACKER] [DONE] TRADE CLOSED: {clean} | PnL: {last_pnl}%")
-                print(f"          Status: Cooldown 24 jam (Win Pattern v29.1) aktif.\n")
             
             self._tracked_positions = current_symbols
 
@@ -684,7 +571,6 @@ class BitgetExecutor:
                 #    SMALL TRADE SCRUBBER                                       
                 notional = size * mark_price
                 if 0 < notional < 5.0:
-                    print(f"[SCRUBBER] Closing micro-position {symbol} (${round(notional,2)})")
                     try:
                         clean_sym = symbol.replace("/", "").split(":")[0]
                         self._v3_request("POST", "/api/v2/mix/order/close-positions", {
