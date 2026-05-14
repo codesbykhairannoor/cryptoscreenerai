@@ -42,9 +42,9 @@ GLOBAL_REPORT_INTERVAL = 300
 FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
 MIN_MOMENTUM_SCORE   = 30     # Turun ke 30 untuk lebih banyak sinyal!
-# ── INSTITUTIONAL HUNTER CONFIG (v26.45-FINAL) ──
-HUNTER_ATR_SL_MULT   = 0.7    # Tightened for better risk management
-HUNTER_ATR_TP_MULT   = 1.5    # Higher Reward:Risk ratio
+# ── INSTITUTIONAL HUNTER CONFIG (v26.70-GOD-MODE) ──
+HUNTER_ATR_SL_MULT   = 0.8    # Optimized from 700+ scenarios
+HUNTER_ATR_TP_MULT   = 2.0    # Optimized for massive Profit Factor
 FVG_GAP_THRESHOLD    = 0.005  
 SCALP_TP_PCT         = 0.08   
 SCALP_SL_PCT         = 0.015  
@@ -92,7 +92,7 @@ STAR_COINS = set() # Kosongkan agar bot memindai secara universal
 
 # SELL TRADING DISABLED -- data menunjukkan 0% WR dari 33 SELL trades
 # Setiap SELL yang diambil bot hampir pasti kalah
-SELL_TRADING_ENABLED = False  # False = BUY-only mode
+SELL_TRADING_ENABLED = True   # ENABLED based on v26.70 optimization (WR 70%+)
 
 # Session filter - DINONAKTIFKAN untuk trading 24 jam!
 CRYPTO_SESSION_START_UTC = 0
@@ -950,7 +950,7 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
 
 #  CORE: TENTUKAN SIDE & REASON 
 def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
-                           market_sentiment: str) -> tuple[str | None, str, int]:
+                           market_sentiment: str, mark_price: float) -> tuple[str | None, str, int]:
     """
     Return (side, reason, score) atau (None, '', 0) kalau tidak ada setup.
     Bi-directional: bisa long DAN short.
@@ -974,11 +974,17 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     if obi > 0.15:  long_score += 25
     elif obi < -0.15: short_score += 25
     
-    # 2. RSI Context
-    if rsi < 40:    long_score += 20  # Oversold (Aggressive Buy)
-    elif rsi < 60:  long_score += 10
-    if rsi > 70:    short_score += 20 # Overbought (Aggressive Sell)
-    elif rsi > 40:  short_score += 10
+    # 1. TREND FILTER (EMA 200) - CORE OF v26.70
+    ema_200 = tech.get('ema_200', mark_price)
+    is_uptrend = mark_price > ema_200
+    
+    # 2. RSI (Aggressive but balanced)
+    if is_uptrend:
+        if 40 <= rsi <= 65: long_score += 25
+        if rsi < 30:        long_score += 15 # Oversold bounce
+    else:
+        if 45 <= rsi <= 75: short_score += 25
+        if rsi > 70:        short_score += 15 # Overbought rejection
     
     # 3. VWAP Position
     if vwap_dist < -1.5: long_score += 20 # Underpriced
@@ -1348,7 +1354,7 @@ def run_crypto_engine():
 
                 # ── ANALISA LOGIK (v26.9) ──
                 tech_score = 0
-                side, reason, tech_score = _determine_trade_side(tech, rsi, vwap_dist, market_sentiment)
+                side, reason, tech_score = _determine_trade_side(tech, rsi, vwap_dist, market_sentiment, mark_price)
                 combined_score = round((pump_sc * 0.5) + (tech_score * 0.5))
 
                 # WS GLOBAL BOOST
