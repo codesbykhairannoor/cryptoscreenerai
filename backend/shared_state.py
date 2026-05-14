@@ -1,4 +1,4 @@
-﻿import time
+import time
 import threading
 
 class SharedState:
@@ -37,6 +37,8 @@ class SharedState:
             cls._instance.rt_whale_trades = {}    # Symbol -> list of recent whale trades
             cls._instance.rt_ticker_ts = {}  # Symbol -> last ticker update timestamp
             cls._instance.rt_depth_ts = {}   # Symbol -> last depth update timestamp
+            cls._instance.rt_rvol = {}       # Symbol -> Relative Volume float
+            cls._instance.rt_atr_pct = {}    # Symbol -> ATR% float
             cls._instance.market_ws_connected = False  # Market WS connection status
             cls._instance.market_ws_symbols = []       # List of symbols being tracked
 

@@ -1,4 +1,4 @@
-﻿"""
+"""
 FOREX SCALPER v8.0 - GENIUS SCALPER EDITION
 =============================================
 Perbaikan besar dari v7.0:
@@ -1387,7 +1387,7 @@ class ForexExecutor:
         if not self.is_active: return []
         try:
             url = self.base_url + "/users/current/accounts/" + self.account_id + "/positions"
-            res = requests.get(url, headers={"auth-token": self.api_token}, timeout=10)
+            res = requests.get(url, headers={"auth-token": self.api_token}, timeout=20)
             if res.status_code == 200:
                 data = res.json()
                 if isinstance(data, list):
@@ -1447,7 +1447,7 @@ class ForexExecutor:
             }
             if stop_loss_val: payload["stopLoss"]   = stop_loss_val
             if take_profit_val: payload["takeProfit"] = take_profit_val
-            res    = requests.post(url, headers=headers, json=payload, timeout=10)
+            res    = requests.post(url, headers=headers, json=payload, timeout=20)
             result = res.json()
             if res.status_code == 200:
                 self._pending_order_ts = time.time() # FIX: Lock entry
@@ -1522,7 +1522,7 @@ class ForexExecutor:
             # Selalu sertakan take_profit_val kalau ada ??? mencegah broker reset take_profit_val ke 0
             if current_tp and float(current_tp) > 0:
                 payload["takeProfit"] = float(current_tp)
-            res = requests.post(url, headers=headers, json=payload, timeout=10)
+            res = requests.post(url, headers=headers, json=payload, timeout=20)
             if res.status_code == 200:
                 return True
             try:

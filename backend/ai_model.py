@@ -1,4 +1,4 @@
-﻿"""
+"""
 PUMP PREDICTOR ENGINE v1.0
 ===========================
 Deteksi koin yang AKAN pump sebelum pump terjadi.
@@ -157,7 +157,7 @@ def analyze_and_sort(raw_data):
             rvol_val = 1.0
             try:
                 from shared_state import state
-                rvol_val = state.rt_rvol.get(str(row.get('symbol', '')), 1.0)
+                rvol_val = getattr(state, 'rt_rvol', {}).get(str(row.get('symbol', '')), 1.0)
             except Exception: pass
 
             if rvol_val >= 3.0: # MOMENTUM MODE!
@@ -173,7 +173,7 @@ def analyze_and_sort(raw_data):
         try:
             from shared_state import state
             sym = str(row.get('symbol', ''))
-            rvol = state.rt_rvol.get(sym, 1.0) # Relative Volume dari early_signal
+            rvol = getattr(state, 'rt_rvol', {}).get(sym, 1.0) # Relative Volume dari early_signal
             if rvol >= 5.0:    score += 40   # Volume meledak parah!
             elif rvol >= 3.0:  score += 30   # Volume sangat tinggi
             elif rvol >= 2.0:  score += 15   # Volume mulai masuk
@@ -280,7 +280,7 @@ def analyze_and_sort(raw_data):
 
     # PREDATOR TANPA BATAS: Pantau semua koin yang masuk kriteria (head(80) untuk stability)
     df['best_score'] = df[['pump_score', 'dump_score']].max(axis=1)
-    df_sorted = df.sort_values(by='best_score', ascending=False).head(80)
+    df_sorted = df.sort_values(by='best_score', ascending=False).head(100)
 
     # Log top 5
     print(f"[PUMP PREDICTOR] Top 5 candidates:")

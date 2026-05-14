@@ -1,12 +1,10 @@
-﻿from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sentiment import get_crypto_news, get_global_market_data, get_fred_macro_context
 from data_fetcher import (
     fetch_all_tickers, get_order_book_details,
     get_technical_indicators, get_forex_data,
-    get_idx_data, get_idx_market_status,
-    get_retail_sentiment, detect_institutional_flow,
     get_dune_macro_metrics
 )
 from ai_model import analyze_and_sort

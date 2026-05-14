@@ -1,4 +1,4 @@
-﻿import time
+import time
 VERSION_TAG = "v26.16-FORCE-BOOT"
 print(f"\n[BOOT] Starting Institutional Predator {VERSION_TAG}...")
 
@@ -1217,8 +1217,8 @@ def run_crypto_engine():
             candidates = analyze_and_sort(raw_data)
 
             if not candidates:
-                if int(now) % 10 == 0: # Lapor tiap 10 detik
-                    print(f"[CRYPTO] Scanning 40 coins... (Active Trades: {len(open_bases)})", flush=True)
+                if int(now) % 15 == 0: # Lapor tiap 15 detik biar tidak sepi
+                    print(f"[CRYPTO] Scanning {len(raw_data) if raw_data else 40} coins... Heartbeat OK.", flush=True)
                 time.sleep(SCAN_INTERVAL)
                 continue
 
@@ -1541,7 +1541,11 @@ def run_crypto_engine():
                 # --- WIN PATTERN v31.0 (The Balanced Predator) ---
                 from shared_state import state as _ws_st
                 sym_ws = f"{clean_base}USDT"
-                rvol = _ws_st.rt_rvol.get(sym_ws, 1.0)
+                # Safe access to rt_rvol with multiple fallbacks
+                rvol = 1.0
+                try:
+                    rvol = getattr(_ws_st, 'rt_rvol', {}).get(sym_ws, 1.0)
+                except: pass
                 
                 # 1. FAST MOMENTUM: EMA 9 > EMA 21 (Confirmation)
                 ema_9 = tech.get('ema_9', mark_price)

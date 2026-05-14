@@ -1,4 +1,4 @@
-﻿import requests
+import requests
 import os
 from dotenv import load_dotenv
 
@@ -20,7 +20,7 @@ def send_telegram_message(message):
     }
     
     try:
-        response = requests.post(url, json=payload, timeout=10)
+        response = requests.post(url, json=payload, timeout=20)
         return response.status_code == 200
     except Exception as e:
         print(f"[TELEGRAM ERROR] {e}")
