@@ -334,11 +334,42 @@ class BitgetExecutor:
         self._is_ordering = True
         try:
             # 1. SETUP DIRECT API (Bypass CCXT for reliability)
-            # symbol format: XRP/USDT:USDT -> XRPUSDT
             clean_symbol = symbol.replace("/", "").split(":")[0]
             if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
             
-            # 2. MARKET ORDER (Direct API V2)
+            # 2. AMBIL HARGA MARKET DULU (Untuk SL/TP calculation sebelum nembak)
+            try:
+                price_res = requests.get(f"https://api.bitget.com/api/v2/mix/market/ticker?symbol={clean_symbol}&productType=USDT-FUTURES", timeout=10)
+                price = float(price_res.json()['data'][0]['lastPr'])
+            except Exception:
+                # Fallback ke CCXT kalau public API error
+                ticker = self.exchange.fetch_ticker(symbol)
+                price = float(ticker['last'])
+
+            # 3. HITUNG SL/TP (Finalized Logic)
+            final_sl = None
+            final_tp = None
+
+            if side.lower() in ['long', 'buy']:
+                if stop_loss_val and stop_loss_val > 0 and stop_loss_val < price:
+                    final_sl = stop_loss_val
+                else:
+                    final_sl = price * 0.95
+                if take_profit_val and take_profit_val > 0 and take_profit_val > price:
+                    final_tp = take_profit_val
+                else:
+                    final_tp = price * 1.08
+            else:
+                if stop_loss_val and stop_loss_val > 0 and stop_loss_val > price:
+                    final_sl = stop_loss_val
+                else:
+                    final_sl = price * 1.05
+                if take_profit_val and take_profit_val > 0 and take_profit_val < price:
+                    final_tp = take_profit_val
+                else:
+                    final_tp = price * 0.92
+
+            # 4. MARKET ORDER + SL + TP (Direct API V2)
             path = "/api/v2/mix/order/place-order"
             method = "POST"
             
@@ -349,10 +380,11 @@ class BitgetExecutor:
                 "marginMode": "isolated",
                 "size": str(amount),
                 "side": side.lower(),
-                "orderType": "market"
+                "orderType": "market",
+                "presetStopLossPrice": str(round(final_sl, 6)),
+                "presetTakeProfitPrice": str(round(final_tp, 6))
             }
             
-            # Gunakan _v3_request (yang sebenarnya V2/V3 compatible signer)
             res_data = self._v3_request(method, path, body=payload)
             
             if res_data.get('code') != '00000':
@@ -360,52 +392,10 @@ class BitgetExecutor:
                 return False, res_data.get('msg', 'Unknown Error')
 
             order_id = res_data['data']['orderId']
-            print(f"[BITGET SUCCESS] {side.upper()} {clean_symbol} executed via Direct API. ID: {order_id}")
+            print(f"[BITGET SUCCESS] {side.upper()} {clean_symbol} executed with SL/TP. ID: {order_id}")
             
             # Dummy order object for compatibility
             order = {'id': order_id, 'symbol': symbol, 'side': side, 'amount': amount}
-
-            # 3. AMBIL HARGA FILL (Tetap pakai ticker untuk SL/TP calculation)
-            try:
-                # Ambil harga via public API (biasanya lebih stabil)
-                price_res = requests.get(f"https://api.bitget.com/api/v2/mix/market/ticker?symbol={clean_symbol}&productType=USDT-FUTURES", timeout=10)
-                price = float(price_res.json()['data'][0]['lastPr'])
-            except Exception:
-                price = 0 
-
-            # 4. VALIDASI stop_loss_val/take_profit_val DARI HARGA FILL AKTUAL
-            # Pakai stop_loss_val/take_profit_val yang dikirim dari crypto_engine (sudah dihitung dengan benar).
-            # Hanya override kalau stop_loss_val arahnya salah (long stop_loss_val di atas price, dll).
-            # JANGAN recalculate dengan price * 0.985 karena itu bisa lebih kecil
-            # dari stop_loss_val yang sudah dihitung dengan benar di _calc_tp_sl.
-            if side.lower() in ['long', 'buy']:
-                # stop_loss_val long harus di bawah fill price
-                if stop_loss_val and stop_loss_val > 0 and stop_loss_val < price:
-                    final_sl = stop_loss_val   # Pakai stop_loss_val dari crypto_engine   sudah benar
-                else:
-                    final_sl = price * 0.95   # Fallback: 5% = 50% PnL (Optimized v9.3)
-                    print(f"[stop_loss_val FALLBACK] {symbol} stop_loss_val invalid ({stop_loss_val}), pakai 5%: {round(final_sl,6)}")
-                # take_profit_val long harus di atas fill price
-                if take_profit_val and take_profit_val > 0 and take_profit_val > price:
-                    final_tp = take_profit_val
-                else:
-                    final_tp = price * 1.08   # Fallback: 8% = 80% PnL
-                    print(f"[take_profit_val FALLBACK] {symbol} take_profit_val invalid ({take_profit_val}), pakai 8%: {round(final_tp,6)}")
-            else:
-                # stop_loss_val short harus di atas fill price
-                if stop_loss_val and stop_loss_val > 0 and stop_loss_val > price:
-                    final_sl = stop_loss_val
-                else:
-                    final_sl = price * 1.05   # Fallback: 5% = 50% PnL (Optimized v9.3)
-                    print(f"[stop_loss_val FALLBACK] {symbol} stop_loss_val invalid ({stop_loss_val}), pakai 5%: {round(final_sl,6)}")
-                if take_profit_val and take_profit_val > 0 and take_profit_val < price:
-                    final_tp = take_profit_val
-                else:
-                    final_tp = price * 0.92
-                    print(f"[take_profit_val FALLBACK] {symbol} take_profit_val invalid ({take_profit_val}), pakai 8%: {round(final_tp,6)}")
-
-            # 5. SET stop_loss_val/take_profit_val via Plan Order API (cara yang benar untuk Bitget Classic)
-            self._set_sl_tp_bitget(symbol, side, amount, sl_price=final_sl, tp_price=final_tp)
 
             # 6. INVALIDATE CACHE (PENTING!)
             # Paksa bot untuk fetch posisi terbaru dari REST di loop berikutnya
