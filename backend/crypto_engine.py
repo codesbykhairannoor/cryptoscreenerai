@@ -1032,8 +1032,14 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
     if tech.get('still_rising') and not (liq_bear or sweep_bear or dsz == 'IN_SUPPLY_ZONE'): 
         short_score -= 50
 
-    if not is_candle_green: long_score -= 50
-    if not is_candle_red: short_score -= 50
+    # Relax candle confirmation for high-momentum (RVOL > 2.0)
+    if rvol < 2.0:
+        if not is_candle_green: long_score -= 40
+        if not is_candle_red: short_score -= 40
+    else:
+        # High momentum: just ensure it's not a MASSIVE reversal candle
+        if ai_bias == "LONG" and tech.get('is_extreme_bearish'): long_score -= 50
+        if ai_bias == "SHORT" and tech.get('is_extreme_bullish'): short_score -= 50
 
     # 6. AI OVERRIDE (MEMBUNUH SINYAL YANG MELAWAN AI PREDICTOR)
     if ai_bias == "SHORT":
