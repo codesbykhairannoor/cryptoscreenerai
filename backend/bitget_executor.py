@@ -369,7 +369,7 @@ class BitgetExecutor:
                 else:
                     final_tp = price * 0.92
 
-            # 4. MARKET ORDER + SL + TP (Direct API V2)
+            # 4. MARKET ORDER (Direct API V2)
             path = "/api/v2/mix/order/place-order"
             method = "POST"
             
@@ -380,9 +380,7 @@ class BitgetExecutor:
                 "marginMode": "isolated",
                 "size": str(amount),
                 "side": side.lower(),
-                "orderType": "market",
-                "presetStopLossPrice": str(round(final_sl, 6)),
-                "presetTakeProfitPrice": str(round(final_tp, 6))
+                "orderType": "market"
             }
             
             res_data = self._v3_request(method, path, body=payload)
@@ -392,18 +390,19 @@ class BitgetExecutor:
                 return False, res_data.get('msg', 'Unknown Error')
 
             order_id = res_data['data']['orderId']
-            print(f"[BITGET SUCCESS] {side.upper()} {clean_symbol} executed with SL/TP. ID: {order_id}")
+            print(f"[BITGET SUCCESS] {side.upper()} {clean_symbol} executed. ID: {order_id}")
             
             # Dummy order object for compatibility
             order = {'id': order_id, 'symbol': symbol, 'side': side, 'amount': amount}
 
+            # 5. SET SL & TP SEPARATELY (To ensure 2 orders appear in Bitget)
+            self._set_sl_tp_bitget(symbol, side, amount, sl_price=final_sl, tp_price=final_tp)
+            
             # 6. INVALIDATE CACHE (PENTING!)
-            # Paksa bot untuk fetch posisi terbaru dari REST di loop berikutnya
-            # agar tidak membuka trade kedua.
             from shared_state import state
             state.last_update = 0
 
-            print(f"[ORDER OK] {symbol} {side.upper()} | Entry: {price} | take_profit_val: {final_tp} (+{round((final_tp/price-1)*100,2)}%) | stop_loss_val: {final_sl} (-{round((1-final_sl/price)*100,2)}%)")
+            print(f"[ORDER OK] {symbol} {side.upper()} | Entry: {price} | TP: {final_tp} | SL: {final_sl}")
             return True, order
         except Exception as e:
             print(f"[CLASSIC ORDER FAILED] {e}")
@@ -446,57 +445,68 @@ class BitgetExecutor:
             self._set_tp_ccxt(symbol, side, size, tp_price)
 
     def _set_sl_ccxt(self, symbol, side, size, sl_price):
-        """Set stop_loss_val via Clean Dedicated TPSL API V2"""
+        """Set stop_loss_val via Direct API V2 Plan Order"""
         try:
             clean_symbol = symbol.replace("/", "").split(":")[0]
             if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
             
-            path = "/api/v2/mix/order/place-tpsl-order"
+            path = "/api/v2/mix/order/place-plan-order"
             method = "POST"
             
-            # Payload super bersih sesuai dokumentasi TPSL V2
+            # SL Side adalah kebalikan dari Entry Side
+            sl_side = "sell" if side.lower() in ['buy', 'long'] else "buy"
+            
             payload = {
                 "symbol": clean_symbol,
                 "productType": "USDT-FUTURES",
                 "marginCoin": "USDT",
+                "marginMode": "isolated",
+                "planType": "loss_plan",
                 "triggerPrice": str(sl_price),
                 "triggerType": "mark_price",
-                "holdSide": "long" if side.lower() in ['buy', 'long'] else "short",
-                "tpslType": "sl",
-                "orderType": "market"
+                "side": sl_side,
+                "orderType": "market",
+                "size": str(size),
+                "reduceOnly": "true"
             }
             
             res = self._v3_request(method, path, body=payload)
             if res.get('code') == '00000':
-                print(f"[SL OK] TPSL Direct API set at {sl_price}")
+                print(f"[SL OK] Direct API SL set at {sl_price}")
             else:
                 print(f"[SL FAIL] {res}")
         except Exception as e:
             print(f"[SL ERROR] {e}")
 
     def _set_tp_ccxt(self, symbol, side, size, tp_price):
-        """Set take_profit_val via Clean Dedicated TPSL API V2"""
+        """Set take_profit_val via Direct API V2 Plan Order"""
         try:
             clean_symbol = symbol.replace("/", "").split(":")[0]
             if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
 
-            path = "/api/v2/mix/order/place-tpsl-order"
+            path = "/api/v2/mix/order/place-plan-order"
             method = "POST"
+            
+            # TP Side adalah kebalikan dari Entry Side
+            tp_side = "sell" if side.lower() in ['buy', 'long'] else "buy"
             
             payload = {
                 "symbol": clean_symbol,
                 "productType": "USDT-FUTURES",
                 "marginCoin": "USDT",
+                "marginMode": "isolated",
+                "planType": "profit_plan",
                 "triggerPrice": str(tp_price),
                 "triggerType": "mark_price",
-                "holdSide": "long" if side.lower() in ['buy', 'long'] else "short",
-                "tpslType": "tp",
-                "orderType": "market"
+                "side": tp_side,
+                "orderType": "market",
+                "size": str(size),
+                "reduceOnly": "true"
             }
             
             res = self._v3_request(method, path, body=payload)
             if res.get('code') == '00000':
-                print(f"[TP OK] TPSL Direct API set at {tp_price}")
+                print(f"[TP OK] Direct API TP set at {tp_price}")
             else:
                 print(f"[TP FAIL] {res}")
         except Exception as e:
