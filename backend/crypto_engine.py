@@ -32,9 +32,10 @@ from notifier import send_telegram_message, format_trade_message
 from bitget_executor import BitgetExecutor
 
 #  KONFIGURASI AGRESIF UNTUK PROFIT CEPAT
-MAX_POSITIONS        = 3      # 3 posisi sekaligus (diversifikasi)
-RISK_PER_TRADE_USDT  = 0.50   # Tetap aman, $0.50 per trade
-FIXED_MARGIN_USDT    = 3.0    # Batas maksimal modal per trade
+#  KONFIGURASI SNIPER (v31.8)
+MAX_POSITIONS        = 1      # FOKUS: 1 trade terbaik sampai selesai
+RISK_PER_TRADE_USDT  = 0.50   
+FIXED_MARGIN_USDT    = 5.0    # Pakai $5 biar berasa profitnya di saldo $10
 SCAN_INTERVAL        = 2      # Scan lebih cepat (2 detik)
 COOLDOWN_AFTER_TRADE = 30     # 30 detik cooldown saja (cepat masuk lagi)
 NEWS_REPORT_INTERVAL = 600
@@ -47,7 +48,7 @@ HUNTER_ATR_SL_MULT   = 0.8    # Optimized from 700+ scenarios
 HUNTER_ATR_TP_MULT   = 2.0    # Optimized for massive Profit Factor
 FVG_GAP_THRESHOLD    = 0.005  
 SCALP_TP_PCT         = 0.08   
-SCALP_SL_PCT         = 0.015  
+SCALP_SL_PCT         = 0.015  # 1.5% price = 15% PnL (Strict SL v31.8)
 # ─────────────────────────────────────────
 MIN_PUMP_SCORE       = 15     # Lebih rendah, lebih banyak sinyal
 MIN_TECH_SCORE       = 20     # Lebih rendah, lebih banyak sinyal
@@ -1077,10 +1078,12 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl
     
     if side == "buy":
         take_profit_val = base_p + (atr * final_tp_m)
-        stop_loss_val = base_p - (atr * final_sl_m)
+        max_sl_dist = base_p * SCALP_SL_PCT
+        stop_loss_val = base_p - min(atr * final_sl_m, max_sl_dist)
     else:
         take_profit_val = base_p - (atr * final_tp_m)
-        stop_loss_val = base_p + (atr * final_sl_m)
+        max_sl_dist = base_p * SCALP_SL_PCT
+        stop_loss_val = base_p + min(atr * final_sl_m, max_sl_dist)
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
 
