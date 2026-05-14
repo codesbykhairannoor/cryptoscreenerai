@@ -110,19 +110,49 @@ class BitgetExecutor:
         except:
             return {"code": "timeout"}
 
+    def _v2_private_request(self, method, path, query="", body=None):
+        """Signed V2 Request for Classic/Mix accounts"""
+        ts = str(int(time.time() * 1000 + self.time_offset))
+        request_path = path
+        body_str = json.dumps(body) if body else ""
+        
+        # V2 Signing: timestamp + method + path + query + body
+        message = ts + method.upper() + request_path + (f"?{query}" if query else "") + body_str
+        mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
+        sign = base64.b64encode(mac.digest()).decode('utf8')
+        
+        headers = {
+            "ACCESS-KEY": self.api_key, "ACCESS-SIGN": sign, "ACCESS-TIMESTAMP": ts,
+            "ACCESS-PASSPHRASE": self.passphrase, "Content-Type": "application/json"
+        }
+        
+        url = f"https://api.bitget.com{request_path}" + (f"?{query}" if query else "")
+        try:
+            res = requests.request(method, url, headers=headers, data=body_str if body else None, timeout=15)
+            return res.json()
+        except:
+            return {"code": "timeout"}
+
     def detect_account_mode(self):
         """Internal check to confirm if account is UTA or Classic"""
         try:
-            res = self._v3_request("GET", "/api/v3/account/assets", "category=USDT-FUTURES")
+            # Coba panggil V2 Mix Account (Standar akun modern/classic)
+            res = self._v2_private_request("GET", "/api/v2/mix/account/accounts", "productType=USDT-FUTURES")
             if res.get('code') == '00000':
-                self.is_uta = True
-                print("[MODE] Account verified as Bitget V3 UTA.")
+                self.is_uta = False # Berhasil panggil Mix = Classic/Mix mode
+                print("[MODE] Account verified as Bitget V2 Classic (Mix).")
             else:
-                self.is_uta = False
-                print("[MODE] Account verified as Bitget Classic (Mix).")
+                # Jika gagal, mungkin UTA
+                res = self._v3_request("GET", "/api/v3/account/assets", "category=USDT-FUTURES")
+                if res.get('code') == '00000':
+                    self.is_uta = True
+                    print("[MODE] Account verified as Bitget V3 UTA.")
+                else:
+                    self.is_uta = False
+                    print("[MODE] Account fallback to Bitget Classic.")
         except:
             self.is_uta = False
-            print("[MODE] Account fallback to Bitget Classic (Mix).")
+            print("[MODE] Account fallback to Bitget Classic.")
 
     def _clean_symbol(self, s):
         if not s: return ""
@@ -131,23 +161,26 @@ class BitgetExecutor:
         return s.strip()
 
     def get_balance(self):
-        """Unified Balance Fetcher (WS Priority)"""
+        """Unified Balance Fetcher (V2 Direct Priority)"""
         try:
+            # 1. WS CACHE PRIORITY
             from shared_state import state
-            # 1. WS CACHE PRIORITY (Full WebSocket Mode)
             if state.balances and time.time() - state.last_acc_update < 60:
                 bal = state.balances.get('USDT', {})
                 if bal:
                     return {'total': float(bal.get('equity', 0)), 'free': float(bal.get('available', 0))}
 
-            # 2. REST SEED/FALLBACK
-            if self.is_uta:
-                data = self._v3_request("GET", "/api/v3/account/assets", "category=USDT-FUTURES")
-                if data.get('code') == '00000' and data.get('data'):
-                    for a in data['data'].get('list', []):
-                        if a.get('marginCoin') == 'USDT':
-                            return {'total': float(a.get('equity', 0)), 'free': float(a.get('available', 0))}
-            
+            # 2. DIRECT V2 REQUEST (Fix for $0 reporting)
+            res = self._v2_private_request("GET", "/api/v2/mix/account/accounts", "productType=USDT-FUTURES")
+            if res.get('code') == '00000' and res.get('data'):
+                for acc in res['data']:
+                    if acc.get('marginCoin') == 'USDT':
+                        return {
+                            'total': float(acc.get('equity', 0)), 
+                            'free': float(acc.get('available', 0))
+                        }
+
+            # 3. REST FALLBACK
             bal = self.exchange.fetch_balance({'type': 'swap'})
             return {
                 'total': float(bal.get('total', {}).get('USDT', 0)),
