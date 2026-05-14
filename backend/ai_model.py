@@ -149,20 +149,41 @@ def analyze_and_sort(raw_data):
         elif vol >= 2_000_000:   score += 4    # $2M+
 
         # -- 3. POSISI HARGA DI RANGE (max 25 poin) --
-        # Harga di 10-45% dari range = early entry, belum terlambat
         if high > low and price > 0:
             pos = (price - low) / (high - low) * 100
-            if 10 <= pos <= 35:   score += 25   # Dekat bottom, ideal long
-            elif 35 < pos <= 50:  score += 18   # Di bawah tengah
-            elif 50 < pos <= 65:  score += 10   # Di atas tengah
-            elif pos > 85:        score -= 5    # Dekat puncak, risky
+            
+            # Jika Volume Rendah: Cari koin di bawah (Mean Reversion)
+            # Jika Volume MELEDAK: Hajar koin di atas (Breakout Momentum)
+            rvol_val = 1.0
+            try:
+                from shared_state import state
+                rvol_val = state.rt_rvol.get(str(row.get('symbol', '')), 1.0)
+            except Exception: pass
 
-        # -- 4. MOMENTUM AWAL (max 20 poin) --
-        # Koin yang baru mulai bergerak = early entry
+            if rvol_val >= 3.0: # MOMENTUM MODE!
+                if pos >= 80:     score += 25   # BREAKOUT! Hajar terus!
+                elif 50 <= pos < 80: score += 15
+            else: # NORMAL MODE (Cari yang murah)
+                if 10 <= pos <= 35:   score += 25   # Dekat bottom, ideal long
+                elif 35 < pos <= 50:  score += 18   
+                elif pos > 85:        score -= 10   # Terlalu tinggi untuk volume rendah
+
+        # -- 4. MOMENTUM & VELOCITY (max 40 poin) --
+        # Koin yang volumenya meledak (RVOL) adalah prioritas utama (The Gainer Hunter)
+        try:
+            from shared_state import state
+            sym = str(row.get('symbol', ''))
+            rvol = state.rt_rvol.get(sym, 1.0) # Relative Volume dari early_signal
+            if rvol >= 5.0:    score += 40   # Volume meledak parah!
+            elif rvol >= 3.0:  score += 30   # Volume sangat tinggi
+            elif rvol >= 2.0:  score += 15   # Volume mulai masuk
+        except Exception:
+            pass
+
         if 1.5 <= pct <= 6:    score += 20   # Sweet spot
         elif 0.5 <= pct < 1.5: score += 12   # Mulai bergerak
-        elif 6 < pct <= 12:    score += 8    # Sudah bergerak, masih bisa
-        elif pct < 0:          score += 5    # Turun = reversal candidate
+        elif 6 < pct <= 12:    score += 8    # Sudah bergerak
+        elif pct < 0:          score += 5    # Reversal candidate
 
         # -- BONUS: Whale + OBI dari WebSocket --
         try:
@@ -257,10 +278,9 @@ def analyze_and_sort(raw_data):
 
     df['dump_score'] = df.apply(dump_score, axis=1)
 
-    # Gabungkan: setiap koin punya pump_score dan dump_score
-    # Sort berdasarkan max(pump_score, dump_score) untuk dapat kandidat terbaik
+    # PREDATOR TANPA BATAS: Pantau semua koin yang masuk kriteria (head(80) untuk stability)
     df['best_score'] = df[['pump_score', 'dump_score']].max(axis=1)
-    df_sorted = df.sort_values(by='best_score', ascending=False).head(30)
+    df_sorted = df.sort_values(by='best_score', ascending=False).head(80)
 
     # Log top 5
     print(f"[PUMP PREDICTOR] Top 5 candidates:")

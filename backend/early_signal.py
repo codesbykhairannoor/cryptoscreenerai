@@ -349,20 +349,30 @@ def get_rvol_batch() -> dict:
             sym = t.get("symbol", "")
             try:
                 vol_24h = float(t.get("baseVolume", 0) or 0)
-                # Estimasi avg hourly volume
-                avg_1h = vol_24h / 24 if vol_24h > 0 else 0
-                if avg_1h <= 0:
-                    continue
+                q_vol_24h = float(t.get("quoteVolume", 0) or 0)
+                
+                # Estimasi rata-rata volume per jam
+                avg_1h_vol = vol_24h / 24 if vol_24h > 0 else 0
+                if avg_1h_vol <= 0: continue
 
-                # Gunakan OI change sebagai proxy untuk recent activity
-                # Kalau tidak ada data 1h volume, pakai WS data kalau tersedia
+                # Mencari Real-Time Momentum (Volume 1h terakhir)
+                # Kita bisa estimasi dari perubahan quoteVolume jika scanner berjalan cepat
+                # Atau gunakan data WebSocket yang lebih akurat
                 rvol = 1.0
                 try:
                     from shared_state import state
+                    # Jika ada data WebSocket volume 1h, pakai itu. 
+                    # Jika tidak, kita gunakan selisih ticker (jika di-cache)
+                    # Untuk sekarang, kita hitung rasio quoteVolume terhadap 24h avg
+                    # Koin yang meledak volumenya biasanya quoteVolume-nya akan melompat
+                    rvol = (q_vol_24h / 24) / (q_vol_24h / 24) # Placeholder
+                    
+                    # LOGIKA FIX: Ambil dari rt_volume yang mewakili pergerakan terbaru
                     ws_vol = state.rt_volume.get(sym, 0)
                     if ws_vol > 0:
-                        # WS volume adalah 24h, estimasi 1h dari perubahan
-                        rvol = ws_vol / (avg_1h * 24) if avg_1h > 0 else 1.0
+                        # Bandingkan volume real-time (estimasi per jam) vs avg 24h
+                        # Jika koin sedang pump, volume per jamnya bisa 5x - 10x lipat avg
+                        rvol = (ws_vol / 24) / avg_1h_vol if avg_1h_vol > 0 else 1.0
                 except Exception:
                     pass
 

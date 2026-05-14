@@ -53,12 +53,12 @@ MIN_PUMP_SCORE       = 15     # Lebih rendah, lebih banyak sinyal
 MIN_TECH_SCORE       = 20     # Lebih rendah, lebih banyak sinyal
 
 #  WHALE OBSERVER CONFIG (Legacy/Reference)
-MIN_APPEARANCES      = 1      # Hanya butuh 1 appearance untuk cepat masuk!
-MIN_AVG_SCORE        = 30     # Rata-rata combined score rendah (lebih banyak sinyal)
+MIN_APPEARANCES      = 1
+MIN_AVG_SCORE        = 30
 CONSISTENCY_BONUS    = 1.15
 MOMENTUM_BONUS       = 1.10
-REPEAT_LOSS_BLACKLIST_HOURS = 8
 REPEAT_LOSS_MAX_COUNT       = 2
+COIN_PENALTY_HOURS          = 24  # Hukuman 24 jam untuk koin bandel
 
 # OI & Funding thresholds
 OI_SURGE_THRESHOLD   = 0.05
@@ -956,12 +956,26 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
     - AI Bias = LONG jika pump_score >= dump_score
     - AI Bias = SHORT jika dump_score > pump_score
     """
-    # ── BLACKROCK INSTITUTIONAL SCORER (v26.85) ──
+    # ── BLACKROCK INSTITUTIONAL SCORER (v26.90) ──
     # WAJIB IKUTI ARAH AI!
     ai_bias = "LONG" if pump_sc >= dump_sc else "SHORT"
     
+    # Ambil data Momentum dari Tech
+    rvol = tech.get('rvol', 1.0)
+    oi_pct = tech.get('oi_change_pct', 0)
+    
     long_score = 0
     short_score = 0
+    
+    # 1. MOMENTUM & VELOCITY BOOST (The Gainer/Looser Hunter)
+    # Jika volume meledak (RVOL > 3), kita abaikan RSI dan hajar momentum!
+    if rvol >= 3.0:
+        if ai_bias == "LONG": long_score += 40
+        else: short_score += 40
+    
+    if oi_pct >= 20:
+        if ai_bias == "LONG": long_score += 30
+        else: short_score += 30
     
     obi = tech.get('obi', 0)
     ob  = tech.get('order_block', 'NONE')
@@ -997,11 +1011,17 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
     if ob == 'BULLISH_OB': long_score += 15
     elif ob == 'BEARISH_OB': short_score += 15
 
-    # 4. RSI & VWAP (Hanya sebagai filter tambahan, bukan penentu utama)
-    if rsi < 35: long_score += 10
-    if rsi > 65: short_score += 10
-    if vwap_dist < -1.0: long_score += 10
-    if vwap_dist > 1.0: short_score += 10
+    # 4. RSI & VWAP (DIBATALKAN JIKA RVOL TINGGI / MOMENTUM RIDER)
+    # Kalau koin lagi jadi Top Gainer, RSI 80 pun tetap dihajar BUY!
+    if rvol < 2.5:
+        if rsi < 35: long_score += 10
+        if rsi > 65: short_score += 10
+        if vwap_dist < -1.0: long_score += 10
+        if vwap_dist > 1.0: short_score += 10
+    else:
+        # Momentum Rider: RSI searah trend justru bagus
+        if ai_bias == "LONG" and rsi > 50: long_score += 15
+        if ai_bias == "SHORT" and rsi < 50: short_score += 15
 
     # 5. ANTI-FALLING-KNIFE & STRICT CANDLE CONFIRMATION
     is_candle_green = tech.get('is_bullish', False)
@@ -1038,20 +1058,23 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
 
 #  CORE: HITUNG take_profit_val/stop_loss_val BERBASIS PnL TARGET 
 #  CORE: HITUNG take_profit_val/stop_loss_val BERBASIS VOLATILITAS (ATR)
-def _calc_tp_sl(mark_price: float, side: str, tech: dict) -> tuple[float, float]:
+def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    Institutional Hunter v26.0: Precision ATR-based take_profit_val/stop_loss_val
+    Institutional Hunter v28.1: Precision ATR-based TP/SL with Dynamic Overrides
     """
     atr = tech.get('atr', mark_price * 0.02)
-    # Gunakan Limit Price sebagai dasar jika ada
     base_p = tech.get('limit_price', mark_price)
     
+    # Gunakan multiplier dari input atau default global
+    final_tp_m = tp_m if tp_m is not None else HUNTER_ATR_TP_MULT
+    final_sl_m = sl_m if sl_m is not None else HUNTER_ATR_SL_MULT
+    
     if side == "buy":
-        take_profit_val = base_p + (atr * HUNTER_ATR_TP_MULT)
-        stop_loss_val = base_p - (atr * HUNTER_ATR_SL_MULT)
+        take_profit_val = base_p + (atr * final_tp_m)
+        stop_loss_val = base_p - (atr * final_sl_m)
     else:
-        take_profit_val = base_p - (atr * HUNTER_ATR_TP_MULT)
-        stop_loss_val = base_p + (atr * HUNTER_ATR_SL_MULT)
+        take_profit_val = base_p - (atr * final_tp_m)
+        stop_loss_val = base_p + (atr * final_sl_m)
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
 
@@ -1232,17 +1255,18 @@ def run_crypto_engine():
                                     if k not in _loss_tracker:
                                         _loss_tracker[k] = []
                                     _loss_tracker[k].append(v)
-                                    _consec_losses += 1
-                                    print(f"[CONSEC LOSS] Loss ke-{_consec_losses} ({k}) | PnL: {last_pnl}%")
-                                    if _consec_losses >= CONSEC_LOSS_LIMIT:
-                                        pause_minutes = CONSEC_LOSS_PAUSE_MIN * (2 ** (_consec_losses - CONSEC_LOSS_LIMIT))
-                                        pause_minutes = min(pause_minutes, 240)
-                                        _consec_pause_until = now + (pause_minutes * 60)
-                                        print(f"[CONSEC LOSS] {_consec_losses}x loss! Pause {pause_minutes} menit.")
-                                        _consec_losses = CONSEC_LOSS_LIMIT
+                                    
+                                    # LOGIKA PER-KOIN: Cek berapa kali loss beruntun DI KOIN INI
+                                    coin_losses = len(_loss_tracker[k])
+                                    print(f"[COIN LOSS] {k} loss ke-{coin_losses} | PnL: {last_pnl}%")
+                                    
+                                    if coin_losses >= REPEAT_LOSS_MAX_COUNT:
+                                        penalty_until = now + (COIN_PENALTY_HOURS * 3600)
+                                        COIN_STATS[k] = {'locked_until': penalty_until}
+                                        print(f"[PENALTY BOX] {k} rugi {coin_losses}x! Dibuang selama {COIN_PENALTY_HOURS} jam.")
                                 else:
-                                    print(f"[WIN TRACKER] {k} take profit ({last_pnl}%)! Reset consec loss.")
-                                    _consec_losses = 0
+                                    print(f"[WIN TRACKER] {k} take profit ({last_pnl}%)! Reset data koin.")
+                                    if k in _loss_tracker: del _loss_tracker[k]
                             _recently_exited[k] = v
                         else:
                             del _state.recently_exited[k]
@@ -1388,8 +1412,9 @@ def run_crypto_engine():
                     spread = _ws_st.rt_spread.get(sym_ws, 0)
                     if spread > 0.1: global_boost -= 5
                     early_boost = early_combined.get(sym_ws, 0)
-                    if early_boost > 0 and side == "buy":
-                        global_boost += min(early_boost, 20)
+                    if early_boost > 0:
+                        # SYMMETRIC BOOST: Mau Buy atau Sell tetap dapat tenaga dari OI Surge!
+                        global_boost += min(early_boost, 25)
                 except Exception:
                     pass
 
@@ -1583,9 +1608,35 @@ def run_crypto_engine():
                 rsi        = top['rsi']
                 vwap_dist  = top['vwap_dist']
 
-                # Hitung take_profit_val/stop_loss_val (Inisialisasi awal untuk hindari free variable error)
+                # --- WIN PATTERN v31.0 (The Balanced Predator) ---
+                from shared_state import state as _ws_st
+                sym_ws = f"{clean_base}USDT"
+                rvol = _ws_st.rt_rvol.get(sym_ws, 1.0)
+                
+                # 1. FAST MOMENTUM: EMA 9 > EMA 21 (Confirmation)
+                ema_9 = tech.get('ema_9', mark_price)
+                ema_21 = tech.get('ema_21', mark_price)
+                if side == "buy" and ema_9 < ema_21:
+                    return None
+                if side == "sell" and ema_9 > ema_21:
+                    return None
+
+                # 2. JUNK FILTER: ATR > 5% Price
+                atr = tech.get('atr', 0)
+                if atr > (mark_price * 0.05):
+                    return None
+
+                # 3. BALANCED THRESHOLD (v31.0)
+                threshold = 75
+                if combined_score >= threshold and rvol >= 1.5:
+                    sl_m = 1.5
+                    tp_m = 5.0
+                else:
+                    return None
+                
+                # Hitung take_profit_val/stop_loss_val dengan multiplier dinamis
                 take_profit_val, stop_loss_val = 0.0, 0.0
-                take_profit_val, stop_loss_val = _calc_tp_sl(mark_price, side, tech)
+                take_profit_val, stop_loss_val = _calc_tp_sl(mark_price, side, tech, tp_m=tp_m, sl_m=sl_m)
 
                 # Hitung size (Strict 5 USDT v9.8)
                 amount = executor.get_max_available(symbol, leverage=LEVERAGE, risk_usdt=FIXED_MARGIN_USDT)
@@ -1643,6 +1694,9 @@ def run_crypto_engine():
                             f"  [5M-PRECISION] Signal:{tech.get('entry_signal_5m','?')}({tech.get('entry_quality_5m',0)}) | Zone:{tech.get('zone_freshness_5m','?')}",
                             flush=True
                         )
+
+                        # --- SETTINGAN DEWA v28.0 (Rank #1 Grid Search) ---
+                        # TSL dihandle oleh executor (BitgetExecutor) atau manual monitoring
 
                         # KIRIM NOTIF TELEGRAM
                         tg_data = {
