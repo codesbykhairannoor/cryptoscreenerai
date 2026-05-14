@@ -1548,7 +1548,9 @@ def run_crypto_engine():
                     return None
 
                 # 3. BALANCED THRESHOLD (v31.0)
-                threshold = 75
+                # v39.0: Jika Holy Grail (Tech 100), skor 60 sudah cukup untuk hajar!
+                is_holy = (tech.get('rsi', 50) > 65 and tech.get('rvol', 0) > 2.0)
+                threshold = 60 if is_holy else 75
                 if combined_score >= threshold and rvol >= 1.5:
                     sl_m = 1.5
                     tp_m = 5.0
