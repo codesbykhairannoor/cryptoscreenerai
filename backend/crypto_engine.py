@@ -971,7 +971,7 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
         if best_side == "sell" and not SELL_TRADING_ENABLED:
             return None, "SELL_DISABLED", 0
             
-        print(f"[HOLY GRAIL 90%] {tech['symbol']} FIRING! RSI: {rsi:.1f} | RVOL: {rvol:.1f}x | ATR: {atr_pct:.2f}%", flush=True)
+        print(f"[HOLY GRAIL 90%] FIRING! RSI: {rsi:.1f} | RVOL: {rvol:.1f}x | ATR: {atr_pct:.2f}%", flush=True)
         return best_side, best_reason, best_score
         
     return None, "WAITING_FOR_HOLY_GRAIL", 0
