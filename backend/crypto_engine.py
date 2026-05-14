@@ -960,63 +960,75 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     - Tidak boleh SELL kalau 4h trend BULLISH
     - Exception: kalau ada stop hunt atau demand/supply zone yang sangat kuat
     """
-    # ── AGGRESSIVE WEIGHTED SCORER (v26.52) ──
-    # Menghitung akumulasi kekuatan teknikal
+    # ── BLACKROCK INSTITUTIONAL SCORER (v26.80) ──
     long_score = 0
     short_score = 0
     
     obi = tech.get('obi', 0)
     ob  = tech.get('order_block', 'NONE')
-    fvg = tech.get('fvg', 'NONE')
+    trend_1h = tech.get('trend_1h', 'NEUTRAL')
     trend_4h = tech.get('trend_4h', 'NEUTRAL')
-    
-    # 1. OBI Score (Kekuatan Bid/Ask)
-    if obi > 0.15:  long_score += 25
-    elif obi < -0.15: short_score += 25
-    
-    # 1. TREND FILTER (EMA 200) - CORE OF v26.70
-    ema_200 = tech.get('ema_200', mark_price)
-    is_uptrend = mark_price > ema_200
-    
-    # 2. RSI (Aggressive but balanced)
-    if is_uptrend:
-        if 40 <= rsi <= 65: long_score += 25
-        if rsi < 30:        long_score += 15 # Oversold bounce
-    else:
-        if 45 <= rsi <= 75: short_score += 25
-        if rsi > 70:        short_score += 15 # Overbought rejection
-    
-    # 3. VWAP Position
-    if vwap_dist < -1.5: long_score += 20 # Underpriced
-    elif vwap_dist < 0:  long_score += 10
-    if vwap_dist > 1.5:  short_score += 20 # Overpriced
-    elif vwap_dist > 0:  short_score += 10
-    
-    # 4. SMC Patterns (High Value)
-    if ob == 'BULLISH_OB':  long_score += 35
-    if ob == 'BEARISH_OB': short_score += 35
-    if fvg == 'BULLISH_FVG': long_score += 20
-    if fvg == 'BEARISH_FVG': short_score += 20
-    if tech.get('mss_bullish'): long_score += 25
-    if tech.get('mss_bearish'): short_score += 25
-    
-    # 5. HTF Trend Alignment
-    if trend_4h == "BULLISH": long_score += 15
-    elif trend_4h == "BEARISH": short_score += 15
+    dsz = tech.get('dsz_status', 'NONE')
+    liq_bull = tech.get('liq_grab_bull', False)
+    liq_bear = tech.get('liq_grab_bear', False)
+    sweep_bull = tech.get('is_bull_sweep', False)
+    sweep_bear = tech.get('is_bear_sweep', False)
+    mss_bull = tech.get('mss_bullish', False)
+    mss_bear = tech.get('mss_bearish', False)
 
-    # 6. Anti-Falling-Knife (Safety)
-    if tech.get('still_falling') and long_score > 0: long_score -= 30
-    if tech.get('still_rising') and short_score > 0: short_score -= 30
+    # 1. INSTITUTIONAL LIQUIDITY & ZONES (Bobot Raksasa)
+    if dsz == 'IN_DEMAND_ZONE' or liq_bull or sweep_bull:
+        long_score += 40
+        if mss_bull: long_score += 20  # Konfirmasi pembalikan arah
+    
+    if dsz == 'IN_SUPPLY_ZONE' or liq_bear or sweep_bear:
+        short_score += 40
+        if mss_bear: short_score += 20
 
-    # PILIH ARAH TERBAIK
-    if long_score >= short_score and long_score >= 30:
+    # 2. HTF TREND ALIGNMENT (Wajib searah paus)
+    if trend_4h == 'BULLISH' or trend_1h == 'BULLISH':
+        long_score += 20
+    if trend_4h == 'BEARISH' or trend_1h == 'BEARISH':
+        short_score += 20
+
+    # 3. OBI & ORDER FLOW
+    if obi > 0.15:  long_score += 15
+    elif obi < -0.15: short_score += 15
+    
+    if ob == 'BULLISH_OB': long_score += 15
+    elif ob == 'BEARISH_OB': short_score += 15
+
+    # 4. RSI & VWAP (Hanya sebagai filter tambahan, bukan penentu utama)
+    if rsi < 35: long_score += 10
+    if rsi > 65: short_score += 10
+    if vwap_dist < -1.0: long_score += 10
+    if vwap_dist > 1.0: short_score += 10
+
+    # 5. ANTI-FALLING-KNIFE & STRICT CANDLE CONFIRMATION
+    # Jangan tangkap pisau jatuh. WAJIB tunggu konfirmasi candle searah!
+    is_candle_green = tech.get('is_bullish', False)
+    is_candle_red = tech.get('is_bearish', False)
+    
+    if tech.get('still_falling') and not (liq_bull or sweep_bull or dsz == 'IN_DEMAND_ZONE'): 
+        long_score -= 50
+    if tech.get('still_rising') and not (liq_bear or sweep_bear or dsz == 'IN_SUPPLY_ZONE'): 
+        short_score -= 50
+
+    # SYARAT MUTLAK: Gak boleh Buy kalau candle masih merah pekat, Gak boleh Sell kalau masih hijau
+    if not is_candle_green: 
+        long_score -= 50  # Bunuh skor Buy
+    if not is_candle_red:
+        short_score -= 50 # Bunuh skor Sell
+
+    # PILIH ARAH TERBAIK (Mode Sniper: Min Score 60)
+    if long_score >= short_score and long_score >= 60:
         best_side = "buy"
         best_score = min(100, long_score)
-        best_reason = "BULLISH_MOMENTUM" if not ob else f"SMC_CONFIRMED_{ob}"
-    elif short_score > long_score and short_score >= 30 and SELL_TRADING_ENABLED:
+        best_reason = "INSTITUTIONAL_DEMAND" if dsz == 'IN_DEMAND_ZONE' else "LIQUIDITY_SWEEP_LONG"
+    elif short_score > long_score and short_score >= 60 and SELL_TRADING_ENABLED:
         best_side = "sell"
         best_score = min(100, short_score)
-        best_reason = "BEARISH_MOMENTUM" if not ob else f"SMC_CONFIRMED_{ob}"
+        best_reason = "INSTITUTIONAL_SUPPLY" if dsz == 'IN_SUPPLY_ZONE' else "LIQUIDITY_SWEEP_SHORT"
     else:
         return None, "NO_SIGNAL", 0
     
