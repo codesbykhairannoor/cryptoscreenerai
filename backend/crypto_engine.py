@@ -1007,7 +1007,7 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
         best_side = "buy"
         best_score = min(100, long_score)
         best_reason = "BULLISH_MOMENTUM" if not ob else f"SMC_CONFIRMED_{ob}"
-    elif short_score > long_score and short_score >= 30:
+    elif short_score > long_score and short_score >= 30 and SELL_TRADING_ENABLED:
         best_side = "sell"
         best_score = min(100, short_score)
         best_reason = "BEARISH_MOMENTUM" if not ob else f"SMC_CONFIRMED_{ob}"
