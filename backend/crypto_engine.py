@@ -1305,7 +1305,7 @@ def run_crypto_engine():
                 continue
 
             # Bersihkan loss tracker
-            cutoff = now - (REPEAT_LOSS_BLACKLIST_HOURS * 3600)
+            cutoff = now - (COIN_PENALTY_HOURS * 3600)
             for base in list(_loss_tracker.keys()):
                 _loss_tracker[base] = [t for t in _loss_tracker[base] if t > cutoff]
                 if not _loss_tracker[base]:
