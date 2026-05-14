@@ -716,6 +716,7 @@ def get_technical_indicators(symbol, interval="15m"):
         return {
             "mark_price": mark_price,
             "rsi": rsi_val,
+            "rvol": round(last_candle['vol'] / avg_vol, 2) if avg_vol > 0 else 1.0,
             "atr": atr_val,
             "candle_pattern": pattern,
             "is_liquidity_sweep": is_bull_sweep or is_bear_sweep,

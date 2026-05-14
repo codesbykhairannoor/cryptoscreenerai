@@ -1412,13 +1412,14 @@ def run_crypto_engine():
                         reject = f"BTC_BULL"
 
                 # Print log per koin
+                rvol_val = tech.get('rvol', 0)
                 status = "PASS" if reject is None else f"SKIP:{reject}"
                 print(
                     f"[EVAL] {clean_base:<10} {(side or 'N/A'):<5} "
                     f"Pump:{pump_sc:.0f} Tech:{tech_score} Score:{combined_score} | "
-                    f"RSI:{rsi:.0f} VWAP:{vwap_dist:+.1f}% OBI:{obi:+.2f} "
+                    f"RSI:{rsi:.0f} RVOL:{rvol_val:.1f} ATR%:{atr_pct:.2f} | "
+                    f"VWAP:{vwap_dist:+.1f}% OBI:{obi:+.2f} "
                     f"OI:{oi:.0f} FR:{fr:.5f} | "
-                    f"1h:{trend1h[:4]} 4h:{trend4h[:4]} | "
                     f"[{sig_str}] | {status}",
                     flush=True
                 )
