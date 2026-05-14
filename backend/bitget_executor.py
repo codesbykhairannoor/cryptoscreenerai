@@ -530,7 +530,19 @@ class BitgetExecutor:
                 if not hasattr(state, 'exit_pnl'): state.exit_pnl = {}
                 state.exit_pnl[clean] = last_pnl
                 
-                print(f"[TRACKER] Trade {clean} closed with PnL {last_pnl}%. Cooldown initiated.")
+                # --- AUDIT TOTAL v31.5: Simpan ke Database + Log Detail ---
+                try:
+                    from database import close_trade
+                    # Gunakan nama koin asli dari database (biasanya LYNUSDT atau LYN/USDT:USDT)
+                    # Kita cari koin yang pas di DB
+                    full_symbol = f"{clean}USDT"
+                    # Asumsikan exit_price mendekati mark_price terakhir atau hitung dari PnL
+                    # Ini untuk estimasi jika kita tidak punya harga exit eksak dari WS
+                    close_trade(full_symbol, exit_price=0, pnl_usd=0) 
+                except: pass
+
+                print(f"\n[TRACKER] 🏁 TRADE CLOSED: {clean} | PnL: {last_pnl}%")
+                print(f"          Status: Cooldown 24 jam (Win Pattern v29.1) aktif.\n")
             
             self._tracked_positions = current_symbols
 

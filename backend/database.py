@@ -64,6 +64,10 @@ def init_db():
         ("pnl_pct", "DOUBLE PRECISION DEFAULT 0"),
         ("score", "INTEGER DEFAULT 0"),
         ("reason", "TEXT DEFAULT ''"),
+        ("entry_rsi", "DOUBLE PRECISION DEFAULT 50"),
+        ("entry_vwap", "DOUBLE PRECISION DEFAULT 0"),
+        ("entry_rvol", "DOUBLE PRECISION DEFAULT 1.0"),
+        ("entry_sentiment", "TEXT DEFAULT 'NEUTRAL'"),
         ("session", "TEXT DEFAULT ''"),
         ("closed_at", "BIGINT DEFAULT 0"),
     ]
@@ -90,14 +94,11 @@ def init_db():
 def log_trade(symbol, entry, tp, sl, market='crypto', side='buy',
               lot_size=0, score=0, reason='', session=''):
     """
-    Log trade baru ke database.
-    Setiap trade SELALU disimpan — tidak ada cek duplikat yang memblok.
-    Duplikat diizinkan karena bot bisa punya multiple posisi untuk symbol yang sama.
+def log_trade(symbol, entry, tp, sl, market='crypto', side='buy', lot_size=0, score=0, reason='', session=None, 
+              rsi=50.0, vwap=0.0, rvol=1.0, sentiment='NEUTRAL'):
     """
-    entry = float(entry) if entry is not None else 0.0
-    tp    = float(tp)    if tp    is not None else 0.0
-    sl    = float(sl)    if sl    is not None else 0.0
-
+    Simpan trade baru ke database dengan detail teknikal lengkap.
+    """
     # Deteksi session saat ini
     if not session:
         import datetime
@@ -117,11 +118,13 @@ def log_trade(symbol, entry, tp, sl, market='crypto', side='buy',
         cursor.execute(f'''
             INSERT INTO trades
                 (symbol, entry_price, tp_price, sl_price, status, market, side,
-                 lot_size, score, reason, session, timestamp)
-            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 'PENDING', {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                 lot_size, score, reason, session, timestamp, 
+                 entry_rsi, entry_vwap, entry_rvol, entry_sentiment)
+            VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 'PENDING', {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 
+                    {placeholder}, {placeholder}, {placeholder}, {placeholder})
         ''', (symbol, entry, tp, sl, market, side,
               float(lot_size), int(score), str(reason)[:200], session,
-              int(time.time() * 1000)))
+              int(time.time() * 1000), float(rsi), float(vwap), float(rvol), str(sentiment)))
         conn.commit()
         cursor.close()
         conn.close()
