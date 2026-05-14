@@ -532,35 +532,61 @@ class BitgetExecutor:
             print(f"[TP ERROR] {e}")
 
     def _set_sl_tp_ccxt_v2(self, symbol, side, amount, sl_price=None, tp_price=None):
-        """Set SL/TP using CCXT logic (Assuming markets are already injected/loaded)"""
-        tp_side = 'sell' if side.lower() in ['buy', 'long'] else 'buy'
+        """Set SL/TP using Stable V1 API (Separate Orders)"""
+        clean_symbol = symbol.replace("/", "").split(":")[0]
+        if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
+        
+        # SL/TP Side adalah kebalikan dari Entry
+        order_side = "sell" if side.lower() in ['buy', 'long'] else "buy"
         
         if sl_price and sl_price > 0:
             try:
-                params = {
-                    'stopLossPrice': sl_price,
-                    'productType': 'USDT-FUTURES',
-                    'marginCoin': 'USDT',
-                    'reduceOnly': True
+                # V1 Plan Order Endpoint
+                path = "/api/mix/v1/order/place-plan-order"
+                payload = {
+                    "symbol": clean_symbol + "_UMCBL", # Format V1
+                    "marginCoin": "USDT",
+                    "size": str(amount),
+                    "executePrice": "0", # Market
+                    "triggerPrice": str(sl_price),
+                    "triggerType": "mark_price",
+                    "side": order_side,
+                    "orderType": "market",
+                    "reduceOnly": "true",
+                    "stopLossPrice": str(sl_price) # V1 specific
                 }
-                # CCXT will use the injected markets and call private_post_v2_mix_order_place_plan_order internally
-                self.exchange.create_order(symbol, 'market', tp_side, amount, None, params)
-                print(f"[SL CCXT OK] set at {sl_price}")
+                res = self._v2_private_request("POST", path, body=payload)
+                if res.get('code') == '00000':
+                    print(f"[SL V1 OK] set at {sl_price}")
+                else:
+                    # Coba V2 TPSL kalau V1 gagal
+                    print(f"[SL V1 FAIL] {res}, trying V2...")
+                    self._set_sl_ccxt(symbol, side, amount, sl_price)
             except Exception as e:
-                print(f"[SL CCXT FAIL] {e}")
+                print(f"[SL V1 ERROR] {e}")
 
         if tp_price and tp_price > 0:
             try:
-                params = {
-                    'takeProfitPrice': tp_price,
-                    'productType': 'USDT-FUTURES',
-                    'marginCoin': 'USDT',
-                    'reduceOnly': True
+                path = "/api/mix/v1/order/place-plan-order"
+                payload = {
+                    "symbol": clean_symbol + "_UMCBL",
+                    "marginCoin": "USDT",
+                    "size": str(amount),
+                    "executePrice": "0",
+                    "triggerPrice": str(tp_price),
+                    "triggerType": "mark_price",
+                    "side": order_side,
+                    "orderType": "market",
+                    "reduceOnly": "true",
+                    "takeProfitPrice": str(tp_price)
                 }
-                self.exchange.create_order(symbol, 'market', tp_side, amount, None, params)
-                print(f"[TP CCXT OK] set at {tp_price}")
+                res = self._v2_private_request("POST", path, body=payload)
+                if res.get('code') == '00000':
+                    print(f"[TP V1 OK] set at {tp_price}")
+                else:
+                    print(f"[TP V1 FAIL] {res}")
             except Exception as e:
-                print(f"[TP CCXT FAIL] {e}")
+                print(f"[TP V1 ERROR] {e}")
 
     def update_sl_price(self, symbol, side, amount, new_price, is_tp=False):
         """Update stop_loss_val atau take_profit_val yang sudah ada via Plan Order API."""
