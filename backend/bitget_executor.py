@@ -346,6 +346,7 @@ class BitgetExecutor:
                 "symbol": clean_symbol,
                 "productType": "USDT-FUTURES",
                 "marginCoin": "USDT",
+                "marginMode": "isolated",
                 "size": str(amount),
                 "side": side.lower(),
                 "orderType": "market"
