@@ -1396,7 +1396,7 @@ def run_crypto_engine():
 
                 if side is None:
                     reject = "NO_SIDE"
-                elif market_sentiment == "PENDING" and combined_score < 80:
+                elif market_sentiment == "PENDING" and tech_score < 100:
                     reject = "SENTIMENT_PENDING"
                 elif combined_score < current_min_momentum:
                     reject = f"SCORE_LOW({combined_score}<{current_min_momentum})"
