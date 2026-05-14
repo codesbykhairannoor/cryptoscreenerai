@@ -951,36 +951,38 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
 #  CORE: TENTUKAN SIDE & REASON 
 def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_sentiment: str, mark_price: float, pump_sc: float, dump_sc: float) -> tuple[str | None, str, int]:
     """
-    v35.1: THE HOLY GRAIL (AI + WINNING DNA)
-    Keputusan 100% bergantung pada kekuatan AI (Pump Score / Dump Score),
-    TETAPI wajib divalidasi oleh 'DNA Pemenang' untuk buy.
+    v36.0: THE TRUTH (AI + DATA SCIENCE PROVEN)
+    Filter EMA, RSI, dan VWAP dibuang karena terbukti sebagai NOISE (-0.02 korelasi).
+    Satu-satunya validasi adalah VOLATILITAS (ATR) dan MOMENTUM (RVOL).
     """
     best_side = "buy" if pump_sc >= dump_sc else "sell"
     best_score = max(pump_sc, dump_sc)
     
-    # Alasan awal
     best_reason = f"AI_SCORE_{int(best_score)}"
     
-    # Validasi Pola Kemenangan (The Winning DNA v34.0)
-    # 73% Pemenang: EMA 9 > 21 + Harga di atas VWAP + RSI 50-65
-    if best_side == "buy":
-        has_dna = (tech['ema_9'] > tech['ema_21']) and (tech['close'] > tech['vwap']) and (50 <= tech['rsi'] <= 65)
-        
-        if has_dna:
-            best_score += 20 # DNA BOOSTER!
-            best_reason = "HOLY_GRAIL_DNA_MATCH"
-            print(f"[HOLY GRAIL] {tech['symbol']} MATCHED WINNING DNA! Score Boosted to {best_score}", flush=True)
-        else:
-            # Jika tidak punya DNA pemenang, kita potong skornya drastis agar batal masuk
-            best_score -= 50
-            best_reason = "DNA_MISMATCH"
+    # Validasi FAKTA STATISTIK (Hanya Volatilitas & Momentum yang penting)
+    atr = tech.get('atr', 0)
+    rvol = tech.get('rvol', 0)
+    
+    # Hitung Persentase ATR (Volatilitas Relatif)
+    atr_pct = (atr / mark_price) * 100 if mark_price > 0 else 0
+    
+    # SYARAT MUTLAK: Harus koin hidup (Volatil) dan punya ledakan volume!
+    if atr_pct > 0.5 and rvol > 1.2:
+        best_score += 20 # BOOSTER: Koin ini hidup dan siap meledak!
+        best_reason = "HIGH_VOLATILITY_AND_MOMENTUM"
+        print(f"[THE TRUTH] {tech['symbol']} Matched Data Science Profile! (ATR: {atr_pct:.2f}% | RVOL: {rvol:.2f}x)", flush=True)
+    else:
+        # Jika koin mati (volatilitas rendah) atau tidak ada volume (rvol < 1), POTONG SKOR!
+        best_score -= 50
+        best_reason = "LOW_VOLATILITY_OR_DEAD_VOLUME"
 
     # Limit max score to 100
     best_score = min(100, int(best_score))
 
     # Syarat mutlak The Sniper: Skor harus TINGGI
     if best_score < 70:
-        return None, "LOW_CONVICTION_OR_NO_DNA", 0
+        return None, "LOW_CONVICTION_OR_DEAD_COIN", 0
         
     # Pastikan SELL diizinkan
     if best_side == "sell" and not SELL_TRADING_ENABLED:
