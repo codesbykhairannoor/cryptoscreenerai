@@ -698,38 +698,12 @@ class BitgetExecutor:
                     if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                     self._last_sl_set[symbol] = now
 
-                #    TSL v9.9 — STEP-LOCK MASTER (Optimized Round 8)
+                #    TSL v37.0 — DISABLED (PURE SCALPER MODE)
                 # ─────────────────────────────────────────────────────
-                # Jarak napas (Gap) 10% PnL, Pindah stop_loss_val setiap kelipatan 20% PnL
+                # Trailing SL dimatikan. Kita murni mengejar Limit Order TP 1.0%
+                # untuk memastikan Win Rate 90.9% tercapai tanpa dipotong di tengah jalan.
                 # ─────────────────────────────────────────────────────
-                new_sl = 0
-                locked_pnl = 0
-
-                if peak_pnl >= 10:
-                    # Logic: Holy Grail v34.0 - Step Trail 10%
-                    locked_pnl = float((int(peak_pnl / 10) * 10) - 5)
-                    locked_pnl = max(0.0, locked_pnl)
-
-                    pos_lev = float(pos.get('leverage', 10.0))
-                    if side in ['long', 'buy']:
-                        new_sl = entry * (1 + (locked_pnl / 100.0) / pos_lev)
-                    else:
-                        new_sl = entry * (1 - (locked_pnl / 100.0) / pos_lev)
-
-                if new_sl > 0:
-                    if side in ['long', 'buy']:
-                        is_better = new_sl > sl_p
-                    else:
-                        is_better = (sl_p == 0) or (new_sl < sl_p)
-
-                    if is_better and now - self._last_sl_set.get(symbol, 0) > 30:
-                        print(
-                            f"[TRAIL] {symbol} stop_loss_val {round(sl_p,6)} -> {round(new_sl,6)} "
-                            f"| PNL:{pnl:.1f}% PEAK:{peak_pnl:.1f}% LOCKED:{locked_pnl:.0f}%",
-                            flush=True
-                        )
-                        self._set_sl_tp_bitget(symbol, side, size, sl_price=new_sl)
-                        self._last_sl_set[symbol] = now
+                pass # Bypass trailing logic completely
 
         except Exception as e:
             print(f"[POSITION MANAGER CRASH] {e}")

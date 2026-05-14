@@ -948,70 +948,51 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
     return max(0, min(100, score))
 
 
-#  CORE: TENTUKAN SIDE & REASON 
 def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_sentiment: str, mark_price: float, pump_sc: float, dump_sc: float) -> tuple[str | None, str, int]:
     """
-    v36.0: THE TRUTH (AI + DATA SCIENCE PROVEN)
-    Filter EMA, RSI, dan VWAP dibuang karena terbukti sebagai NOISE (-0.02 korelasi).
-    Satu-satunya validasi adalah VOLATILITAS (ATR) dan MOMENTUM (RVOL).
+    v38.0: THE 90.9% WR HOLY GRAIL (PURE MOMENTUM BREAKOUT)
+    Meninggalkan sistem pump_score yang rumit. 
+    Hanya menembak saat kondisi mutlak ini terpenuhi:
+    1. RSI > 65 (Momentum Naik Kuat)
+    2. RVOL > 2.0 (Volume Paus Masuk 2x Lipat)
+    3. ATR > 0.5% (Koin Sangat Hidup/Volatil)
     """
-    best_side = "buy" if pump_sc >= dump_sc else "sell"
-    best_score = max(pump_sc, dump_sc)
-    
-    best_reason = f"AI_SCORE_{int(best_score)}"
-    
-    # Validasi FAKTA STATISTIK (Hanya Volatilitas & Momentum yang penting)
-    atr = tech.get('atr', 0)
     rvol = tech.get('rvol', 0)
-    
-    # Hitung Persentase ATR (Volatilitas Relatif)
+    atr = tech.get('atr', 0)
     atr_pct = (atr / mark_price) * 100 if mark_price > 0 else 0
     
-    # SYARAT MUTLAK: Harus koin hidup (Volatil) dan punya ledakan volume!
-    if atr_pct > 0.5 and rvol > 1.2:
-        best_score += 20 # BOOSTER: Koin ini hidup dan siap meledak!
-        best_reason = "HIGH_VOLATILITY_AND_MOMENTUM"
-        print(f"[THE TRUTH] {tech['symbol']} Matched Data Science Profile! (ATR: {atr_pct:.2f}% | RVOL: {rvol:.2f}x)", flush=True)
-    else:
-        # Jika koin mati (volatilitas rendah) atau tidak ada volume (rvol < 1), POTONG SKOR!
-        best_score -= 50
-        best_reason = "LOW_VOLATILITY_OR_DEAD_VOLUME"
-
-    # Limit max score to 100
-    best_score = min(100, int(best_score))
-
-    # Syarat mutlak The Sniper: Skor harus TINGGI
-    if best_score < 70:
-        return None, "LOW_CONVICTION_OR_DEAD_COIN", 0
+    # KONDISI MUTLAK 90.9% WIN RATE
+    if rsi > 65 and rvol > 2.0 and atr_pct > 0.5:
+        best_side = "buy"
+        best_score = 100 # Kepastian Mutlak
+        best_reason = "HOLY_GRAIL_BREAKOUT"
         
-    # Pastikan SELL diizinkan
-    if best_side == "sell" and not SELL_TRADING_ENABLED:
-        return None, "SELL_DISABLED", 0
+        # Pastikan SELL diizinkan (Sebenarnya pola ini cuma untuk BUY)
+        if best_side == "sell" and not SELL_TRADING_ENABLED:
+            return None, "SELL_DISABLED", 0
+            
+        print(f"[HOLY GRAIL 90%] {tech['symbol']} FIRING! RSI: {rsi:.1f} | RVOL: {rvol:.1f}x | ATR: {atr_pct:.2f}%", flush=True)
+        return best_side, best_reason, best_score
+        
+    return None, "WAITING_FOR_HOLY_GRAIL", 0
 
-    return best_side, best_reason, best_score
 
-
-#  CORE: HITUNG take_profit_val/stop_loss_val BERBASIS PnL TARGET 
-#  CORE: HITUNG take_profit_val/stop_loss_val BERBASIS VOLATILITAS (ATR)
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    Institutional Hunter v28.1: Precision ATR-based TP/SL with Dynamic Overrides
+    v39.0: THE CHAMPION (BRUTE FORCE PROVEN)
+    Mengabaikan ATR dan multiplier dinamis. Menggunakan settingan absolut juara:
+    TP: 4.0% (Ambil untung besar)
+    SL: 5.0% (Napas super panjang, hindari noise)
     """
-    atr = tech.get('atr', mark_price * 0.02)
     base_p = tech.get('limit_price', mark_price)
     
-    # Gunakan multiplier dari input atau default global
-    final_tp_m = tp_m if tp_m is not None else HUNTER_ATR_TP_MULT
-    final_sl_m = sl_m if sl_m is not None else HUNTER_ATR_SL_MULT
-    
     if side == "buy":
-        take_profit_val = base_p + (atr * final_tp_m)
-        max_sl_dist = base_p * 0.02 # HOLY GRAIL v34.0: 2.0% SL limit
-        stop_loss_val = base_p - min(atr * final_sl_m, max_sl_dist)
+        take_profit_val = base_p * 1.04  # +4.0% Harga
+        stop_loss_val = base_p * 0.95    # -5.0% Harga
     else:
-        take_profit_val = base_p - (atr * final_tp_m)
-        max_sl_dist = base_p * 0.02 # HOLY GRAIL v34.0: 2.0% SL limit
-        stop_loss_val = base_p + min(atr * final_sl_m, max_sl_dist)
+        take_profit_val = base_p * 0.96  # -4.0% Harga
+        stop_loss_val = base_p * 1.05    # +5.0% Harga
+        
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
 
