@@ -997,9 +997,23 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     long_candidates = []
     short_candidates = []
 
+    #  LONG SETUPS 
+    # Setup 1: Institutional FVG
     if is_fvg and is_whale_vol:
         long_candidates.append((95, "INSTITUTIONAL FVG DETECTED"))
         tech['limit_price'] = (prev_high + c_low) / 2
+
+    # Setup 2: Bullish Order Block (SMC)
+    if ob == 'BULLISH_OB' and rsi < 65:
+        long_candidates.append((88, "BULLISH OB DETECTED"))
+
+    # Setup 3: MSS/CHoCH Bullish
+    if tech.get('mss_bullish') or tech.get('choch_bullish'):
+        long_candidates.append((82, "MSS BULLISH (SHIFT)"))
+
+    # Setup 4: Liquidity Sweep
+    if liq and side == "buy":
+        long_candidates.append((90, "LIQUIDITY SWEEP BUY"))
 
     #  SHORT SETUPS 
     # Setup 1: Whale Distribution
@@ -1014,13 +1028,17 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     if tech.get('mss_bearish') and (obi < 0 or rsi > 50):
         short_candidates.append((75, "MSS BEARISH"))
 
+    # Setup 4: Bearish Order Block
+    if ob == 'BEARISH_OB' and rsi > 35:
+        short_candidates.append((82, "BEARISH OB DETECTED"))
+
     #  SELL TRADING GATE -- backed by data (0% WR)
     if not SELL_TRADING_ENABLED:
         short_candidates = []  # Block all sell signals
 
     #  PILIH SETUP TERBAIK 
-    all_candidates = [("buy", s, r) for s, r in long_candidates] + \
-                     [("sell", s, r) for s, r in short_candidates]
+    all_candidates = [("buy", r, s) for r, s in long_candidates] + \
+                     [("sell", r, s) for r, s in short_candidates]
 
     if not all_candidates:
         return None, "NO_SIGNAL", 0
@@ -1415,16 +1433,16 @@ def run_crypto_engine():
                     active_signals.append(f"5mSZ({tech.get('entry_quality_5m',0)})")
                 if tech.get('in_demand'):    active_signals.append("DZ")
                 if tech.get('in_supply'):    active_signals.append("SZ")
-                if tech.get('mss_bullish'):  active_signals.append("MSS↑")
-                if tech.get('mss_bearish'):  active_signals.append("MSS↓")
+                if tech.get('mss_bullish'):  active_signals.append("MSS^")
+                if tech.get('mss_bearish'):  active_signals.append("MSSv")
                 fvg = tech.get('fvg', 'NONE')
                 if fvg not in ('NONE', None): active_signals.append(f"FVG:{fvg[:4]}")
                 ob = tech.get('order_block', 'NONE')
                 if ob not in ('NONE', None):  active_signals.append(f"OB:{ob[:4]}")
                 whale = tech.get('whale_signal', 'NORMAL')
                 if whale != 'NORMAL':         active_signals.append(f"WHALE:{whale[6:]}")
-                if tech.get('bull_stop_hunt'): active_signals.append("HUNT↑")
-                if tech.get('bear_stop_hunt'): active_signals.append("HUNT↓")
+                if tech.get('bull_stop_hunt'): active_signals.append("HUNT^")
+                if tech.get('bear_stop_hunt'): active_signals.append("HUNTv")
                 fr = tech.get('funding_rate', 0)
                 if fr < -0.0003: active_signals.append(f"SQUEEZE")
                 obi = tech.get('obi', 0)
