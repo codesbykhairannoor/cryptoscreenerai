@@ -76,24 +76,14 @@ BTC_SYNC_ENABLED = True  # Hanya LONG jika BTC juga Bullish
 # Koin ini terbukti di database tidak pernah profit -- langsung skip
 DATA_PROVEN_BLACKLIST = {
     # Confirmed 0% WR dari backtest:
-    'LABUSDT', 'ZECUSDT', 'BSBUSDT', 'XRPUSDT',
-    'SKYAIUSDT', 'RAVEUSDT', 'ORCAUSDT', 'TONUSDT',
-    'ERAUSDT', 'SOLUSDT', 'PENDLEUSDT', 'NOMUSDT',
+    'LABUSDT', 'BSBUSDT', 
+    'SKYAIUSDT', 'RAVEUSDT', 'ORCAUSDT', 
+    'ERAUSDT', 'NOMUSDT',
     'SNDKUSDT', 'USUALUSDT', 'SIRENUSDT', 'CHIPUSDT',
-    'PARTIUSDT', 'ENAUSDT', 'DYMUSDT', 'JCTUSDT',
-    'LUNCUSDT', 'CRCLUSDT', 'CARVUSDT', 'LWLGUSDT',
-    'NAORISUSDT', 'UBUSDT', 'INTCUSDT', 'XAUUSD',
-    'BTCUSDT', 'PROSUSDT', 'NEIROCTOUSDT', 'SAHARAUSDT',
-    # Round 5 failures (v9.6 additions):
-    'SOLUSDT',
-    # Round 4 failures (v9.5 additions):
-    'WIFUSDT', 'LTCUSDT',
-    # Round 2 failures (v9.3 additions):
-    'ALGOUSDT', 'CRVUSDT', 'SEIUSDT', 'FETUSDT',
-    # Micro-cap (harga < 0.001 USDT) -- mudah dimanipulasi:
-    'BTCUSDT', 'PROSUSDT', 'NEIROCTOUSDT', 'SAHARAUSDT',
-    # Round 9 failures (v10.0 additions):
-    'SUIUSDT', 'XRPUSDT', 'PEOPLEUSDT',
+    'PARTIUSDT', 'JCTUSDT',
+    'LUNCUSDT', 'CRCLUSDT', 'CARVUSDT', 
+    'UBUSDT', 'INTCUSDT',
+    'PROSUSDT', 'NEIROCTOUSDT', 'SAHARAUSDT',
 }
  
 # UNIVERSAL SCANNER: Tidak lagi pilih-pilih koin.
@@ -971,84 +961,59 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float,
     - Tidak boleh SELL kalau 4h trend BULLISH
     - Exception: kalau ada stop hunt atau demand/supply zone yang sangat kuat
     """
-    best_side   = None
-    best_reason = ""
-    best_score  = 0
-
-    fvg   = tech.get('fvg', 'NONE')
-    ob    = tech.get('order_block', 'NONE')
-    whale = tech.get('whale_signal', 'NORMAL')
-    liq   = tech.get('is_liquidity_sweep', False)
-    # ── INSTITUTIONAL PREDATOR (v26.0) ──────────────────────
-    c_low = tech.get('low', 0); c_high = tech.get('high', 0)
-    prev_high = tech.get('prev_high', 0)
+    # ── AGGRESSIVE WEIGHTED SCORER (v26.52) ──
+    # Menghitung akumulasi kekuatan teknikal
+    long_score = 0
+    short_score = 0
     
-    # SMC Signals
-    mss_s = tech.get('mss_bullish') or tech.get('mss_bearish')
-    choch_s = tech.get('choch_bullish') or tech.get('choch_bearish')
-    trend_4h = tech.get('trend_4h', 'NEUTRAL')
     obi = tech.get('obi', 0)
+    ob  = tech.get('order_block', 'NONE')
+    fvg = tech.get('fvg', 'NONE')
+    trend_4h = tech.get('trend_4h', 'NEUTRAL')
     
-    # 1. Bullish FVG Detection
-    is_fvg = c_low > prev_high
-    curr_vol = tech.get('volume', 0); avg_vol = tech.get('avg_volume', 1)
-    is_whale_vol = curr_vol > (avg_vol * 1.5)
+    # 1. OBI Score (Kekuatan Bid/Ask)
+    if obi > 0.15:  long_score += 25
+    elif obi < -0.15: short_score += 25
     
-    long_candidates = []
-    short_candidates = []
+    # 2. RSI Context
+    if rsi < 40:    long_score += 20  # Oversold (Aggressive Buy)
+    elif rsi < 60:  long_score += 10
+    if rsi > 70:    short_score += 20 # Overbought (Aggressive Sell)
+    elif rsi > 40:  short_score += 10
+    
+    # 3. VWAP Position
+    if vwap_dist < -1.5: long_score += 20 # Underpriced
+    elif vwap_dist < 0:  long_score += 10
+    if vwap_dist > 1.5:  short_score += 20 # Overpriced
+    elif vwap_dist > 0:  short_score += 10
+    
+    # 4. SMC Patterns (High Value)
+    if ob == 'BULLISH_OB':  long_score += 35
+    if ob == 'BEARISH_OB': short_score += 35
+    if fvg == 'BULLISH_FVG': long_score += 20
+    if fvg == 'BEARISH_FVG': short_score += 20
+    if tech.get('mss_bullish'): long_score += 25
+    if tech.get('mss_bearish'): short_score += 25
+    
+    # 5. HTF Trend Alignment
+    if trend_4h == "BULLISH": long_score += 15
+    elif trend_4h == "BEARISH": short_score += 15
 
-    #  LONG SETUPS 
-    # Setup 1: Institutional FVG
-    if is_fvg and is_whale_vol:
-        long_candidates.append((95, "INSTITUTIONAL FVG DETECTED"))
-        tech['limit_price'] = (prev_high + c_low) / 2
+    # 6. Anti-Falling-Knife (Safety)
+    if tech.get('still_falling') and long_score > 0: long_score -= 30
+    if tech.get('still_rising') and short_score > 0: short_score -= 30
 
-    # Setup 2: Bullish Order Block (SMC)
-    if ob == 'BULLISH_OB' and rsi < 65:
-        long_candidates.append((88, "BULLISH OB DETECTED"))
-
-    # Setup 3: MSS/CHoCH Bullish
-    if tech.get('mss_bullish') or tech.get('choch_bullish'):
-        long_candidates.append((82, "MSS BULLISH (SHIFT)"))
-
-    # Setup 4: Liquidity Sweep
-    if liq and side == "buy":
-        long_candidates.append((90, "LIQUIDITY SWEEP BUY"))
-
-    #  SHORT SETUPS 
-    # Setup 1: Whale Distribution
-    if whale == 'WHALE_SELL' and vwap_dist > 0.5:
-        short_candidates.append((85, "WHALE DISTRIBUTION"))
-
-    # Setup 2: Bearish FVG
-    if fvg == 'BEARISH_FVG' and rsi > 35 and vwap_dist > -0.5:
-        short_candidates.append((80, "BEARISH FVG"))
-
-    # Setup 3: MSS Bearish
-    if tech.get('mss_bearish') and (obi < 0 or rsi > 50):
-        short_candidates.append((75, "MSS BEARISH"))
-
-    # Setup 4: Bearish Order Block
-    if ob == 'BEARISH_OB' and rsi > 35:
-        short_candidates.append((82, "BEARISH OB DETECTED"))
-
-    #  SELL TRADING GATE -- backed by data (0% WR)
-    if not SELL_TRADING_ENABLED:
-        short_candidates = []  # Block all sell signals
-
-    #  PILIH SETUP TERBAIK 
-    all_candidates = [("buy", r, s) for r, s in long_candidates] + \
-                     [("sell", r, s) for r, s in short_candidates]
-
-    if not all_candidates:
+    # PILIH ARAH TERBAIK
+    if long_score >= short_score and long_score >= 30:
+        best_side = "buy"
+        best_score = min(100, long_score)
+        best_reason = "BULLISH_MOMENTUM" if not ob else f"SMC_CONFIRMED_{ob}"
+    elif short_score > long_score and short_score >= 30:
+        best_side = "sell"
+        best_score = min(100, short_score)
+        best_reason = "BEARISH_MOMENTUM" if not ob else f"SMC_CONFIRMED_{ob}"
+    else:
         return None, "NO_SIGNAL", 0
-
-    all_candidates.sort(key=lambda x: x[1], reverse=True)
-    best_side, best_score, best_reason = all_candidates[0]
-
-    # HTF alignment bonus
-    if best_side == "buy"  and trend_4h == "BULLISH": best_score = min(100, best_score + 10)
-    if best_side == "sell" and trend_4h == "BEARISH": best_score = min(100, best_score + 10)
     
     return best_side, best_reason, best_score
 
