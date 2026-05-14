@@ -1,4 +1,4 @@
-import requests
+﻿import requests
 import pandas as pd
 import numpy as np
 
@@ -28,3 +28,6 @@ def fetch_debug(symbol):
 if __name__ == "__main__":
     fetch_debug("BTCUSDT")
     fetch_debug("ETHUSDT")
+
+
+

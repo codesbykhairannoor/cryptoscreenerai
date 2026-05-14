@@ -1,4 +1,4 @@
-import hmac
+﻿import hmac
 import hashlib
 import base64
 import time
@@ -73,3 +73,6 @@ def direct_v2_test():
 
 if __name__ == "__main__":
     direct_v2_test()
+
+
+

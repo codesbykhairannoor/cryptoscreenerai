@@ -1,4 +1,4 @@
-from contextlib import asynccontextmanager
+﻿from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sentiment import get_crypto_news, get_global_market_data, get_fred_macro_context
@@ -28,10 +28,10 @@ if sys.platform == "win32":
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  GLOBAL EXCEPTION HANDLER — catch semua unhandled exception di semua thread
+# ============================================================================-
+#  GLOBAL EXCEPTION HANDLER - catch semua unhandled exception di semua thread
 #  Ini yang bikin exit code 4294967295 terdeteksi dan di-log
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 def _global_thread_exception_handler(args):
     """Dipanggil saat ada unhandled exception di thread manapun."""
     print(f"\n[THREAD CRASH] Thread '{args.thread.name}' crashed!", flush=True)
@@ -41,10 +41,10 @@ def _global_thread_exception_handler(args):
 
 threading.excepthook = _global_thread_exception_handler
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  PORT CLEANUP — dipanggil saat lifespan startup
+# ============================================================================-
+#  PORT CLEANUP - dipanggil saat lifespan startup
 #  Membunuh proses lama yang masih pakai port 8000 sebelum bind
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 def _kill_stale_port(port: int = 8000):
     """Kill proses lain yang masih pakai port ini. Windows-safe."""
     try:
@@ -67,9 +67,9 @@ def _kill_stale_port(port: int = 8000):
     except Exception as e:
         print(f"[STARTUP] Port cleanup: {e}", flush=True)
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 #  SINGLETON EXECUTORS
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 _bitget_executor: BitgetExecutor = None
 _forex_executor: ForexExecutor = None
 
@@ -85,13 +85,13 @@ def get_forex_executor() -> ForexExecutor:
         _forex_executor = ForexExecutor()
     return _forex_executor
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  LIFESPAN — menggantikan @app.on_event("startup") yang deprecated
+# ============================================================================-
+#  LIFESPAN - menggantikan @app.on_event("startup") yang deprecated
 #  Keuntungan: tidak ada DeprecationWarning, graceful shutdown lebih bersih
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── STARTUP ──────────────────────────────────────────────────────────────
+    # == STARTUP ==============================================================
     # Kill proses lama yang masih pakai port 8000 SEBELUM engines start
     # Ini fix untuk [Errno 10048] saat PM2 restart
     _kill_stale_port(8000)
@@ -173,15 +173,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[SYSTEM] Gagal memulai Early Signal Engine: {e}", flush=True)
 
-    yield  # ← aplikasi berjalan di sini
+    yield  # <- aplikasi berjalan di sini
 
-    # ── SHUTDOWN ─────────────────────────────────────────────────────────────
+    # == SHUTDOWN ============================================================-
     print("[SYSTEM] Shutting down gracefully...", flush=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 #  APP
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
@@ -191,9 +191,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 #  ENDPOINTS
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 
 @app.get("/")
 def read_root():
@@ -435,11 +435,11 @@ def get_history():
         return {"status": "error", "message": str(e)}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  ENTRY POINT — dipakai saat run via: python main.py
+# ============================================================================-
+#  ENTRY POINT - dipakai saat run via: python main.py
 #  Saat run via PM2 dengan uvicorn langsung, bagian ini tidak dieksekusi
 #  tapi _kill_stale_port sudah dipanggil di lifespan startup
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 if __name__ == "__main__":
     import uvicorn
     _kill_stale_port(8000)
@@ -450,3 +450,6 @@ if __name__ == "__main__":
         reload=False,
         timeout_graceful_shutdown=5,
     )
+
+
+

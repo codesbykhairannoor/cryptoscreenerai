@@ -1,4 +1,4 @@
-import requests
+﻿import requests
 import xml.etree.ElementTree as ET
 import os
 import time
@@ -6,10 +6,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 #  FRED MACRO ENGINE (Federal Reserve Economic Data - St. Louis Fed)
-#  Cache TTL: 1 jam — data FRED update harian/mingguan, tidak perlu sering fetch
-# ─────────────────────────────────────────────────────────────────────────────
+#  Cache TTL: 1 jam - data FRED update harian/mingguan, tidak perlu sering fetch
+# ============================================================================-
 _fred_cache: dict = {"ts": 0, "data": None}
 FRED_CACHE_TTL = 3600  # 1 jam
 
@@ -19,7 +19,7 @@ FRED_CACHE_TTL = 3600  # 1 jam
 # DTWEXBGS  = DXY (US Dollar Index, broad)
 # DGS10     = 10-Year Treasury Yield
 # UNRATE    = Unemployment Rate
-# T10Y2Y    = 10Y-2Y Treasury Spread (yield curve — negatif = resesi signal)
+# T10Y2Y    = 10Y-2Y Treasury Spread (yield curve - negatif = resesi signal)
 FRED_SERIES = {
     "fed_rate":     "FEDFUNDS",
     "cpi":          "CPIAUCSL",
@@ -57,20 +57,20 @@ def get_fred_macro_context() -> dict:
     Ambil konteks makro ekonomi dari FRED (Federal Reserve).
 
     Return dict berisi:
-      fed_rate        : float  — Fed Funds Rate saat ini (%)
-      fed_rate_prev   : float  — Fed Funds Rate periode sebelumnya
-      fed_trend       : str    — "HIKING" / "CUTTING" / "HOLD"
-      cpi             : float  — CPI terbaru (YoY %)
-      cpi_trend       : str    — "HIGH" (>3%) / "MODERATE" (2-3%) / "LOW" (<2%)
-      dxy             : float  — US Dollar Index
-      dxy_trend       : str    — "STRONG" / "WEAK" / "NEUTRAL"
-      treasury_10y    : float  — 10Y Treasury Yield (%)
-      unemployment    : float  — Unemployment Rate (%)
-      yield_curve     : float  — 10Y-2Y spread (negatif = inverted = resesi signal)
-      macro_bias      : str    — "RISK_ON" / "RISK_OFF" / "NEUTRAL"
-      crypto_impact   : str    — "BULLISH" / "BEARISH" / "NEUTRAL"
-      gold_impact     : str    — "BULLISH" / "BEARISH" / "NEUTRAL"
-      summary         : str    — Ringkasan 1 baris untuk log
+      fed_rate        : float  - Fed Funds Rate saat ini (%)
+      fed_rate_prev   : float  - Fed Funds Rate periode sebelumnya
+      fed_trend       : str    - "HIKING" / "CUTTING" / "HOLD"
+      cpi             : float  - CPI terbaru (YoY %)
+      cpi_trend       : str    - "HIGH" (>3%) / "MODERATE" (2-3%) / "LOW" (<2%)
+      dxy             : float  - US Dollar Index
+      dxy_trend       : str    - "STRONG" / "WEAK" / "NEUTRAL"
+      treasury_10y    : float  - 10Y Treasury Yield (%)
+      unemployment    : float  - Unemployment Rate (%)
+      yield_curve     : float  - 10Y-2Y spread (negatif = inverted = resesi signal)
+      macro_bias      : str    - "RISK_ON" / "RISK_OFF" / "NEUTRAL"
+      crypto_impact   : str    - "BULLISH" / "BEARISH" / "NEUTRAL"
+      gold_impact     : str    - "BULLISH" / "BEARISH" / "NEUTRAL"
+      summary         : str    - Ringkasan 1 baris untuk log
     """
     global _fred_cache
 
@@ -85,7 +85,7 @@ def get_fred_macro_context() -> dict:
 
     result = {}
 
-    # ── 1. Fed Funds Rate ────────────────────────────────────────────────────
+    # == 1. Fed Funds Rate ====================================================
     fed_obs = _fetch_fred_series(FRED_SERIES["fed_rate"], api_key, limit=2)
     fed_rate      = float(fed_obs[0]["value"]) if len(fed_obs) >= 1 else 0.0
     fed_rate_prev = float(fed_obs[1]["value"]) if len(fed_obs) >= 2 else fed_rate
@@ -101,7 +101,7 @@ def get_fred_macro_context() -> dict:
     result["fed_rate_prev"] = round(fed_rate_prev, 2)
     result["fed_trend"]     = fed_trend
 
-    # ── 2. CPI (Inflasi) ─────────────────────────────────────────────────────
+    # == 2. CPI (Inflasi) ====================================================-
     cpi_obs = _fetch_fred_series(FRED_SERIES["cpi"], api_key, limit=1)
     cpi = float(cpi_obs[0]["value"]) if cpi_obs else 0.0
     if cpi > 3.0:
@@ -114,7 +114,7 @@ def get_fred_macro_context() -> dict:
     result["cpi"]       = round(cpi, 2)
     result["cpi_trend"] = cpi_trend
 
-    # ── 3. DXY (US Dollar Index) ─────────────────────────────────────────────
+    # == 3. DXY (US Dollar Index) ============================================-
     dxy_obs = _fetch_fred_series(FRED_SERIES["dxy"], api_key, limit=2)
     dxy      = float(dxy_obs[0]["value"]) if len(dxy_obs) >= 1 else 100.0
     dxy_prev = float(dxy_obs[1]["value"]) if len(dxy_obs) >= 2 else dxy
@@ -130,22 +130,22 @@ def get_fred_macro_context() -> dict:
     result["dxy"]       = round(dxy, 2)
     result["dxy_trend"] = dxy_trend
 
-    # ── 4. 10Y Treasury Yield ────────────────────────────────────────────────
+    # == 4. 10Y Treasury Yield ================================================
     t10y_obs = _fetch_fred_series(FRED_SERIES["treasury_10y"], api_key, limit=1)
     treasury_10y = float(t10y_obs[0]["value"]) if t10y_obs else 0.0
     result["treasury_10y"] = round(treasury_10y, 2)
 
-    # ── 5. Unemployment Rate ─────────────────────────────────────────────────
+    # == 5. Unemployment Rate ================================================-
     unemp_obs = _fetch_fred_series(FRED_SERIES["unemployment"], api_key, limit=1)
     unemployment = float(unemp_obs[0]["value"]) if unemp_obs else 0.0
     result["unemployment"] = round(unemployment, 2)
 
-    # ── 6. Yield Curve (10Y - 2Y) ────────────────────────────────────────────
+    # == 6. Yield Curve (10Y - 2Y) ============================================
     yc_obs = _fetch_fred_series(FRED_SERIES["yield_curve"], api_key, limit=1)
     yield_curve = float(yc_obs[0]["value"]) if yc_obs else 0.0
     result["yield_curve"] = round(yield_curve, 2)
 
-    # ── 7. Macro Bias (gabungan semua sinyal) ────────────────────────────────
+    # == 7. Macro Bias (gabungan semua sinyal) ================================
     # Risk-ON  = Fed cutting + DXY lemah + inflasi moderat = bagus untuk crypto
     # Risk-OFF = Fed hiking + DXY kuat + inflasi tinggi = jelek untuk crypto
     risk_on_score  = 0
@@ -176,7 +176,7 @@ def get_fred_macro_context() -> dict:
 
     result["macro_bias"] = macro_bias
 
-    # ── 8. Asset-specific impact ─────────────────────────────────────────────
+    # == 8. Asset-specific impact ============================================-
     # Crypto: Risk-ON = bullish, Risk-OFF = bearish
     result["crypto_impact"] = (
         "BULLISH" if macro_bias == "RISK_ON" else
@@ -194,7 +194,7 @@ def get_fred_macro_context() -> dict:
         "NEUTRAL"
     )
 
-    # ── 9. Summary log ───────────────────────────────────────────────────────
+    # == 9. Summary log ======================================================-
     result["summary"] = (
         f"[FRED] Fed:{fed_rate}%({fed_trend}) | "
         f"CPI:{cpi}({cpi_trend}) | "
@@ -364,3 +364,6 @@ def get_crypto_news(symbol):
         return msg
     except Exception as e:
         return "Analyzing market pulse..."
+
+
+

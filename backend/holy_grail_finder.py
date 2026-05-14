@@ -1,4 +1,4 @@
-import requests
+﻿import requests
 import pandas as pd
 import numpy as np
 
@@ -118,14 +118,17 @@ def main():
     
     if best_overall > 10.0:
         wr = best_results['wins'] / best_results['trades'] * 100 if best_results['trades'] > 0 else 0
-        print(f"✅ DITEMUKAN STRATEGI PROFITABLE! (SALDO NAIK)")
+        print(f"[OK] DITEMUKAN STRATEGI PROFITABLE! (SALDO NAIK)")
         print(f"Target Kemenangan (WR) : {wr:.1f}%")
         print(f"Saldo Akhir Rata-rata  : ${best_overall:.2f} (Dari modal $10)")
         print(f"Total Trading (3 Koin) : {best_results['trades']}x")
         print(f"Settingan SL / TP      : {best_conf[0]} / {best_conf[1]} ATR")
         print(f"Logika Utama           : EMA 50/200 Pullback + Pinbar Rejection")
     else:
-        print("❌ Sial, market benar-benar hancur minggu ini. Saldo mentok di $", best_overall)
+        print("[FAIL] Sial, market benar-benar hancur minggu ini. Saldo mentok di $", best_overall)
     print("="*80)
 
 if __name__ == "__main__": main()
+
+
+

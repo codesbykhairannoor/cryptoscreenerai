@@ -1,4 +1,4 @@
-
+﻿
 """
 SCRIPT EVALUASI DATABASE & RIWAYAT TRANSAKSI BOT CRYPTO
 """
@@ -190,3 +190,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+

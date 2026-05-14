@@ -1,4 +1,4 @@
-import pandas as pd
+﻿import pandas as pd
 import numpy as np
 
 def detect_candle_patterns(df):
@@ -70,3 +70,6 @@ def detect_smart_money_concepts(df):
             ob = "BEARISH OB"
             
     return {"ob": ob, "fvg": fvg}
+
+
+

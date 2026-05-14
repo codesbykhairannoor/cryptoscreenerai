@@ -1,4 +1,4 @@
-
+﻿
 """
 SCRIPT ANALISIS PERFORMA CRYPTO SAJA!
 """
@@ -139,3 +139,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+

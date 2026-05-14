@@ -1,4 +1,4 @@
-import os
+﻿import os
 import time
 from dotenv import load_dotenv
 
@@ -75,8 +75,11 @@ def run_diagnostics():
         return
         
     print("\n" + "="*80)
-    print("ALL SYSTEMS GO! 🟢 BOT SIAP MENEMBAK KAPAN SAJA MARKET MELEDAK!")
+    print("ALL SYSTEMS GO! [OK] BOT SIAP MENEMBAK KAPAN SAJA MARKET MELEDAK!")
     print("="*80 + "\n")
 
 if __name__ == "__main__":
     run_diagnostics()
+
+
+

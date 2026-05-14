@@ -1,4 +1,4 @@
-import requests
+﻿import requests
 import pandas as pd
 import numpy as np
 
@@ -130,3 +130,6 @@ def analyze_patterns():
 
 if __name__ == "__main__":
     analyze_patterns()
+
+
+

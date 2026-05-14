@@ -1,4 +1,4 @@
-
+﻿
 import time
 
 # --- MOCK DATA DARI LOG BOS (USELESS) ---
@@ -47,3 +47,6 @@ else:
         print(f"EXECUTION: FIRE!!! (Score {combined_score} >= Threshold {threshold})")
     else:
         print(f"EXECUTION: BLOCKED (Score {combined_score} < Threshold {threshold})")
+
+
+

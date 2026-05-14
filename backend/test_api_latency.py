@@ -1,4 +1,4 @@
-
+﻿
 import requests
 import time
 import urllib3
@@ -33,3 +33,6 @@ for name, url in apis.items():
         print(f"  SUGGESTED TIMEOUT: {max_l/1000 + 5:.1f}s (Buffer +5s)")
     else:
         print(f"  RESULT: TOTAL FAILURE")
+
+
+

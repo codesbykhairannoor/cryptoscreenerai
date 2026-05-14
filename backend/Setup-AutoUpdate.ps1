@@ -1,5 +1,5 @@
-# ============================================================
-# SETUP AUTO-UPDATE — Jalankan SEKALI sebagai Administrator
+﻿# ============================================================
+# SETUP AUTO-UPDATE - Jalankan SEKALI sebagai Administrator
 # Membuat Windows Task Scheduler yang cek GitHub setiap 5 menit
 # ============================================================
 
@@ -55,3 +55,4 @@ Write-Host "  Get-Content '$LOG' -Tail 20" -ForegroundColor White
 Write-Host ""
 Write-Host "To remove auto-update:" -ForegroundColor Yellow
 Write-Host "  Unregister-ScheduledTask -TaskName '$TASK_NAME' -Confirm:`$false" -ForegroundColor White
+

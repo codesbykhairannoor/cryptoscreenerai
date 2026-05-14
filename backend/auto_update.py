@@ -1,4 +1,4 @@
-"""
+﻿"""
 AUTO-DEPLOY ENGINE v2.0 - Windows VPS Edition
 ===============================================
 Otomatis tarik kode terbaru dari GitHub dan restart bot.
@@ -29,7 +29,7 @@ def find_pm2():
 PM2 = find_pm2()
 
 def run_watcher():
-    # Tentukan working directory — folder dimana auto_update.py ini berada
+    # Tentukan working directory - folder dimana auto_update.py ini berada
     script_dir = os.path.dirname(os.path.abspath(__file__))
     repo_root  = os.path.dirname(script_dir)  # satu level di atas backend/
 
@@ -63,11 +63,11 @@ def run_watcher():
                 if pull.returncode != 0:
                     print(f"[WATCHER] Git pull GAGAL! Tidak restart.", flush=True)
                     print(f"[WATCHER] Error: {pull.stderr.strip()}", flush=True)
-                    # Jangan restart — kode lama lebih baik dari kode rusak
+                    # Jangan restart - kode lama lebih baik dari kode rusak
                     time.sleep(60)
                     continue
 
-                # Verifikasi hash setelah pull — pastikan benar-benar terupdate
+                # Verifikasi hash setelah pull - pastikan benar-benar terupdate
                 new_hash = subprocess.run(
                     ["git", "rev-parse", "HEAD"],
                     cwd=repo_root, capture_output=True, text=True
@@ -100,3 +100,6 @@ def run_watcher():
 
 if __name__ == "__main__":
     run_watcher()
+
+
+

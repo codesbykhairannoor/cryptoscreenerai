@@ -1,4 +1,4 @@
-"""
+﻿"""
 FOREX SCALPER v8.0 - GENIUS SCALPER EDITION
 =============================================
 Perbaikan besar dari v7.0:
@@ -7,23 +7,23 @@ Perbaikan besar dari v7.0:
 - FIX: Cache candle 30m dari 300s ke 60s (data lebih fresh)
 - FIX: Auto-close threshold konsisten dengan stop_loss_val (bukan $7 flat)
 - FIX: Hard block in_demand/in_supply di _determine_side()
-- FIX: Multi-trade dihapus — 1 trade fokus, lot bisa dinaikkan
+- FIX: Multi-trade dihapus - 1 trade fokus, lot bisa dinaikkan
 - FIX: Trailing stop_loss_val aktif dari 15 poin (bukan 12), gap minimal 10 poin
-- FIX: EMA 200 butuh 200 candle — sekarang pakai EMA 50 dengan label benar
+- FIX: EMA 200 butuh 200 candle - sekarang pakai EMA 50 dengan label benar
 - FIX: Consecutive loss pause (port dari crypto engine)
 - FIX: _close_attempted dibersihkan setiap 10 menit
 - FIX: Session overlap London+NY (12-16 UTC) dikurangi trades
-- NEW: Micro-scalp mode — deteksi momentum 1m untuk entry presisi
-- NEW: Spread-adjusted take_profit_val/stop_loss_val — take_profit_val/stop_loss_val otomatis menyesuaikan spread saat ini
-- NEW: News impact filter — skip entry 15 menit sebelum/sesudah high-impact news
-- NEW: Multi-timeframe confluence — butuh minimal 2 TF aligned sebelum entry
+- NEW: Micro-scalp mode - deteksi momentum 1m untuk entry presisi
+- NEW: Spread-adjusted take_profit_val/stop_loss_val - take_profit_val/stop_loss_val otomatis menyesuaikan spread saat ini
+- NEW: News impact filter - skip entry 15 menit sebelum/sesudah high-impact news
+- NEW: Multi-timeframe confluence - butuh minimal 2 TF aligned sebelum entry
 """
 import requests, os, time, datetime
 from dotenv import load_dotenv
 from notifier import send_telegram_message, format_trade_message
 load_dotenv()
 
-# ── KONFIGURASI UTAMA ──────────────────────────────────────────────────────────
+# == KONFIGURASI UTAMA ==========================================================
 MAX_POSITIONS        = 3      # Maksimal 3 trade agar lebih banyak peluang cuan
 SCAN_INTERVAL        = 3
 COOLDOWN_AFTER_TRADE = 120    # Turun ke 2 menit agar lebih rajin
@@ -32,25 +32,25 @@ MAX_SPREAD_POINTS    = 35
 MIN_MOMENTUM_SCORE   = 60     # Skor Institusional (Akurasi Tinggi)
 CANDLE_LIMIT         = 100
 
-# ── take_profit_val/stop_loss_val — RR 1.6:1 (Hasil Optimasi Backtest Massive v9.0) ───────────────────
+# == take_profit_val/stop_loss_val - RR 1.6:1 (Hasil Optimasi Backtest Massive v9.0) ==================-
 # Berdasarkan 3000 candle 1m, stop_loss_val 25 memberikan Win Rate tertinggi (44.1%)
 SCALP_TP_POINTS      = 40.0   # Target profit tetap 40 poin
 SCALP_SL_POINTS      = 25.0   # Stop Loss dinaikkan ke 25 agar tidak gampang kena noise
 MIN_LOT_PER_TRADE    = 0.01
 MAX_LOT_PER_TRADE    = 0.02   # Max 0.02 lot per trade
 
-# ── ATH/ATL DETECTION ─────────────────────────────────────────────────────────
+# == ATH/ATL DETECTION ========================================================-
 ATH_BLOCK_PCT        = 0.80
 ATL_BLOCK_PCT        = 0.20
 
-# ── SESSION LOSS LIMIT ────────────────────────────────────────────────────────
+# == SESSION LOSS LIMIT ========================================================
 SESSION_MAX_LOSS_USD = 15.0
 
-# ── CONSECUTIVE LOSS PROTECTION ───────────────────────────────────────────────
+# == CONSECUTIVE LOSS PROTECTION ==============================================-
 CONSEC_LOSS_LIMIT    = 2      # Pause setelah 2 loss berturut-turut
 CONSEC_LOSS_PAUSE    = 1800   # 30 menit pause
 
-# ── DXY THRESHOLDS ────────────────────────────────────────────────────────────
+# == DXY THRESHOLDS ============================================================
 DXY_STRONG_THRESHOLD = 0.15   # DXY naik 0.15% = bullish USD = bearish gold
 DXY_WEAK_THRESHOLD   = -0.15  # DXY turun 0.15% = bearish USD = bullish gold
 
@@ -66,7 +66,7 @@ class ForexExecutor:
         self._price_history     = []
         self._last_known_price  = 0
         self._last_known_spread = 999
-        self._close_attempted   = {}   # {pos_id: timestamp} — dibersihkan setiap 10 menit
+        self._close_attempted   = {}   # {pos_id: timestamp} - dibersihkan setiap 10 menit
         self._dxy_cache         = {"change": 0.0, "trend": "NEUTRAL", "ts": 0}
         # Session loss tracking
         self._session_loss_usd  = 0.0
@@ -144,7 +144,7 @@ class ForexExecutor:
         now = time.time()
         cache_key = f"{sym}_{timeframe}_{limit}"
         
-        # Cache TTL disesuaikan — candle pendek lebih sering diupdate
+        # Cache TTL disesuaikan - candle pendek lebih sering diupdate
         if timeframe == "1m":              cache_ttl = 10   # 10 detik
         elif timeframe == "5m":            cache_ttl = 30   # 30 detik
         elif timeframe in ("15m", "30m"):  cache_ttl = 60   # 1 menit (sebelumnya 300 = stale!)
@@ -177,11 +177,11 @@ class ForexExecutor:
 
     def _get_dxy_context(self):
         """
-        Ambil DXY (US Dollar Index) dari Yahoo Finance — data akurat langsung dari pasar.
+        Ambil DXY (US Dollar Index) dari Yahoo Finance - data akurat langsung dari pasar.
         DXY kuat = bearish gold bias. DXY lemah = bullish gold bias.
         Cache 5 menit.
 
-        Sebelumnya pakai PAXG sebagai proxy — tidak akurat karena PAXG adalah
+        Sebelumnya pakai PAXG sebagai proxy - tidak akurat karena PAXG adalah
         token emas fisik, bukan DXY. Sekarang pakai DX-Y.NYB langsung.
         """
         now = time.time()
@@ -189,7 +189,7 @@ class ForexExecutor:
             return self._dxy_cache
 
         try:
-            # Yahoo Finance — DX-Y.NYB adalah US Dollar Index futures
+            # Yahoo Finance - DX-Y.NYB adalah US Dollar Index futures
             url = "https://query1.finance.yahoo.com/v8/finance/chart/DX-Y.NYB?interval=5m&range=1d"
             res = requests.get(url, timeout=8, headers={"User-Agent": "Mozilla/5.0"})
             if res.status_code == 200:
@@ -463,7 +463,7 @@ class ForexExecutor:
         """
         Ambil trend HTF dari candle MetaAPI.
         Pakai EMA 50 (bukan EMA 200 palsu dari 50 candle).
-        EMA 200 butuh 200 candle — kalau hanya punya 50, hasilnya tidak akurat.
+        EMA 200 butuh 200 candle - kalau hanya punya 50, hasilnya tidak akurat.
         EMA 50 dari 50 candle = akurat dan cukup untuk bias filter.
         """
         try:
@@ -471,7 +471,7 @@ class ForexExecutor:
             if len(candles) < 20:
                 return "NEUTRAL"
             closes = [float(c.get("close", 0)) for c in candles]
-            # EMA 50 — akurat dengan 60 candle
+            # EMA 50 - akurat dengan 60 candle
             span = min(50, len(closes))
             ema = closes[0]
             k = 2 / (span + 1)
@@ -496,7 +496,7 @@ class ForexExecutor:
         """
         MICRO-SCALP ENGINE: Deteksi momentum 1m untuk entry presisi.
 
-        Scalper jenius tidak masuk di sembarang waktu — mereka tunggu
+        Scalper jenius tidak masuk di sembarang waktu - mereka tunggu
         momentum 1m aligned dengan sinyal 30m. Ini yang membedakan
         entry di harga bagus vs entry di tengah noise.
 
@@ -853,7 +853,7 @@ class ForexExecutor:
         # Exhaustion Dump: Candle merah panjang, close dekat low, harga terendah dari 5 candle terakhir
         is_exhaustion_dump = (closes[-1] < float(candles[-1].get("open", closes[-1]))) and (last_body_pct > 0.6) and (lows[-1] <= min(lows[-5:]))
 
-        # HTF trends (1h dan 4h)  bias filter — pakai hasil yang sudah dihitung di atas
+        # HTF trends (1h dan 4h)  bias filter - pakai hasil yang sudah dihitung di atas
         trend_1h = trend_1h_pre
         trend_4h = trend_4h_pre
 
@@ -1291,7 +1291,7 @@ class ForexExecutor:
         is_exhaustion_dump = ind.get("is_exhaustion_dump", False)
 
         # HARD BLOCK: jangan SELL di demand zone, jangan BUY di supply zone
-        # Ini fix kasus SAHARA — harga di demand tapi bot SHORT
+        # Ini fix kasus SAHARA - harga di demand tapi bot SHORT
         in_demand = ind.get("in_demand", False)
         in_supply = ind.get("in_supply", False)
 
@@ -1321,7 +1321,7 @@ class ForexExecutor:
         if rsi == 50.0 and trend == "NEUTRAL" and pump_sig == "NONE" and not choch_b and not choch_s:
             return None, 0, 0
 
-        # 1 trade fokus — lebih baik 1 trade bagus dari 2 trade biasa
+        # 1 trade fokus - lebih baik 1 trade bagus dari 2 trade biasa
         # Spread cost 2x, margin 2x, tapi tidak ada diversifikasi
         return best_side, best_score, 1
 
@@ -1329,7 +1329,7 @@ class ForexExecutor:
 
     def _calc_tp_sl(self, price, side, atr, spread_pts=0):
         """
-        take_profit_val/stop_loss_val GENIUS SCALPER v8.0 — RR 2:1 dengan spread adjustment.
+        take_profit_val/stop_loss_val GENIUS SCALPER v8.0 - RR 2:1 dengan spread adjustment.
 
         RR 2:1 = take_profit_val 40 poin, stop_loss_val 20 poin.
         Kenapa RR 2:1 lebih baik dari 1.5:1?
@@ -1340,7 +1340,7 @@ class ForexExecutor:
 
         Spread adjustment: take_profit_val diperlebar sedikit untuk cover spread cost.
         """
-        # Spread adjustment — take_profit_val harus cover spread cost
+        # Spread adjustment - take_profit_val harus cover spread cost
         spread_adj = max(0, spread_pts * 0.1)  # 10% dari spread ditambah ke take_profit_val
 
         if atr and 1.0 <= atr <= 25:
@@ -1351,7 +1351,7 @@ class ForexExecutor:
             sl_dist = SCALP_SL_POINTS
             tp_dist = SCALP_TP_POINTS + spread_adj
 
-        # Hard limits — RR harus tetap >= 1.8:1
+        # Hard limits - RR harus tetap >= 1.8:1
         sl_dist = max(sl_dist, 18.0)
         sl_dist = min(sl_dist, 25.0)
         tp_dist = max(tp_dist, sl_dist * 1.8)  # Minimum RR 1.8:1
@@ -1408,7 +1408,7 @@ class ForexExecutor:
     def place_forex_order(self, symbol, side, amount, take_profit_val=None, stop_loss_val=None, reason_data=None):
         if not self.is_active: return False, "Forex not active"
         
-        # ── POSITION GUARD (v26.64) ──
+        # == POSITION GUARD (v26.64) ==
         # Mencegah duplikasi posisi XAUUSD saat API lag
         try:
             from shared_state import state
@@ -1539,21 +1539,21 @@ class ForexExecutor:
 
     def _trail_positions(self, positions):
         """
-        Trailing stop_loss_val v8.0 — Genius Scalper Edition.
+        Trailing stop_loss_val v8.0 - Genius Scalper Edition.
 
         Perubahan dari v7.0:
-        - Trailing aktif dari 15 poin (bukan 12) — kurangi noise exit
+        - Trailing aktif dari 15 poin (bukan 12) - kurangi noise exit
         - Gap trailing minimal 10 poin dari current price (bukan dari entry)
         - Selalu kirim take_profit_val bersamaan agar take_profit_val tidak hilang
         - Auto-close threshold konsisten dengan stop_loss_val (bukan $7 flat)
         - _close_attempted dibersihkan setiap 10 menit
 
         Tabel trailing baru:
-        profit < 15 poin  : DIAM — noise XAUUSD bisa 8-12 poin
+        profit < 15 poin  : DIAM - noise XAUUSD bisa 8-12 poin
         profit 15-19 poin : LOCK-5 (stop_loss_val ke entry+5)
         profit 20-24 poin : LOCK-10 (stop_loss_val ke entry+10)
         profit 25-29 poin : LOCK-15 (stop_loss_val ke entry+15)
-        profit >= 30 poin : LOCK-20 (stop_loss_val ke entry+20) — hampir di take_profit_val
+        profit >= 30 poin : LOCK-20 (stop_loss_val ke entry+20) - hampir di take_profit_val
         """
         now = time.time()
 
@@ -1585,7 +1585,7 @@ class ForexExecutor:
                       f"profit=${profit} pt={round(profit_pt,2)} stop_loss_val={current_sl}", flush=True)
 
             # AUTO-CLOSE: rugi melebihi stop_loss_val + buffer (stop_loss_val harusnya sudah kena, ini safety net)
-            # v8.1: Threshold dinamis — 1.5x dari stop_loss_val dalam poin dikali lot
+            # v8.1: Threshold dinamis - 1.5x dari stop_loss_val dalam poin dikali lot
             # stop_loss_val 20 poin = $0.2 per 0.01 lot. Auto-close di 30 poin ($0.3)
             # Ini mencegah bot "mencuri" trade yang harusnya masih bernapas.
             sl_points_val = abs(open_price - current_sl) if current_sl > 0 else SCALP_SL_POINTS
@@ -1601,7 +1601,7 @@ class ForexExecutor:
                         json={"actionType": "POSITION_CLOSE_ID", "positionId": pos_id}, timeout=8)
                     if res.status_code == 200:
                         print(f"[FOREX AUTO-CLOSE] {pos_id} closed OK")
-                        send_telegram_message(f"<b>🛑 FOREX POSITION CLOSED</b>\n\nSymbol: <code>{sym}</code>\nID: <code>{pos_id}</code>\nProfit: <b>${profit}</b>\nReason: <b>Auto-Close (stop_loss_val Hit/Buffer)</b>")
+                        send_telegram_message(f"<b>[SL] FOREX POSITION CLOSED</b>\n\nSymbol: <code>{sym}</code>\nID: <code>{pos_id}</code>\nProfit: <b>${profit}</b>\nReason: <b>Auto-Close (stop_loss_val Hit/Buffer)</b>")
                     else:
                         del self._close_attempted[pos_id]  # Retry next time
                 except Exception as e:
@@ -1609,7 +1609,7 @@ class ForexExecutor:
                         del self._close_attempted[pos_id]
                 continue
 
-            # TRAILING stop_loss_val — aktif dari 15 poin
+            # TRAILING stop_loss_val - aktif dari 15 poin
             stage = "NONE"
             if is_buy:
                 if profit_pt >= 30.0:
@@ -1699,7 +1699,7 @@ class ForexExecutor:
                     pending_str = " (Pending...)" if now_t - self._pending_order_ts < 10 else ""
                     print(f"[FOREX] Price: {broker_price} | Trades: {active_count} | Lots: {round(total_lots,2)} | Spread: {spread_pts}pts{pending_str}", flush=True)
 
-                # ── GHOST TRADE GUARD (MetaAPI Sync Lag) ──
+                # == GHOST TRADE GUARD (MetaAPI Sync Lag) ==
                 # FIX v8.1: Guard aktif meskipun ada posisi (cegah multi-trade lag)
                 # Lock ditingkatkan ke 15 detik agar sinkronisasi broker lebih aman
                 if now_t - self._pending_order_ts < 15:
@@ -1850,7 +1850,7 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # MTF CONFLUENCE — butuh minimal 2 TF aligned (Atau 1 TF + 5M Precision Tinggi)
+                # MTF CONFLUENCE - butuh minimal 2 TF aligned (Atau 1 TF + 5M Precision Tinggi)
                 mtf = self._get_mtf_confluence(side)
                 e5m = self._get_5m_entry_quality()
                 
@@ -1862,7 +1862,7 @@ class ForexExecutor:
                     time.sleep(SCAN_INTERVAL)
                     continue
 
-                # MICRO MOMENTUM 1m — entry presisi
+                # MICRO MOMENTUM 1m - entry presisi
                 micro = self._get_micro_momentum()
                 if micro["direction"] != "NEUTRAL" and micro["direction"] != side.upper():
                     if do_log:
@@ -1877,7 +1877,7 @@ class ForexExecutor:
                      time.sleep(SCAN_INTERVAL)
                      continue
 
-                # SESSION OVERLAP (London+NY 12-16 UTC) — butuh score lebih tinggi
+                # SESSION OVERLAP (London+NY 12-16 UTC) - butuh score lebih tinggi
                 is_overlap = 12 <= datetime.datetime.utcnow().hour < 16
                 if is_overlap and score < MIN_MOMENTUM_SCORE + 5:
                     if do_log:
@@ -1891,11 +1891,11 @@ class ForexExecutor:
                 exhaustion_dump = ind.get("is_exhaustion_dump", False)
                 # BYPASS Smart Block if PUMP_IMMINENT (This is a momentum play, not exhaustion)
                 if side == "buy" and (near_ath or exhaustion_pump) and pump_sig != "PUMP_IMMINENT":
-                    print(f"[SMART BLOCK] ATH/Exhaustion — skip BUY.")
+                    print(f"[SMART BLOCK] ATH/Exhaustion - skip BUY.")
                     time.sleep(SCAN_INTERVAL)
                     continue
                 if side == "sell" and (near_atl or exhaustion_dump) and pump_sig != "DUMP_IMMINENT":
-                    print(f"[SMART BLOCK] ATL/Exhaustion — skip SELL.")
+                    print(f"[SMART BLOCK] ATL/Exhaustion - skip SELL.")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
@@ -1944,11 +1944,11 @@ class ForexExecutor:
                 fresh_tp, fresh_sl = self._calc_tp_sl(fresh_entry, side, atr, spread_pts=spread_pts)
 
                 if side == "buy" and fresh_sl >= fresh_entry:
-                    print(f"[stop_loss_val GUARD] BUY stop_loss_val {fresh_sl} >= entry {fresh_entry} — skip")
+                    print(f"[stop_loss_val GUARD] BUY stop_loss_val {fresh_sl} >= entry {fresh_entry} - skip")
                     time.sleep(SCAN_INTERVAL)
                     continue
                 if side == "sell" and fresh_sl <= fresh_entry:
-                    print(f"[stop_loss_val GUARD] SELL stop_loss_val {fresh_sl} <= entry {fresh_entry} — skip")
+                    print(f"[stop_loss_val GUARD] SELL stop_loss_val {fresh_sl} <= entry {fresh_entry} - skip")
                     time.sleep(SCAN_INTERVAL)
                     continue
 
@@ -1968,10 +1968,13 @@ class ForexExecutor:
                               side=side, lot_size=lot, score=score,
                               reason=f"Pump:{pump_sig} RSI:{rsi_val} MTF:{mtf['confluence']} 30m:{trend} 1h:{trend_1h} 4h:{trend_4h}")
                     last_auto_trade = time.time()
-                    print(f"[FOREX] Trade opened OK — take_profit_val:{fresh_tp} stop_loss_val:{fresh_sl}")
+                    print(f"[FOREX] Trade opened OK - take_profit_val:{fresh_tp} stop_loss_val:{fresh_sl}")
 
                 time.sleep(SCAN_INTERVAL)
 
             except Exception as e:
                 print(f"[FOREX ENGINE ERROR] {e}")
                 time.sleep(5)
+
+
+

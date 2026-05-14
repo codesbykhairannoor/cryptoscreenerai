@@ -1,5 +1,5 @@
-# ============================================================
-# AUTO UPDATE SCRIPT — CryptoScreener AI
+﻿# ============================================================
+# AUTO UPDATE SCRIPT - CryptoScreener AI
 # Dicek setiap 5 menit oleh Windows Task Scheduler
 # ============================================================
 
@@ -22,7 +22,7 @@ $LOCAL  = git rev-parse HEAD
 $REMOTE = git rev-parse origin/main
 
 if ($LOCAL -eq $REMOTE) {
-    exit 0  # Tidak ada update — diam
+    exit 0  # Tidak ada update - diam
 }
 
 Write-Log "[AUTO-UPDATE] Update ditemukan! $($LOCAL.Substring(0,7)) -> $($REMOTE.Substring(0,7))"
@@ -56,3 +56,4 @@ if ($portLine) {
 # 6. Restart PM2
 pm2 restart $PM2_NAME 2>&1 | Out-Null
 Write-Log "[AUTO-UPDATE] PM2 restarted. Bot running latest version."
+

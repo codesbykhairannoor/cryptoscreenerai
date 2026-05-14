@@ -1,4 +1,4 @@
-import requests
+﻿import requests
 import pandas as pd
 import numpy as np
 import time
@@ -169,3 +169,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+

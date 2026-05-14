@@ -1,4 +1,4 @@
-import requests
+﻿import requests
 import pandas as pd
 import numpy as np
 import time
@@ -12,14 +12,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 #  WS CACHE HELPERS
 #  Semua fungsi REST di bawah ini akan cek shared_state (WS cache) dulu.
 #  Kalau data WS fresh (< TTL), pakai itu. Kalau stale/kosong, fallback REST.
 #  Ini setara CoinAPI real-time feed tapi gratis via Bitget WS.
-# ─────────────────────────────────────────────────────────────────────────────
-WS_TICKER_TTL = 10   # detik — ticker update setiap ~100ms via WS
-WS_DEPTH_TTL  = 5    # detik — order book update setiap ~200ms via WS
+# ============================================================================-
+WS_TICKER_TTL = 10   # detik - ticker update setiap ~100ms via WS
+WS_DEPTH_TTL  = 5    # detik - order book update setiap ~200ms via WS
 
 
 def _ws_state():
@@ -145,7 +145,7 @@ def detect_demand_supply_zones(df):
     impulse_threshold = max(atr * 1.5, current_price * 0.003)
 
     # Scan dari candle ke-3 sampai ke-2 dari belakang (bukan candle terakhir)
-    # Cari pola: konsolidasi (3+ candle) → impulse
+    # Cari pola: konsolidasi (3+ candle) >> impulse
     for i in range(3, n - 1):
         # Cek apakah candle i adalah impulse
         body_i = abs(closes[i] - opens[i])
@@ -163,7 +163,7 @@ def detect_demand_supply_zones(df):
         if len(consol_candles) < 2:
             continue
 
-        # Ada konsolidasi sebelum impulse — tentukan zona
+        # Ada konsolidasi sebelum impulse - tentukan zona
         zone_top    = max(highs[j] for j in consol_candles)
         zone_bottom = min(lows[j]  for j in consol_candles)
         strength    = len(consol_candles)  # Lebih banyak candle = zona lebih kuat
@@ -303,7 +303,7 @@ def get_open_interest(symbol):
     if ws_oi is not None and ws_oi > 0:
         return ws_oi
 
-    # 2. REST Fallback — dedicated OI endpoint
+    # 2. REST Fallback - dedicated OI endpoint
     try:
         url = f"https://api.bitget.com/api/v2/mix/market/open-interest?symbol={symbol}&productType=USDT-FUTURES"
         r = requests.get(url, timeout=5, verify=False)
@@ -340,7 +340,7 @@ def get_funding_rate(symbol):
 def get_binance_ls_ratio(symbol):
     """
     Nyontek data Long/Short Ratio dari Binance (Volume terbesar).
-    Return None kalau API gagal — beda dengan ratio 1.0 yang valid.
+    Return None kalau API gagal - beda dengan ratio 1.0 yang valid.
     Berguna untuk melihat apakah retail sedang dominan Long atau Short.
     Jika LS Ratio > 2.5, artinya retail terlalu banyak Long = Rawan Dump (Stop Hunt).
     Jika LS Ratio < 0.5, artinya retail terlalu banyak Short = Rawan Pump (Short Squeeze).
@@ -614,20 +614,20 @@ def get_technical_indicators(symbol, interval="15m"):
         # Roket terbang: Candle hijau membesar (body > 50% ATR) dan menjebol high candle sebelumnya
         flying_rocket = (last_close > last_open) and (body_size > atr_val * 0.5) and (last_close > prev_high)
 
-        # ── 7c. MOMENTUM EXHAUSTION DETECTION ─────────────────────────────────
+        # == 7c. MOMENTUM EXHAUSTION DETECTION ================================-
         # Pertanyaan kunci: "Apakah momentum turun/naik sudah HABIS?"
         # Bot tidak boleh BUY kalau harga masih dalam tren turun yang aktif.
         # Bot tidak boleh SELL kalau harga masih dalam tren naik yang aktif.
         #
         # Cara deteksi exhaustion:
         # 1. LOWER HIGH / LOWER LOW sequence (bearish structure masih aktif)
-        #    → Selama harga masih bikin lower high, jangan BUY
+        #    >> Selama harga masih bikin lower high, jangan BUY
         # 2. Candle merah berturut-turut (momentum turun belum berhenti)
-        #    → 3+ candle merah berturut-turut = masih turun, tunggu reversal
+        #    >> 3+ candle merah berturut-turut = masih turun, tunggu reversal
         # 3. Volume turun saat harga turun (exhaustion = volume mengecil)
-        #    → Volume spike turun = masih ada seller kuat
+        #    >> Volume spike turun = masih ada seller kuat
         # 4. Candle terakhir close di bawah open DAN di bawah low candle sebelumnya
-        #    → Ini "continuation" bukan "reversal"
+        #    >> Ini "continuation" bukan "reversal"
 
         closes_arr = df_cur['close'].tolist()
         opens_arr  = df_cur['open'].tolist()
@@ -940,38 +940,38 @@ def get_forex_data(symbol="XAUUSD", interval="15m"):
 
 def get_dune_macro_metrics():
     """
-    DUNE ANALYTICS — Full On-Chain Macro Intelligence Engine
+    DUNE ANALYTICS - Full On-Chain Macro Intelligence Engine
     =========================================================
-    Menggunakan Dune API v1 dengan flow: create query → execute → poll → result.
-    Cache 30 menit — data on-chain update per block (~12 detik) tapi kita tidak
+    Menggunakan Dune API v1 dengan flow: create query >> execute >> poll >> result.
+    Cache 30 menit - data on-chain update per block (~12 detik) tapi kita tidak
     perlu refresh sesering itu untuk macro signal.
 
     Data yang dihasilkan:
-    1. Stablecoin supply (USDT+USDC+DAI) — proxy untuk "dry powder" di market
+    1. Stablecoin supply (USDT+USDC+DAI) - proxy untuk "dry powder" di market
        Naik = lebih banyak uang siap masuk crypto = bullish
        Turun = capital keluar dari crypto = bearish
 
-    2. DEX volume 24h — on-chain trading activity
+    2. DEX volume 24h - on-chain trading activity
        Tinggi = market aktif, sinyal lebih reliable
        Rendah = market sepi, sinyal lebih banyak false
 
-    3. ETH gas price — proxy untuk network congestion & market activity
+    3. ETH gas price - proxy untuk network congestion & market activity
        Gas tinggi = banyak transaksi = market aktif/bullish
        Gas rendah = sepi = market lesu
 
-    4. Whale ETH transfers (>100 ETH) — institutional movement
+    4. Whale ETH transfers (>100 ETH) - institutional movement
        Banyak = whale aktif bergerak = potensi volatilitas tinggi
 
     Return dict:
-      stablecoin_supply_b  : float  — total stablecoin supply dalam Miliar USD
-      stablecoin_change_pct: float  — perubahan supply vs kemarin (%)
-      dex_volume_24h_b     : float  — DEX volume 24h dalam Miliar USD
-      eth_gas_gwei         : float  — ETH gas price rata-rata (Gwei)
-      whale_transfers_1h   : int    — jumlah transfer >100 ETH dalam 1 jam
-      whale_eth_volume_1h  : float  — total ETH dari whale transfers
-      macro_trend          : str    — "BULLISH" / "BEARISH" / "NEUTRAL"
-      onchain_activity     : str    — "HIGH" / "NORMAL" / "LOW"
-      summary              : str    — ringkasan 1 baris untuk log
+      stablecoin_supply_b  : float  - total stablecoin supply dalam Miliar USD
+      stablecoin_change_pct: float  - perubahan supply vs kemarin (%)
+      dex_volume_24h_b     : float  - DEX volume 24h dalam Miliar USD
+      eth_gas_gwei         : float  - ETH gas price rata-rata (Gwei)
+      whale_transfers_1h   : int    - jumlah transfer >100 ETH dalam 1 jam
+      whale_eth_volume_1h  : float  - total ETH dari whale transfers
+      macro_trend          : str    - "BULLISH" / "BEARISH" / "NEUTRAL"
+      onchain_activity     : str    - "HIGH" / "NORMAL" / "LOW"
+      summary              : str    - ringkasan 1 baris untuk log
     """
     # Cache 30 menit
     now = time.time()
@@ -988,7 +988,7 @@ def get_dune_macro_metrics():
     HEADERS = {"X-DUNE-API-KEY": api_key, "Content-Type": "application/json"}
 
     def _dune_run(sql: str, name: str, max_wait: int = 60) -> list:
-        """Create → Execute → Poll → Return rows."""
+        """Create >> Execute >> Poll >> Return rows."""
         try:
             # 1. Create query
             r = requests.post(f"{BASE}/query", headers=HEADERS,
@@ -998,7 +998,7 @@ def get_dune_macro_metrics():
                 return []
             qid = r.json().get("query_id")
 
-            # 2. Execute (tanpa performance param — free tier)
+            # 2. Execute (tanpa performance param - free tier)
             r2 = requests.post(f"{BASE}/query/{qid}/execute",
                                headers=HEADERS, json={}, timeout=15)
             if r2.status_code not in (200, 201):
@@ -1024,7 +1024,7 @@ def get_dune_macro_metrics():
 
     result = {}
 
-    # ── 1. Stablecoin Supply ─────────────────────────────────────────────────
+    # == 1. Stablecoin Supply ================================================-
     print("[DUNE] Fetching stablecoin supply...", flush=True)
     stable_rows = _dune_run("""
         SELECT
@@ -1043,7 +1043,7 @@ def get_dune_macro_metrics():
     total_stable_b = round(total_stable_m / 1000, 2)
 
     # Sanity check: stablecoin supply harusnya $200B-$500B
-    # Kalau di luar range ini, data Dune corrupt — pakai 0 (neutral)
+    # Kalau di luar range ini, data Dune corrupt - pakai 0 (neutral)
     if total_stable_b > 500 or total_stable_b < 0:
         print(f"[DUNE] Stablecoin data invalid ({total_stable_b}B), using neutral", flush=True)
         total_stable_b = 0.0
@@ -1055,7 +1055,7 @@ def get_dune_macro_metrics():
         if r.get("supply_millions", 0) / 1000 < 500  # Filter baris corrupt
     }
 
-    # ── 2. DEX Volume 24h ────────────────────────────────────────────────────
+    # == 2. DEX Volume 24h ====================================================
     print("[DUNE] Fetching DEX volume...", flush=True)
     dex_rows = _dune_run("""
         SELECT
@@ -1079,7 +1079,7 @@ def get_dune_macro_metrics():
     result["dex_volume_24h_b"] = dex_volume_b
     result["dex_top_protocol"]  = dex_rows[0].get("project", "unknown") if dex_rows else "unknown"
 
-    # ── 3. ETH Gas (market activity proxy) ───────────────────────────────────
+    # == 3. ETH Gas (market activity proxy) ==================================-
     print("[DUNE] Fetching ETH gas...", flush=True)
     gas_rows = _dune_run("""
         SELECT
@@ -1097,7 +1097,7 @@ def get_dune_macro_metrics():
     result["eth_gas_gwei"]    = eth_gas
     result["eth_tx_count_1h"] = eth_tx_count
 
-    # ── 4. Whale ETH Transfers ───────────────────────────────────────────────
+    # == 4. Whale ETH Transfers ==============================================-
     print("[DUNE] Fetching whale transfers...", flush=True)
     whale_rows = _dune_run("""
         SELECT
@@ -1114,7 +1114,7 @@ def get_dune_macro_metrics():
     result["whale_transfers_1h"]  = whale_count
     result["whale_eth_volume_1h"] = whale_eth
 
-    # ── 5. Macro Trend Scoring ───────────────────────────────────────────────
+    # == 5. Macro Trend Scoring ==============================================-
     bull_score = 0
     bear_score = 0
 
@@ -1153,7 +1153,7 @@ def get_dune_macro_metrics():
 
     result["onchain_activity"] = onchain_activity
 
-    # ── Summary ──────────────────────────────────────────────────────────────
+    # == Summary ==============================================================
     result["summary"] = (
         f"[DUNE] Stable:{total_stable_b}B | "
         f"DEX:{result['dex_volume_24h_b']}B/24h | "
@@ -1197,14 +1197,14 @@ def get_5m_precision_entry(symbol: str) -> dict:
     - Ini yang dipakai trader institusi: "snipe entry" di lower TF
 
     Return dict:
-      in_5m_demand      : bool   — harga di dalam demand zone 5m
-      in_5m_supply      : bool   — harga di dalam supply zone 5m
-      demand_5m         : dict   — {top, bottom, strength, fresh, volume_ratio}
-      supply_5m         : dict   — {top, bottom, strength, fresh, volume_ratio}
-      entry_quality     : int    — 0-100, seberapa bagus entry sekarang
-      entry_signal      : str    — "STRONG_BUY" / "BUY" / "NEUTRAL" / "SELL" / "STRONG_SELL"
-      proximity_pct     : float  — % jarak harga ke zona terdekat
-      zone_freshness    : str    — "FRESH" / "TESTED_ONCE" / "TESTED_MULTIPLE"
+      in_5m_demand      : bool   - harga di dalam demand zone 5m
+      in_5m_supply      : bool   - harga di dalam supply zone 5m
+      demand_5m         : dict   - {top, bottom, strength, fresh, volume_ratio}
+      supply_5m         : dict   - {top, bottom, strength, fresh, volume_ratio}
+      entry_quality     : int    - 0-100, seberapa bagus entry sekarang
+      entry_signal      : str    - "STRONG_BUY" / "BUY" / "NEUTRAL" / "SELL" / "STRONG_SELL"
+      proximity_pct     : float  - % jarak harga ke zona terdekat
+      zone_freshness    : str    - "FRESH" / "TESTED_ONCE" / "TESTED_MULTIPLE"
     """
     empty = {
         "in_5m_demand": False, "in_5m_supply": False,
@@ -1385,3 +1385,6 @@ if __name__ == "__main__":
     print(get_technical_indicators("BTCUSDT"))
     print(get_defillama_metrics("aave"))
     print(get_dune_macro_metrics())
+
+
+

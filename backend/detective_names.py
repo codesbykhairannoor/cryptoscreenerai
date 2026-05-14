@@ -1,4 +1,4 @@
-import ast
+﻿import ast
 
 def find_undefined_names(filename):
     with open(filename, 'r', encoding='utf-8') as f:
@@ -38,3 +38,6 @@ if __name__ == "__main__":
     print("UNDEFINED NAMES FOUND:")
     for name in sorted(undefined):
         print(f"- {name}")
+
+
+

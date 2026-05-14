@@ -1,4 +1,4 @@
-import requests
+﻿import requests
 import pandas as pd
 import numpy as np
 from itertools import product
@@ -140,3 +140,6 @@ if __name__ == "__main__":
     for r in results[1:6]:
         wr_r = (r['wins']/r['trades']*100) if r['trades'] > 0 else 0
         print(f"TP {r['tp']}% | SL {r['sl']}% | Trail: {r['trailing']} => Saldo: ${r['final_wallet']:.2f} (WR: {wr_r:.1f}%)")
+
+
+

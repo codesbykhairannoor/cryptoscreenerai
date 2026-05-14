@@ -1,4 +1,4 @@
-import requests
+﻿import requests
 import pandas as pd
 import time
 import urllib3
@@ -157,3 +157,6 @@ print(f"WINNER: TP:{best['tp']}% | SL:{best['sl']}% | RSI:{best['rsi']} | RVOL:{
 print(f"TOTAL PnL: {best['pnl']:+.1f}%")
 print(f"TOTAL TRADES: {best['trades']} trades")
 print("-" * 65)
+
+
+

@@ -1,4 +1,4 @@
-"""
+﻿"""
 PUMP PREDICTOR ENGINE v1.0
 ===========================
 Deteksi koin yang AKAN pump sebelum pump terjadi.
@@ -34,7 +34,7 @@ api_key = os.getenv("DEEPSEEK_API_KEY")
 _deepseek_disabled = False  # Flag untuk disable setelah error insufficient balance
 
 def _get_deepseek_client():
-    """Lazy client — return None kalau disabled atau tidak ada key."""
+    """Lazy client - return None kalau disabled atau tidak ada key."""
     global _deepseek_disabled
     if _deepseek_disabled or not api_key:
         return None
@@ -351,3 +351,5 @@ def analyze_market_data(data_json):
             return f"Gagal analisis: {e}"
             
     return "AI analysis tidak tersedia (kredit habis atau key tidak ada). Bot tetap berjalan normal."
+
+

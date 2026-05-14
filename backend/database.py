@@ -1,4 +1,4 @@
-import os
+﻿import os
 import time
 import sqlite3
 from dotenv import load_dotenv
@@ -342,3 +342,6 @@ def get_trade_history(market=None, limit=50):
     cursor.close()
     conn.close()
     return [dict(r) for r in rows]
+
+
+

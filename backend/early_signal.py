@@ -1,4 +1,4 @@
-"""
+﻿"""
 EARLY MOMENTUM SIGNAL ENGINE
 ==============================
 3 sumber sinyal early entry untuk Bitget Futures:
@@ -30,9 +30,9 @@ from collections import defaultdict
 import urllib3
 urllib3.disable_warnings()
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 #  CONFIG
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 OI_SNAPSHOT_INTERVAL  = 900    # 15 menit
 OI_SURGE_THRESHOLD    = 0.30   # OI naik >30% = surge
 OI_HISTORY_WINDOW     = 4      # Simpan 4 snapshot terakhir (1 jam)
@@ -44,9 +44,9 @@ DEX_CHAINS            = ["solana", "base", "ethereum", "bsc"]
 
 RVOL_THRESHOLD        = 3.0    # RVOL > 3x = spike
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 #  STATE
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 # OI history: {symbol: [(timestamp, oi_value), ...]}
 _oi_history: dict = defaultdict(list)
 _oi_lock = threading.Lock()
@@ -60,9 +60,9 @@ _rvol_cache: dict = {}
 _rvol_ts: float = 0
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 #  1. BITGET OI TRACKER
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 
 def _fetch_all_oi() -> dict:
     """
@@ -176,20 +176,20 @@ def oi_tracker_loop():
                 pass
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 #  2. DEXSCREENER EARLY STAGE DETECTOR
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 
 def _fetch_dex_trending() -> list:
     """
     Fetch trending/early-stage pairs dari DexScreener.
     Endpoint yang valid (2025):
-    - /token-boosts/top/v1  → tokens yang sedang di-boost (trending)
-    - /latest/dex/search?q= → search pairs dengan filter volume
+    - /token-boosts/top/v1  >> tokens yang sedang di-boost (trending)
+    - /latest/dex/search?q= >> search pairs dengan filter volume
     """
     alerts = []
 
-    # ── 1. Token Boosts (tokens yang sedang trending/dipromosikan) ────────────
+    # == 1. Token Boosts (tokens yang sedang trending/dipromosikan) ============
     try:
         r = requests.get(
             "https://api.dexscreener.com/token-boosts/top/v1",
@@ -214,7 +214,7 @@ def _fetch_dex_trending() -> list:
     except Exception as e:
         print(f"[DEXSCREENER] Boost fetch error: {e}", flush=True)
 
-    # ── 2. Search high-volume pairs di Solana & Base ──────────────────────────
+    # == 2. Search high-volume pairs di Solana & Base ==========================
     # DexScreener /latest/dex/pairs/{chain} sudah 404, pakai search
     search_queries = ["solana", "base", "ethereum"]
     for query in search_queries:
@@ -310,9 +310,9 @@ def dex_scanner_loop():
         time.sleep(DEX_SCAN_INTERVAL)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 #  3. BITGET RVOL (Relative Volume)
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 
 def get_rvol_batch() -> dict:
     """
@@ -438,9 +438,9 @@ def get_early_signals() -> dict:
     }
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  STARTUP — dipanggil dari main.py
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
+#  STARTUP - dipanggil dari main.py
+# ============================================================================-
 
 def start_early_signal_engine():
     """Start semua background threads untuk early signal detection."""
@@ -449,3 +449,6 @@ def start_early_signal_engine():
     t1.start()
     t2.start()
     print("[EARLY SIGNAL] OI Tracker + DexScreener started.", flush=True)
+
+
+

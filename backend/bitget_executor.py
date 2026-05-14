@@ -1,4 +1,4 @@
-import ccxt
+﻿import ccxt
 import os
 import time
 import json
@@ -318,7 +318,7 @@ class BitgetExecutor:
         except: return []
 
     def place_order(self, symbol, side, amount, take_profit_val=None, stop_loss_val=None, leverage=10):
-        # ── POSITION GUARD (v26.63) ──
+        # == POSITION GUARD (v26.63) ==
         # Mencegah 'Ghost Trades' (duplikasi posisi)
         try:
             existing = self.get_all_positions()
@@ -574,7 +574,7 @@ class BitgetExecutor:
                     close_trade(full_symbol, exit_price=0, pnl_usd=0) 
                 except: pass
 
-                print(f"\n[TRACKER] 🏁 TRADE CLOSED: {clean} | PnL: {last_pnl}%")
+                print(f"\n[TRACKER] [DONE] TRADE CLOSED: {clean} | PnL: {last_pnl}%")
                 print(f"          Status: Cooldown 24 jam (Win Pattern v29.1) aktif.\n")
             
             self._tracked_positions = current_symbols
@@ -611,7 +611,7 @@ class BitgetExecutor:
                 price_move_pct = abs((mark_price - entry) / entry * 100) if entry > 0 else 0
 
                 # MINIMUM HOLD TIME: 30 menit sebelum sideways detection aktif
-                # Naik dari 5 menit — trade butuh waktu untuk berkembang
+                # Naik dari 5 menit - trade butuh waktu untuk berkembang
                 # Ini juga mencegah false close saat bot restart (timer reset ke 0)
                 MIN_HOLD_HOURS     = 0.5    # 30 menit minimum hold
                 SIDEWAYS_WARN_HOURS    = 3.0   # Warning setelah 3 jam
@@ -689,7 +689,7 @@ class BitgetExecutor:
                     state.recently_exited[clean] = time.time()
                     continue
 
-                #    INITIAL GUARD — Jika stop_loss_val/take_profit_val hilang, pasang LANGSUNG tanpa cooldown
+                #    INITIAL GUARD - Jika stop_loss_val/take_profit_val hilang, pasang LANGSUNG tanpa cooldown
                 if (not has_sl or not has_tp) and now - self.startup_time > 5:
                     # stop_loss_val 5% price = 50% PnL at 10x (Optimized v9.3)
                     sl_price = entry * 0.95 if side in ['long','buy'] else entry * 1.05
@@ -698,12 +698,15 @@ class BitgetExecutor:
                     if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                     self._last_sl_set[symbol] = now
 
-                #    TSL v37.0 — DISABLED (PURE SCALPER MODE)
-                # ─────────────────────────────────────────────────────
+                #    TSL v37.0 - DISABLED (PURE SCALPER MODE)
+                # =====================================================
                 # Trailing SL dimatikan. Kita murni mengejar Limit Order TP 1.0%
                 # untuk memastikan Win Rate 90.9% tercapai tanpa dipotong di tengah jalan.
-                # ─────────────────────────────────────────────────────
+                # =====================================================
                 pass # Bypass trailing logic completely
 
         except Exception as e:
             print(f"[POSITION MANAGER CRASH] {e}")
+
+
+

@@ -1,4 +1,4 @@
-
+﻿
 """
 TEST BACKTESTING ENGINE - Sederhana
 """
@@ -66,7 +66,10 @@ def main():
     ml_model = CryptoMLModel()
     ml_model.train(df)
     ml_model.save("test_ml_model.pkl")
-    print("\n✅ Test selesai!")
+    print("\n[OK] Test selesai!")
 
 if __name__ == "__main__":
     main()
+
+
+

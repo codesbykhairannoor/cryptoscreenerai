@@ -1,4 +1,4 @@
-import requests
+﻿import requests
 import os
 from dotenv import load_dotenv
 
@@ -28,7 +28,7 @@ def send_telegram_message(message):
 
 def format_trade_message(data):
     """Format pesan trade agar cantik di Telegram."""
-    emoji = "🚀" if data.get('side', '').lower() in ['buy', 'long'] else "📉"
+    emoji = "[PUMP]" if data.get('side', '').lower() in ['buy', 'long'] else "[DOWN]"
     
     msg = (
         f"<b>{emoji} NEW TRADE EXECUTED</b>\n\n"
@@ -38,21 +38,21 @@ def format_trade_message(data):
         f"<b>Amount:</b> {data.get('amount')} contracts\n"
         f"<b>Score:</b> {data.get('score')}/100\n"
         f"----------------------------------\n"
-        f"<b>🎯 TP:</b> {data.get('tp')} (+{data.get('tp_pct')}%)\n"
-        f"<b>🛑 SL:</b> {data.get('sl')} (-{data.get('sl_pct')}%)\n"
+        f"<b>[TP] TP:</b> {data.get('tp')} (+{data.get('tp_pct')}%)\n"
+        f"<b>[SL] SL:</b> {data.get('sl')} (-{data.get('sl_pct')}%)\n"
         f"----------------------------------\n"
-        f"<b>💡 Why:</b> {data.get('reason')}\n\n"
-        f"<b>📊 [TECH]</b>\n"
+        f"<b>[WHY] Why:</b> {data.get('reason')}\n\n"
+        f"<b>[TECH] [TECH]</b>\n"
         f"RSI: {data.get('rsi')}\n"
         f"VWAP: {data.get('vwap')}%\n"
         f"OBI: {data.get('obi_rest')}\n"
         f"Trend1h: {data.get('trend_1h')}\n\n"
-        f"<b>🐋 [WS-RT]</b>\n"
+        f"<b>[WHALE] [WS-RT]</b>\n"
         f"Whale Buy: ${data.get('rt_wbv'):,.0}\n"
         f"Whale Sell: ${data.get('rt_wsv'):,.0}\n"
         f"RT-OBI: {data.get('rt_obi'):+.2f}\n"
         f"Spread: {data.get('rt_spread'):.3f}%\n\n"
-        f"<b>🔥 [SMC 5M]</b>\n"
+        f"<b>[HOT] [SMC 5M]</b>\n"
         f"Signal: {data.get('e5m')}\n"
         f"Quality: {data.get('q5m')}/100\n"
         f"Zone: {data.get('f5m')}\n"
@@ -61,8 +61,11 @@ def format_trade_message(data):
 
 if __name__ == "__main__":
     # Test message
-    test_msg = "<b>🤖 Bot Connection Test</b>\nBot is now connected to VPS. Ready to snipe! 🚀"
+    test_msg = "<b>[BOT] Bot Connection Test</b>\nBot is now connected to VPS. Ready to snipe! [PUMP]"
     if send_telegram_message(test_msg):
         print("Telegram test success!")
     else:
         print("Telegram test failed!")
+
+
+

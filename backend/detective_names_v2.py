@@ -1,4 +1,4 @@
-import ast
+﻿import ast
 
 def get_undefined_globals(filename):
     with open(filename, 'r', encoding='utf-8') as f:
@@ -71,3 +71,6 @@ if __name__ == "__main__":
     print("REALLY UNDEFINED NAMES:")
     for name in sorted(undefined):
         print(f"- {name}")
+
+
+

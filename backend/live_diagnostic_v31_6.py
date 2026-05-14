@@ -1,4 +1,4 @@
-import time
+﻿import time
 import pandas as pd
 from bitget_executor import BitgetExecutor
 from crypto_engine import get_technical_indicators, _determine_trade_side, fetch_all_tickers, analyze_and_sort
@@ -67,3 +67,6 @@ def run_live_test():
 
 if __name__ == "__main__":
     run_live_test()
+
+
+

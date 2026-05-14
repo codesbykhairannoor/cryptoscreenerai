@@ -1,4 +1,4 @@
-"""
+﻿"""
 NEWS SNIPER v3.0   ULTRA-FAST FOREX NEWS EXECUTION
 ====================================================
 Arsitektur untuk eksekusi sub-detik:
@@ -443,3 +443,6 @@ if __name__ == "__main__":
     sniper.start()
     while True:
         time.sleep(1)
+
+
+

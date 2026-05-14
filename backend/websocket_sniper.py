@@ -1,4 +1,4 @@
-import hmac
+﻿import hmac
 import hashlib
 import base64
 import asyncio
@@ -396,12 +396,12 @@ class BinanceWS:
 
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  BITGET MARKET WS — Full Real-Time Market Data Engine
+# ============================================================================-
+#  BITGET MARKET WS - Full Real-Time Market Data Engine
 #  Setara CoinAPI: ticker, order book L2, trade stream, OI, funding
 #  Coverage: semua top coins dari fetch_all_tickers (dinamis, bukan hardcoded)
 #  Data disimpan ke shared_state untuk dipakai data_fetcher tanpa REST call
-# ─────────────────────────────────────────────────────────────────────────────
+# ============================================================================-
 
 WHALE_THRESHOLD_USD   = 50_000   # Trade > $50k = whale
 WHALE_WINDOW_SECONDS  = 300      # Rolling 5 menit untuk akumulasi whale volume
@@ -412,12 +412,12 @@ FUNDING_REFRESH_SEC   = 60       # Refresh funding rate setiap 1 menit via REST
 
 class BitgetMarketWS:
     """
-    FULL MARKET DATA ENGINE — Setara CoinAPI Market Data API
+    FULL MARKET DATA ENGINE - Setara CoinAPI Market Data API
 
     Channels yang di-subscribe per symbol:
-    1. ticker   → lastPrice, 24h change%, volume, OI, funding rate, high/low
-    2. books5   → L2 order book 5 level → OBI (bid/ask imbalance)
-    3. trade    → individual trades → whale detection (>$50k)
+    1. ticker   >> lastPrice, 24h change%, volume, OI, funding rate, high/low
+    2. books5   >> L2 order book 5 level >> OBI (bid/ask imbalance)
+    3. trade    >> individual trades >> whale detection (>$50k)
 
     Data yang dihasilkan (semua masuk shared_state):
     - rt_price[sym]         : last traded price
@@ -448,7 +448,7 @@ class BitgetMarketWS:
         self._connections: list = []   # list of asyncio tasks per connection
         self._last_funding_refresh = 0.0
 
-    # ── Symbol Management ────────────────────────────────────────────────────
+    # == Symbol Management ====================================================
 
     def update_symbols(self, symbols: list[str]):
         """
@@ -472,7 +472,7 @@ class BitgetMarketWS:
         syms = self._symbols or ["BTCUSDT", "ETHUSDT"]
         return [syms[i:i + MAX_SYMBOLS_PER_CONN] for i in range(0, len(syms), MAX_SYMBOLS_PER_CONN)]
 
-    # ── Heartbeat ────────────────────────────────────────────────────────────
+    # == Heartbeat ============================================================
 
     async def _heartbeat(self, ws):
         while self.is_running:
@@ -482,14 +482,14 @@ class BitgetMarketWS:
             except Exception:
                 break
 
-    # ── Subscribe ────────────────────────────────────────────────────────────
+    # == Subscribe ============================================================
 
     async def _subscribe(self, ws, symbols: list[str]):
         args = []
         for sym in symbols:
             inst_id = sym.replace("USDT", "")  # Bitget instId format: BTC, ETH, etc.
             # Bitget v2 WS instId for futures = symbol without USDT suffix
-            # e.g. BTCUSDT → instId = "BTCUSDT" for mix futures
+            # e.g. BTCUSDT >> instId = "BTCUSDT" for mix futures
             for ch in TICKER_CHANNELS:
                 args.append({
                     "instType": "USDT-FUTURES",
@@ -498,10 +498,10 @@ class BitgetMarketWS:
                 })
         msg = {"op": "subscribe", "args": args}
         await ws.send(json.dumps(msg))
-        print(f"[MARKET WS] Subscribed {len(symbols)} symbols × {len(TICKER_CHANNELS)} channels "
+        print(f"[MARKET WS] Subscribed {len(symbols)} symbols x {len(TICKER_CHANNELS)} channels "
               f"= {len(args)} streams", flush=True)
 
-    # ── Message Handlers ─────────────────────────────────────────────────────
+    # == Message Handlers ====================================================-
 
     def _handle_ticker(self, symbol: str, data_list: list):
         from shared_state import state
@@ -526,7 +526,7 @@ class BitgetMarketWS:
                 if high > 0: state.rt_high[symbol] = high
                 if low  > 0: state.rt_low[symbol]  = low
 
-                # Open Interest — field yang benar = holdingAmount
+                # Open Interest - field yang benar = holdingAmount
                 oi = float(t.get("holdingAmount", 0) or t.get("openInterest", 0) or 0)
                 if oi > 0:
                     state.rt_oi[symbol] = oi
@@ -549,7 +549,7 @@ class BitgetMarketWS:
                 pass  # Jangan crash karena satu ticker error
 
     def _handle_books5(self, symbol: str, data_list: list):
-        """L2 Order Book → OBI + best bid/ask."""
+        """L2 Order Book >> OBI + best bid/ask."""
         from shared_state import state
         for d in data_list:
             try:
@@ -583,9 +583,9 @@ class BitgetMarketWS:
 
     def _handle_trade(self, symbol: str, data_list: list):
         """
-        Trade stream → Whale detection.
+        Trade stream >> Whale detection.
         Akumulasi whale buy/sell volume dalam rolling 5 menit.
-        Kalau whale buy > whale sell dan total > $100k → WHALE_BUY
+        Kalau whale buy > whale sell dan total > $100k >> WHALE_BUY
         """
         from shared_state import state
         now = time.time()
@@ -648,10 +648,10 @@ class BitgetMarketWS:
             else:
                 state.rt_whale[symbol] = "NORMAL"
         elif total_whale < 10_000:
-            # Tidak ada aktivitas whale → reset ke NORMAL setelah 5 menit
+            # Tidak ada aktivitas whale >> reset ke NORMAL setelah 5 menit
             state.rt_whale[symbol] = "NORMAL"
 
-    # ── Funding Rate REST Refresh ─────────────────────────────────────────────
+    # == Funding Rate REST Refresh ============================================-
 
     async def _refresh_funding_rates(self):
         """
@@ -677,7 +677,7 @@ class BitgetMarketWS:
         except Exception as e:
             print(f"[MARKET WS] Funding refresh error: {e}", flush=True)
 
-    # ── Single Connection Loop ────────────────────────────────────────────────
+    # == Single Connection Loop ================================================
 
     async def _run_connection(self, symbols: list[str], conn_id: int):
         """Run satu WebSocket connection untuk subset symbols."""
@@ -748,7 +748,7 @@ class BitgetMarketWS:
                 print(f"[MARKET WS #{conn_id}] Error: {e} | Reconnect in {wait}s", flush=True)
                 await asyncio.sleep(wait)
 
-    # ── Main Entry Point ──────────────────────────────────────────────────────
+    # == Main Entry Point ======================================================
 
     async def listen(self):
         """
@@ -787,7 +787,7 @@ class BitgetMarketWS:
             await self._refresh_funding_rates()
 
 
-# ── Market WS Singleton ───────────────────────────────────────────────────────
+# == Market WS Singleton ======================================================-
 _market_ws_instance: BitgetMarketWS | None = None
 
 def get_market_ws() -> BitgetMarketWS:
@@ -818,7 +818,7 @@ async def main():
     market_ws   = get_market_ws()
     binance_ws  = BinanceWS()
 
-    # Jalankan semua WS dengan isolation — satu crash tidak membunuh yang lain
+    # Jalankan semua WS dengan isolation - satu crash tidak membunuh yang lain
     await asyncio.gather(
         _safe_run(private_ws.listen,  "PrivateWS"),
         _safe_run(public_ws.listen,   "PublicWS"),
@@ -830,3 +830,6 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+
+
+

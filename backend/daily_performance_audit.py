@@ -1,4 +1,4 @@
-import requests
+﻿import requests
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -122,3 +122,6 @@ def run_daily_audit():
 
 if __name__ == "__main__":
     run_daily_audit()
+
+
+

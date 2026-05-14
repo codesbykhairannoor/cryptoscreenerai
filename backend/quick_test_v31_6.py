@@ -1,4 +1,4 @@
-import time
+﻿import time
 from bitget_executor import BitgetExecutor
 from crypto_engine import get_technical_indicators, _determine_trade_side
 
@@ -41,3 +41,6 @@ def quick_test():
 
 if __name__ == "__main__":
     quick_test()
+
+
+

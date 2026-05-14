@@ -1,4 +1,4 @@
-
+﻿
 """
 ANALISIS CRYPTO NON-BLACKLIST DAN YANG WIN!
 """
@@ -102,3 +102,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+

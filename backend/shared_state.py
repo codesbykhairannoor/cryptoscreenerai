@@ -1,4 +1,4 @@
-import time
+﻿import time
 import threading
 
 class SharedState:
@@ -70,3 +70,6 @@ class SharedState:
             self.last_update = time.time()
 
 state = SharedState()
+
+
+

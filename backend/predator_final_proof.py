@@ -1,4 +1,4 @@
-import pandas as pd
+﻿import pandas as pd
 import numpy as np
 
 # --- PREDATOR FINAL PROOF v27.0 ---
@@ -60,3 +60,6 @@ def simulate_gainer_scenario():
     print("="*80)
 
 if __name__ == "__main__": simulate_gainer_scenario()
+
+
+

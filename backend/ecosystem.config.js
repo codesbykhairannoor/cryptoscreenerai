@@ -1,9 +1,9 @@
-module.exports = {
+﻿module.exports = {
   apps: [
     {
       name: "MyTradingBot",
 
-      // Jalankan uvicorn langsung — lebih reliable di Windows
+      // Jalankan uvicorn langsung - lebih reliable di Windows
       // PM2 bisa kill process ini dengan benar saat restart
       script: "uvicorn",
       args: "main:app --host 0.0.0.0 --port 8000 --timeout-graceful-shutdown 5",
@@ -32,3 +32,4 @@ module.exports = {
     },
   ],
 };
+

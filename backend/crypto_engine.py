@@ -1,4 +1,4 @@
-import time
+﻿import time
 VERSION_TAG = "v26.16-FORCE-BOOT"
 print(f"\n[BOOT] Starting Institutional Predator {VERSION_TAG}...")
 
@@ -7,17 +7,17 @@ import datetime
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# ── ENGINE STATE GLOBALS ──
+# == ENGINE STATE GLOBALS ==
 _ws_st       = type('obj', (object,), {'rt_wbv':{}, 'rt_wsv':{}, 'rt_obi':{}, 'rt_spread':{}})
 _state       = {"last_scan": 0}
 _mws_state   = {}
 _dt          = time
-# ───────────────────────────────
+# ===============================
 
-# ── CRITICAL CONFIG (ABS TOP) ──
+# == CRITICAL CONFIG (ABS TOP) ==
 ADX_PERIOD           = 14
 LEVERAGE             = 10
-# ───────────────────────────────
+# ===============================
 
 from data_fetcher import (
     get_technical_indicators, fetch_all_tickers,
@@ -43,13 +43,13 @@ GLOBAL_REPORT_INTERVAL = 300
 FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
 MIN_MOMENTUM_SCORE   = 30     # Turun ke 30 untuk lebih banyak sinyal!
-# ── INSTITUTIONAL HUNTER CONFIG (v26.70-GOD-MODE) ──
+# == INSTITUTIONAL HUNTER CONFIG (v26.70-GOD-MODE) ==
 HUNTER_ATR_SL_MULT   = 0.8    # Optimized from 700+ scenarios
 HUNTER_ATR_TP_MULT   = 2.0    # Optimized for massive Profit Factor
 FVG_GAP_THRESHOLD    = 0.005  
 SCALP_TP_PCT         = 0.08   
 SCALP_SL_PCT         = 0.015  # 1.5% price = 15% PnL (Strict SL v31.8)
-# ─────────────────────────────────────────
+# =========================================
 MIN_PUMP_SCORE       = 15     # Lebih rendah, lebih banyak sinyal
 MIN_TECH_SCORE       = 20     # Lebih rendah, lebih banyak sinyal
 
@@ -66,12 +66,12 @@ OI_SURGE_THRESHOLD   = 0.05
 FUNDING_SQUEEZE_THR  = -0.0003  # Fix: -0.03% lebih realistis (sebelumnya -0.1% hampir tidak pernah terjadi)
 VOLUME_SPIKE_RATIO   = 2.5
 
-# ── PRECISION STRIKE CONFIG (v22.0) ────────────────────────────
+# == PRECISION STRIKE CONFIG (v22.0) ============================
 ATR_SL_MULT     = 2.0    # stop_loss_val lebih lebar (2.0x ATR) untuk WR 70%+
 ATR_TP_MIN_MULT = 4.0    
 TRAIL_GAP_ATR   = 2.5    
 BTC_SYNC_ENABLED = True  # Hanya LONG jika BTC juga Bullish
-# ───────────────────────────────────────────────────────────────
+# ===============================================================
 
 # DATA-PROVEN BLACKLIST (dari analisis 345 trades, 0% WR)
 # Koin ini terbukti di database tidak pernah profit -- langsung skip
@@ -110,12 +110,12 @@ ADX_TRENDING_THRESHOLD  = 22
 SQUEEZE_MULT            = 1.8   # Dynamic Squeeze: Range < 1.8x ATR
 VOLUME_CONVERGENCE      = 1.5   # Volume harus 1.5x rata-rata
 LIQUIDITY_SWEEP_CONF    = True  # Aktifkan deteksi manipulasi institusi
-# ───────────────────────────────────────────────────────────────
+# ===============================================================
 #  FINAL BALANCE CONFIG (v23.0) 
 BODY_DOMINANCE_PCT      = 0.60  # Badan candle > 60% (Full Body Strength)
 VOL_MOMENTUM_RATIO      = 1.8   # Volume 1.8x untuk konfirmasi Full Body
 TREND_STRENGTH_CANDLES  = 3     # 3 candle hijau = Trend Kuat
-# ───────────────────────────────────────────────────────────────
+# ===============================================================
 
 def get_market_news_digest():
     return "Neutral"
@@ -466,7 +466,7 @@ class WhaleObserver:
         if clean_base not in self._oi_baseline:
             self._oi_baseline[clean_base] = oi_now
         elif oi_now > 0:
-            # Update baseline setiap 5 menit (30 scan × 10 detik)
+            # Update baseline setiap 5 menit (30 scan x 10 detik)
             entries = self._watchlist[clean_base]
             if len(entries) % 30 == 0:
                 # Rolling baseline: rata-rata 5 observasi terakhir
@@ -700,10 +700,10 @@ def _calc_vwap_dist(mark_price: float, symbol: str) -> float:
     Hitung jarak harga dari VWAP intraday (8 jam terakhir = 32 candle 15m).
     
     Kenapa 32 candle (8 jam)?
-    - VWAP 24 jam terlalu "rata" — tidak sensitif terhadap pergerakan hari ini
+    - VWAP 24 jam terlalu "rata" - tidak sensitif terhadap pergerakan hari ini
     - VWAP 8 jam lebih relevan untuk scalping 15m
     - Koin yang naik 10% hari ini akan terlihat "premium" di VWAP 8 jam
-      tapi "neutral" di VWAP 24 jam — yang 8 jam lebih akurat
+      tapi "neutral" di VWAP 24 jam - yang 8 jam lebih akurat
     
     Bitget candle format: [ts, open, high, low, close, vol, quoteVol]
     """
@@ -996,12 +996,12 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
 
-# ── PERFORMANCE TRACKING (v21.0) ────────────────────────────────
+# == PERFORMANCE TRACKING (v21.0) ================================
 # Menyimpan history PnL koin untuk Smart Circuit Breaker
 COIN_STATS = {} # {symbol: {'pnl': 0, 'consecutive_losses': 0, 'locked_until': 0}}
 PENALTY_THRESHOLD_USD = -0.50 # Bench koin jika rugi > $0.50
 PENALTY_DURATION_HOURS = 24
-# ───────────────────────────────────────────────────────────────
+# ===============================================================
 def run_crypto_engine():
     """
     CRYPTO SCALPER v5.1 - Direct Execution Mode
@@ -1097,7 +1097,7 @@ def run_crypto_engine():
                 time.sleep(SCAN_INTERVAL)
                 continue
 
-            #  4c. SESSION FILTER — DYNAMIC SNIPER (Innovation v9.5)
+            #  4c. SESSION FILTER - DYNAMIC SNIPER (Innovation v9.5)
             # DATA: Jam 13:00-22:00 UTC (Sesi US) adalah Win Rate tertinggi.
             # Di luar jam itu, kita naikkan standar agar tidak kena "Fakeout" Asia.
             import datetime as _dt
@@ -1207,7 +1207,7 @@ def run_crypto_engine():
             dxy_trend  = _dxy_cache.get("trend", "NEUTRAL")
             dxy_change = _dxy_cache.get("change", 0)
 
-            #  8b. GLOBAL INTELLIGENCE (WS Real-time) — BTC global data dari BitgetMarketWS
+            #  8b. GLOBAL INTELLIGENCE (WS Real-time) - BTC global data dari BitgetMarketWS
             from shared_state import state as _mws_state
             global_btc_vol = _mws_state.rt_volume.get("BTCUSDT", 0)
             global_btc_change = _mws_state.rt_change.get("BTCUSDT", 0)
@@ -1267,7 +1267,7 @@ def run_crypto_engine():
             #  SUB-FUNCTION FOR PARALLEL EVALUATION
             def evaluate_coin(coin, off_hours=False):
                 symbol = coin.get('symbol', '')
-                # ── CIRCUIT BREAKER (v21.0) ──────────────────────────
+                # == CIRCUIT BREAKER (v21.0) ==========================
                 stats = COIN_STATS.get(symbol, {'pnl': 0, 'locked_until': 0})
                 if time.time() < stats['locked_until']:
                     return None
@@ -1276,7 +1276,7 @@ def run_crypto_engine():
                     COIN_STATS[symbol]['locked_until'] = time.time() + (PENALTY_DURATION_HOURS * 3600)
                     print(f"  [BENCHED] {symbol} locked for 24h due to PnL: ${stats['pnl']}")
                     return None
-                # ──────────────────────────────────────────────────────
+                # ======================================================
                 clean_base = executor._clean_symbol(symbol)
 
                 # Fast filters
@@ -1286,11 +1286,11 @@ def run_crypto_engine():
                 if clean_base in _recently_exited:                                    return None
                 if clean_base in _repeat_losers:                                      return None
 
-                # ── SMART CIRCUIT BREAKER CHECK (v12.1) ─────────────
+                # == SMART CIRCUIT BREAKER CHECK (v12.1) ============-
                 stats = COIN_STATS.get(symbol, {'pnl': 0, 'consecutive_losses': 0, 'locked_until': 0})
                 if time.time() < stats['locked_until']:
                     return None
-                # ────────────────────────────────────────────────────
+                # ====================================================
 
                 # DATA-PROVEN BLACKLIST (v9.1): koin terbukti 0% WR dari 345 trades
                 sym_key = f"{clean_base}USDT"
@@ -1311,7 +1311,7 @@ def run_crypto_engine():
                 rsi       = tech.get('rsi', 50)
                 vwap_dist = tech.get('vwap_dist', 0.0)
 
-                # ── ANALISA LOGIK (v26.85) ──
+                # == ANALISA LOGIK (v26.85) ==
                 tech_score = 0
                 side, reason, tech_score = _determine_trade_side(tech, rsi, vwap_dist, market_sentiment, mark_price, pump_sc, dump_sc)
                 combined_score = round((pump_sc * 0.5) + (tech_score * 0.5))
@@ -1354,7 +1354,7 @@ def run_crypto_engine():
                     if not (has_whale or has_liq or has_hunt):
                         return None
 
-                # ── LOG PER KOIN (seperti [OBS] di versi lama) ──────────────
+                # == LOG PER KOIN (seperti [OBS] di versi lama) ==============
                 # Kumpulkan sinyal aktif untuk log
                 active_signals = []
                 if tech.get('in_5m_demand') and side == "buy":
@@ -1385,7 +1385,7 @@ def run_crypto_engine():
                 # Tentukan reject reason
                 reject = None
 
-                # ── DYNAMIC RISK SIZER (v18.0) ─────────────────────
+                # == DYNAMIC RISK SIZER (v18.0) ====================-
                 # Hitung modal agar jika kena stop_loss_val, kerugian tetap $0.50
                 # sl_dist_pct = abs(stop_loss_val - mark_price) / mark_price
                 sl_dist_pct = abs(stop_loss_val - mark_price) / mark_price if mark_price > 0 else 0
@@ -1396,7 +1396,7 @@ def run_crypto_engine():
                     amount = min(calculated_margin, FIXED_MARGIN_USDT)
                 else:
                     amount = FIXED_MARGIN_USDT
-                # ───────────────────────────────────────────────────
+                # ==================================================-
 
                 if side is None:
                     reject = "NO_SIDE"
@@ -1429,7 +1429,7 @@ def run_crypto_engine():
                     f"[{sig_str}] | {status}",
                     flush=True
                 )
-                # ── END LOG ──────────────────────────────────────────────────
+                # == END LOG ==================================================
 
                 if reject is not None:
                     return None
@@ -1476,7 +1476,7 @@ def run_crypto_engine():
             if results:
                 results.sort(key=lambda x: x['score'], reverse=True)
 
-                # ── LOG ANALISIS DETAIL SEMUA KANDIDAT ──────────────────────
+                # == LOG ANALISIS DETAIL SEMUA KANDIDAT ======================
                 print(f"\n{'='*65}", flush=True)
                 print(f"[SCAN RESULT] {len(results)} kandidat lolos filter dari {min(40, len(candidates))} koin:", flush=True)
                 for i, r in enumerate(results[:8]):  # Tampilkan top 8
@@ -1652,7 +1652,7 @@ def run_crypto_engine():
                     print(f"[MARGIN GUARD] Insufficient margin for {clean_base}.")
 
             else:
-                # Tidak ada kandidat yang lolos — log alasan umum
+                # Tidak ada kandidat yang lolos - log alasan umum
                 if int(now) % 30 < 10:
                     print(
                         f"[NO SIGNAL] 0 kandidat lolos dari {min(40, len(candidates))} koin. "
@@ -1666,3 +1666,6 @@ def run_crypto_engine():
         except Exception as e:
             print(f"[ENGINE ERROR] {e}")
             time.sleep(30)
+
+
+

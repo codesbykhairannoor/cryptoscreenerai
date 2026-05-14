@@ -1,4 +1,4 @@
-import requests
+﻿import requests
 import pandas as pd
 import numpy as np
 
@@ -115,3 +115,6 @@ def run_simulation():
 
 if __name__ == "__main__":
     run_simulation()
+
+
+
