@@ -951,31 +951,36 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
 #  CORE: TENTUKAN SIDE & REASON 
 def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_sentiment: str, mark_price: float, pump_sc: float, dump_sc: float) -> tuple[str | None, str, int]:
     """
-    v35.0: AI PURIST MODE
-    Menghapus semua noise indikator teknikal (EMA, VWAP, dll).
-    Keputusan 100% bergantung pada kekuatan AI (Pump Score / Dump Score).
+    v35.1: THE HOLY GRAIL (AI + WINNING DNA)
+    Keputusan 100% bergantung pada kekuatan AI (Pump Score / Dump Score),
+    TETAPI wajib divalidasi oleh 'DNA Pemenang' untuk buy.
     """
     best_side = "buy" if pump_sc >= dump_sc else "sell"
     best_score = max(pump_sc, dump_sc)
     
-    # Alasan trade murni karena AI Prediction
-    best_reason = f"AI_PREDICTION_SCORE_{int(best_score)}"
+    # Alasan awal
+    best_reason = f"AI_SCORE_{int(best_score)}"
     
-    # Bonus sangat kecil (+5) jika didukung oleh Liquidity Sweep (Konfirmasi Smart Money)
-    # Ini tidak akan membatalkan trade, hanya menambah keyakinan.
-    if best_side == "buy" and tech.get('liq_grab_bull'):
-        best_score += 5
-        best_reason = "AI_PREDICTION + BULL_LIQ_GRAB"
-    elif best_side == "sell" and tech.get('liq_grab_bear'):
-        best_score += 5
-        best_reason = "AI_PREDICTION + BEAR_LIQ_GRAB"
+    # Validasi Pola Kemenangan (The Winning DNA v34.0)
+    # 73% Pemenang: EMA 9 > 21 + Harga di atas VWAP + RSI 50-65
+    if best_side == "buy":
+        has_dna = (tech['ema_9'] > tech['ema_21']) and (tech['close'] > tech['vwap']) and (50 <= tech['rsi'] <= 65)
+        
+        if has_dna:
+            best_score += 20 # DNA BOOSTER!
+            best_reason = "HOLY_GRAIL_DNA_MATCH"
+            print(f"[HOLY GRAIL] {tech['symbol']} MATCHED WINNING DNA! Score Boosted to {best_score}", flush=True)
+        else:
+            # Jika tidak punya DNA pemenang, kita potong skornya drastis agar batal masuk
+            best_score -= 50
+            best_reason = "DNA_MISMATCH"
 
     # Limit max score to 100
     best_score = min(100, int(best_score))
 
-    # Pastikan skor minimum terpenuhi (Kita ambil 60 sebagai baseline)
-    if best_score < 60:
-        return None, "LOW_AI_CONVICTION", 0
+    # Syarat mutlak The Sniper: Skor harus TINGGI
+    if best_score < 70:
+        return None, "LOW_CONVICTION_OR_NO_DNA", 0
         
     # Pastikan SELL diizinkan
     if best_side == "sell" and not SELL_TRADING_ENABLED:
@@ -999,11 +1004,11 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl
     
     if side == "buy":
         take_profit_val = base_p + (atr * final_tp_m)
-        max_sl_dist = base_p * SCALP_SL_PCT
+        max_sl_dist = base_p * 0.02 # HOLY GRAIL v34.0: 2.0% SL limit
         stop_loss_val = base_p - min(atr * final_sl_m, max_sl_dist)
     else:
         take_profit_val = base_p - (atr * final_tp_m)
-        max_sl_dist = base_p * SCALP_SL_PCT
+        max_sl_dist = base_p * 0.02 # HOLY GRAIL v34.0: 2.0% SL limit
         stop_loss_val = base_p + min(atr * final_sl_m, max_sl_dist)
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 

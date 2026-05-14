@@ -705,9 +705,9 @@ class BitgetExecutor:
                 new_sl = 0
                 locked_pnl = 0
 
-                if peak_pnl >= 20:
-                    # Logic: Lock 10% below every 20% step
-                    locked_pnl = float((int(peak_pnl / 20) * 20) - 10)
+                if peak_pnl >= 10:
+                    # Logic: Holy Grail v34.0 - Step Trail 10%
+                    locked_pnl = float((int(peak_pnl / 10) * 10) - 5)
                     locked_pnl = max(0.0, locked_pnl)
 
                     pos_lev = float(pos.get('leverage', 10.0))
