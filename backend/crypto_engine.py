@@ -31,17 +31,17 @@ from database import log_trade
 from notifier import send_telegram_message, format_trade_message
 from bitget_executor import BitgetExecutor
 
-#  KONFIGURASI 
-MAX_POSITIONS        = 1      # FOKUS: 1 trade saja (STRICT)
-RISK_PER_TRADE_USDT  = 0.50   # INSTITUTIONAL: Tiap kekalahan HANYA rugi $0.50
+#  KONFIGURASI AGRESIF UNTUK PROFIT CEPAT
+MAX_POSITIONS        = 3      # 3 posisi sekaligus (diversifikasi)
+RISK_PER_TRADE_USDT  = 0.50   # Tetap aman, $0.50 per trade
 FIXED_MARGIN_USDT    = 3.0    # Batas maksimal modal per trade
-SCAN_INTERVAL        = 3      # Scan lebih cepat (3 detik) agar responsif di VPS
-COOLDOWN_AFTER_TRADE = 120    # 2 menit cooldown — versi profit May 5
+SCAN_INTERVAL        = 2      # Scan lebih cepat (2 detik)
+COOLDOWN_AFTER_TRADE = 30     # 30 detik cooldown saja (cepat masuk lagi)
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
-MIN_MOMENTUM_SCORE   = 20     # INSTITUTIONAL MODE: Selektif
+MIN_MOMENTUM_SCORE   = 30     # Turun ke 30 untuk lebih banyak sinyal!
 # ── INSTITUTIONAL HUNTER CONFIG (v26.45-FINAL) ──
 HUNTER_ATR_SL_MULT   = 1.0    # Hasil Audit: Sniper Mode (Safe & Consistent)
 HUNTER_ATR_TP_MULT   = 1.0    # Hasil Audit: Sniper Mode (High Probability)
@@ -49,12 +49,12 @@ FVG_GAP_THRESHOLD    = 0.005
 SCALP_TP_PCT         = 0.08   
 SCALP_SL_PCT         = 0.015  
 # ─────────────────────────────────────────
-MIN_PUMP_SCORE       = 25     
-MIN_TECH_SCORE       = 30     # Hasil Audit: Optimal Balance
+MIN_PUMP_SCORE       = 15     # Lebih rendah, lebih banyak sinyal
+MIN_TECH_SCORE       = 20     # Lebih rendah, lebih banyak sinyal
 
 #  WHALE OBSERVER CONFIG (Legacy/Reference)
-MIN_APPEARANCES      = 3      
-MIN_AVG_SCORE        = 42     # Rata-rata combined score minimum — versi profit May 6
+MIN_APPEARANCES      = 1      # Hanya butuh 1 appearance untuk cepat masuk!
+MIN_AVG_SCORE        = 30     # Rata-rata combined score rendah (lebih banyak sinyal)
 CONSISTENCY_BONUS    = 1.15
 MOMENTUM_BONUS       = 1.10
 REPEAT_LOSS_BLACKLIST_HOURS = 8
@@ -94,11 +94,10 @@ STAR_COINS = set() # Kosongkan agar bot memindai secara universal
 # Setiap SELL yang diambil bot hampir pasti kalah
 SELL_TRADING_ENABLED = False  # False = BUY-only mode
 
-# Session filter
-# Session filter -- Berdasarkan Round 4 Backtest (ZONA EMAS 13:00-22:00 UTC)
-CRYPTO_SESSION_START_UTC = 13
-CRYPTO_SESSION_END_UTC   = 22
-MIN_MOMENTUM_SNIPER      = 60  # Skor minimal saat di luar jam emas (Asian Session)
+# Session filter - DINONAKTIFKAN untuk trading 24 jam!
+CRYPTO_SESSION_START_UTC = 0
+CRYPTO_SESSION_END_UTC   = 24
+MIN_MOMENTUM_SNIPER      = 30  # Skor minimal rendah
 
 SIDEWAYS_HOURS       = 1.0
 SIDEWAYS_PNL_RANGE   = 2.0
@@ -173,8 +172,8 @@ BTC_CACHE_TTL           = 120     # Cache BTC data 2 menit
 # Consecutive Loss Tracker
 # Kalau kalah 2x berturut-turut, pause 30 menit
 # Ini mencegah bot terus masuk saat kondisi market sedang tidak favorable
-CONSEC_LOSS_LIMIT       = 2       # Maksimal 2 loss berturut-turut
-CONSEC_LOSS_PAUSE_MIN   = 30      # Pause 30 menit setelah 2x loss berturut-turut
+CONSEC_LOSS_LIMIT       = 5       # Maksimal 5 loss berturut-turut (lebih toleran)
+CONSEC_LOSS_PAUSE_MIN   = 5       # Pause 5 menit saja (cepat balik)
 
 
 #  MARKET INTELLIGENCE ENGINE 
@@ -1467,14 +1466,14 @@ def run_crypto_engine():
                 if (btc_signal == "AVOID_LONG" and side == "buy") or (btc_signal == "AVOID_SHORT" and side == "sell"):
                     return None
 
-                # FRED MACRO FILTER
-                if fred_crypto_impact == "BEARISH" and side == "buy":
-                    if combined_score < current_min_momentum + 5: # Dilonggarkan dari +10 agar tidak telat entry
-                        print(f"[EVAL] {clean_base} SKIP:FRED_BEARISH({combined_score})", flush=True)
-                        return None
-                elif fred_crypto_impact == "BULLISH" and side == "buy":
-                    if combined_score < max(current_min_momentum - 5, 30):
-                        return None
+                # FRED MACRO FILTER - DINONAKTIFKAN untuk lebih banyak trade!
+                # if fred_crypto_impact == "BEARISH" and side == "buy":
+                #     if combined_score < current_min_momentum + 5:
+                #         print(f"[EVAL] {clean_base} SKIP:FRED_BEARISH({combined_score})", flush=True)
+                #         return None
+                # elif fred_crypto_impact == "BULLISH" and side == "buy":
+                #     if combined_score < max(current_min_momentum - 5, 30):
+                #         return None
 
                 # DUNE ON-CHAIN BOOST/FILTER
                 dune_boost = 0
