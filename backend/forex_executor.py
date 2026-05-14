@@ -92,7 +92,7 @@ class ForexExecutor:
         if not self.is_active: return None
         try:
             url = self.base_url + "/users/current/accounts/" + self.account_id + "/account-information"
-            res = requests.get(url, headers={"auth-token": self.api_token}, timeout=10)
+            res = requests.get(url, headers={"auth-token": self.api_token}, timeout=20)
             if res.status_code == 200: return res.json()
         except Exception as e:
             print("[FOREX ERROR] Account fetch failed: " + str(e))
@@ -111,7 +111,7 @@ class ForexExecutor:
             sym = base + s
             try:
                 url = self.base_url + "/users/current/accounts/" + self.account_id + "/symbols/" + sym + "/current-price"
-                res = requests.get(url, headers={"auth-token": self.api_token}, timeout=5)
+                res = requests.get(url, headers={"auth-token": self.api_token}, timeout=20)
                 if res.status_code == 200 and float(res.json().get("bid", 0)) > 0:
                     return sym
             except Exception:
@@ -124,7 +124,7 @@ class ForexExecutor:
         sym = symbol or self._working_symbol or "XAUUSD"
         try:
             url = self.base_url + "/users/current/accounts/" + self.account_id + "/symbols/" + sym + "/current-price"
-            res = requests.get(url, headers={"auth-token": self.api_token}, timeout=5)
+            res = requests.get(url, headers={"auth-token": self.api_token}, timeout=20)
             if res.status_code == 200:
                 d   = res.json()
                 bid = float(d.get("bid", 0))
@@ -163,7 +163,7 @@ class ForexExecutor:
         for host in hosts:
             url = host + "/users/current/accounts/" + self.account_id + "/historical-market-data/symbols/" + sym + "/timeframes/" + timeframe + "/candles?limit=" + str(limit)
             try:
-                res = requests.get(url, headers=headers, timeout=15)
+                res = requests.get(url, headers=headers, timeout=20)
                 if res.status_code == 200:
                     data = res.json()
                     if isinstance(data, list) and len(data) > 0:

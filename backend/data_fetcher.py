@@ -443,7 +443,7 @@ def get_technical_indicators(symbol, interval="15m"):
     """
     try:
         url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity={interval}&limit=100&productType=USDT-FUTURES"
-        r = requests.get(url, timeout=3, verify=False)
+        r = requests.get(url, timeout=15, verify=False)
         if r.status_code != 200: return {}
         
         data = r.json().get('data', [])

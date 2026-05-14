@@ -79,7 +79,7 @@ class BitgetExecutor:
     def sync_server_time(self):
         """Fetch server time from Bitget and calculate offset (Fail-safe for Windows VPS)"""
         try:
-            res = requests.get("https://api.bitget.com/api/v2/public/time", timeout=10)
+            res = requests.get("https://api.bitget.com/api/v2/public/time", timeout=20)
             if res.status_code == 200:
                 server_ts = int(res.json()['data']['serverTime'])
                 local_ts  = int(time.time() * 1000)
@@ -105,7 +105,7 @@ class BitgetExecutor:
         
         url = f"https://api.bitget.com{request_path}"
         try:
-            res = requests.request(method, url, headers=headers, data=body_str if body else None, timeout=15, verify=False)
+            res = requests.request(method, url, headers=headers, data=body_str if body else None, timeout=20, verify=False)
             return res.json()
         except:
             return {"code": "timeout"}
@@ -128,7 +128,7 @@ class BitgetExecutor:
         
         url = f"https://api.bitget.com{request_path}" + (f"?{query}" if query else "")
         try:
-            res = requests.request(method, url, headers=headers, data=body_str if body else None, timeout=15)
+            res = requests.request(method, url, headers=headers, data=body_str if body else None, timeout=20)
             return res.json()
         except:
             return {"code": "timeout"}

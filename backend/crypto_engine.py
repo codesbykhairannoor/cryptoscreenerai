@@ -1217,8 +1217,8 @@ def run_crypto_engine():
             candidates = analyze_and_sort(raw_data)
 
             if not candidates:
-                if int(now) % 60 < 10:
-                    print("[CRYPTO WARNING] Tidak ada kandidat. Retrying...")
+                if int(now) % 10 == 0: # Lapor tiap 10 detik
+                    print(f"[CRYPTO] Scanning 40 coins... (Active Trades: {len(open_bases)})", flush=True)
                 time.sleep(SCAN_INTERVAL)
                 continue
 
@@ -1517,6 +1517,11 @@ def run_crypto_engine():
                         flush=True
                     )
                 print(f"{'─'*65}\n", flush=True)
+            else:
+                # AGRESIF LOGGING: Tetap lapor meskipun tidak ada yang lolos filter
+                print(f"[CRYPTO] Scan {min(40, len(candidates))} koin. 0 kandidat lolos filter (Threshold: {current_min_momentum})", flush=True)
+                
+            if results:
                 top = results[0]
                 
                 clean_base = top['clean_base']

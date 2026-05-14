@@ -74,7 +74,7 @@ def _fetch_all_oi() -> dict:
     try:
         r = requests.get(
             "https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES",
-            timeout=10, verify=False
+            timeout=20, verify=False
         )
         if r.status_code != 200:
             return {}
@@ -193,7 +193,7 @@ def _fetch_dex_trending() -> list:
     try:
         r = requests.get(
             "https://api.dexscreener.com/token-boosts/top/v1",
-            timeout=10
+            timeout=20
         )
         if r.status_code == 200:
             boosts = r.json() if isinstance(r.json(), list) else []
@@ -221,7 +221,7 @@ def _fetch_dex_trending() -> list:
         try:
             r2 = requests.get(
                 f"https://api.dexscreener.com/latest/dex/search?q={query}",
-                timeout=10
+                timeout=20
             )
             if r2.status_code != 200:
                 continue
@@ -337,7 +337,7 @@ def get_rvol_batch() -> dict:
     try:
         r = requests.get(
             "https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES",
-            timeout=10, verify=False
+            timeout=20, verify=False
         )
         if r.status_code != 200:
             return _rvol_cache
