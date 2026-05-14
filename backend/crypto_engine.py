@@ -1252,7 +1252,11 @@ def run_crypto_engine():
             except Exception:
                 early_combined = {}
                 oi_surge_count = 0
-                dex_alert_count = 0
+            dex_alert_count = 0
+
+            # --- DEFINE THRESHOLDS ---
+            current_min_momentum = MIN_MOMENTUM_SCORE
+            current_min_tech     = MIN_TECH_SCORE
 
             print(f"[CRYPTO ENGINE] Scan {min(40, len(candidates))} koin | "
                   f"Sentiment:{market_sentiment} BTC:{btc_ctx['trend']} "
@@ -1508,7 +1512,7 @@ def run_crypto_engine():
                     trend1h = tech.get('trend_1h', 'N')
                     trend4h = tech.get('trend_4h', 'N')
 
-                    marker = "→ EXECUTE" if i == 0 else f"  #{i+1}"
+                    marker = ">> EXECUTE" if i == 0 else f"  #{i+1}"
                     print(
                         f"  {marker} {sym:<8} {side:<5} Score:{score:>3} | "
                         f"RSI:{rsi:.0f} VWAP:{vwap:+.1f}% | "
