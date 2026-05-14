@@ -936,15 +936,14 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
     if side == "sell" and funding < -0.001: score -= 10  # Shorts terlalu mahal
 
     # 8. Binance Long/Short Ratio (Squeeze / Stop Hunt Predictor)
-    # ls_ratio = None berarti API gagal — skip, jangan pakai data palsu
     ls_ratio = tech.get('ls_ratio', None)
     if ls_ratio is not None and ls_ratio > 0:
         if side == "buy":
-            if ls_ratio < 0.6: score += 15    # Retail nge-short parah = Siap-siap Short Squeeze (Pump)
-            elif ls_ratio > 2.5: score -= 15  # Retail terlalu banyak Long = Rawan Dump
+            if ls_ratio < 0.6: score += 15
+            elif ls_ratio > 2.5: score -= 15
         else:
-            if ls_ratio > 2.5: score += 15    # Retail terlalu banyak Long = Siap-siap Long Squeeze (Dump)
-            elif ls_ratio < 0.6: score -= 15  # Retail nge-short parah = Rawan Pump
+            if ls_ratio > 2.5: score += 15
+            elif ls_ratio < 0.6: score -= 15
 
     return max(0, min(100, score))
 
@@ -952,121 +951,36 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
 #  CORE: TENTUKAN SIDE & REASON 
 def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_sentiment: str, mark_price: float, pump_sc: float, dump_sc: float) -> tuple[str | None, str, int]:
     """
-    Menentukan arah trade (BUY/SELL) menggunakan indikator teknikal 
-    DENGAN WAJIB MEMATUHI ARAH PREDIKSI AI (PUMP/DUMP SCORE).
-    - AI Bias = LONG jika pump_score >= dump_score
-    - AI Bias = SHORT jika dump_score > pump_score
+    v35.0: AI PURIST MODE
+    Menghapus semua noise indikator teknikal (EMA, VWAP, dll).
+    Keputusan 100% bergantung pada kekuatan AI (Pump Score / Dump Score).
     """
-    # ── BLACKROCK INSTITUTIONAL SCORER (v26.90) ──
-    # WAJIB IKUTI ARAH AI!
-    ai_bias = "LONG" if pump_sc >= dump_sc else "SHORT"
+    best_side = "buy" if pump_sc >= dump_sc else "sell"
+    best_score = max(pump_sc, dump_sc)
     
-    # Ambil data Momentum dari Tech
-    rvol = tech.get('rvol', 1.0)
-    oi_pct = tech.get('oi_change_pct', 0)
+    # Alasan trade murni karena AI Prediction
+    best_reason = f"AI_PREDICTION_SCORE_{int(best_score)}"
     
-    long_score = 0
-    short_score = 0
-    
-    # 1. MOMENTUM & VELOCITY BOOST (The Gainer/Looser Hunter)
-    # Jika volume meledak (RVOL > 3), kita abaikan RSI dan hajar momentum!
-    if rvol >= 3.0:
-        if ai_bias == "LONG": long_score += 40
-        else: short_score += 40
-    
-    if oi_pct >= 20:
-        if ai_bias == "LONG": long_score += 30
-        else: short_score += 30
-    
-    obi = tech.get('obi', 0)
-    ob  = tech.get('order_block', 'NONE')
-    trend_1h = tech.get('trend_1h', 'NEUTRAL')
-    trend_4h = tech.get('trend_4h', 'NEUTRAL')
-    dsz = tech.get('dsz_status', 'NONE')
-    liq_bull = tech.get('liq_grab_bull', False)
-    liq_bear = tech.get('liq_grab_bear', False)
-    sweep_bull = tech.get('is_bull_sweep', False)
-    sweep_bear = tech.get('is_bear_sweep', False)
-    mss_bull = tech.get('mss_bullish', False)
-    mss_bear = tech.get('mss_bearish', False)
+    # Bonus sangat kecil (+5) jika didukung oleh Liquidity Sweep (Konfirmasi Smart Money)
+    # Ini tidak akan membatalkan trade, hanya menambah keyakinan.
+    if best_side == "buy" and tech.get('liq_grab_bull'):
+        best_score += 5
+        best_reason = "AI_PREDICTION + BULL_LIQ_GRAB"
+    elif best_side == "sell" and tech.get('liq_grab_bear'):
+        best_score += 5
+        best_reason = "AI_PREDICTION + BEAR_LIQ_GRAB"
 
-    # 1. INSTITUTIONAL LIQUIDITY & ZONES (Bobot Raksasa)
-    if dsz == 'IN_DEMAND_ZONE' or liq_bull or sweep_bull:
-        long_score += 40
-        if mss_bull: long_score += 20  # Konfirmasi pembalikan arah
-    
-    if dsz == 'IN_SUPPLY_ZONE' or liq_bear or sweep_bear:
-        short_score += 40
-        if mss_bear: short_score += 20
+    # Limit max score to 100
+    best_score = min(100, int(best_score))
 
-    # 2. HTF TREND ALIGNMENT (Wajib searah paus)
-    if trend_4h == 'BULLISH' or trend_1h == 'BULLISH':
-        long_score += 20
-    if trend_4h == 'BEARISH' or trend_1h == 'BEARISH':
-        short_score += 20
+    # Pastikan skor minimum terpenuhi (Kita ambil 60 sebagai baseline)
+    if best_score < 60:
+        return None, "LOW_AI_CONVICTION", 0
+        
+    # Pastikan SELL diizinkan
+    if best_side == "sell" and not SELL_TRADING_ENABLED:
+        return None, "SELL_DISABLED", 0
 
-    # 3. OBI & ORDER FLOW
-    if obi > 0.15:  long_score += 15
-    elif obi < -0.15: short_score += 15
-    
-    if ob == 'BULLISH_OB': long_score += 15
-    elif ob == 'BEARISH_OB': short_score += 15
-
-    # 4. RSI & VWAP (DIBATALKAN JIKA RVOL TINGGI / MOMENTUM RIDER)
-    # Kalau koin lagi jadi Top Gainer, RSI 80 pun tetap dihajar BUY!
-    if rvol < 2.5:
-        if rsi < 35: long_score += 10
-        if rsi > 65: short_score += 10
-        if vwap_dist < -1.0: long_score += 10
-        if vwap_dist > 1.0: short_score += 10
-    else:
-        # Momentum Rider: RSI searah trend justru bagus
-        if ai_bias == "LONG" and rsi > 50: long_score += 15
-        if ai_bias == "SHORT" and rsi < 50: short_score += 15
-
-    # --- WINNING DNA BOOSTER v32.0 (The DNA of Winners) ---
-    # 73% of winners had Golden Cross + Above VWAP + RSI 50-65
-    has_dna_bull = (tech['ema_9'] > tech['ema_21']) and (tech['close'] > tech['vwap']) and (50 <= tech['rsi'] <= 65)
-    if has_dna_bull:
-        long_score += 100 # ULTRA BOOST!
-        print(f"[DNA] {tech['symbol']} matched WINNING DNA! Score boosted.", flush=True)
-
-    # 5. ANTI-FALLING-KNIFE & STRICT CANDLE CONFIRMATION
-    is_candle_green = tech.get('is_bullish', False)
-    is_candle_red = tech.get('is_bearish', False)
-    
-    if tech.get('still_falling') and not (liq_bull or sweep_bull or dsz == 'IN_DEMAND_ZONE'): 
-        long_score -= 50
-    if tech.get('still_rising') and not (liq_bear or sweep_bear or dsz == 'IN_SUPPLY_ZONE'): 
-        short_score -= 50
-
-    # Relax candle confirmation for high-momentum (RVOL > 2.0)
-    if rvol < 2.0:
-        if not is_candle_green: long_score -= 40
-        if not is_candle_red: short_score -= 40
-    else:
-        # High momentum: just ensure it's not a MASSIVE reversal candle
-        if ai_bias == "LONG" and tech.get('is_extreme_bearish'): long_score -= 50
-        if ai_bias == "SHORT" and tech.get('is_extreme_bullish'): short_score -= 50
-
-    # 6. AI OVERRIDE (MEMBUNUH SINYAL YANG MELAWAN AI PREDICTOR)
-    if ai_bias == "SHORT":
-        long_score -= 200 # Haram BUY jika AI bilang Dump
-    elif ai_bias == "LONG":
-        short_score -= 200 # Haram SELL jika AI bilang Pump
-
-    # PILIH ARAH TERBAIK (Mode Sniper: Min Score 60)
-    if long_score >= short_score and long_score >= 60 and ai_bias == "LONG":
-        best_side = "buy"
-        best_score = min(100, long_score)
-        best_reason = "INSTITUTIONAL_DEMAND" if dsz == 'IN_DEMAND_ZONE' else "LIQUIDITY_SWEEP_LONG"
-    elif short_score > long_score and short_score >= 60 and SELL_TRADING_ENABLED:
-        best_side = "sell"
-        best_score = min(100, short_score)
-        best_reason = "INSTITUTIONAL_SUPPLY" if dsz == 'IN_SUPPLY_ZONE' else "LIQUIDITY_SWEEP_SHORT"
-    else:
-        return None, "NO_SIGNAL", 0
-    
     return best_side, best_reason, best_score
 
 
