@@ -456,56 +456,60 @@ class BitgetExecutor:
             self._set_tp_ccxt(symbol, side, size, tp_price)
 
     def _set_sl_ccxt(self, symbol, side, size, sl_price):
-        """Set stop_loss_val via Dedicated TPSL API V2"""
+        """Set stop_loss_val via Direct API V2 Plan Order"""
         try:
             clean_symbol = symbol.replace("/", "").split(":")[0]
             if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
             
-            path = "/api/v2/mix/order/place-tpsl-order"
+            path = "/api/v2/mix/order/place-plan-order"
             method = "POST"
             
             payload = {
                 "symbol": clean_symbol,
                 "productType": "USDT-FUTURES",
                 "marginCoin": "USDT",
+                "marginMode": "isolated",
+                "planType": "pos_loss",
                 "triggerPrice": str(sl_price),
                 "triggerType": "mark_price",
-                "holdSide": "long" if side.lower() in ['buy', 'long'] else "short",
-                "tpslType": "sl",
-                "orderType": "market"
+                "side": "sell" if side.lower() in ['buy', 'long'] else "buy",
+                "orderType": "market",
+                "size": str(size)
             }
             
             res = self._v3_request(method, path, body=payload)
             if res.get('code') == '00000':
-                print(f"[SL OK] TPSL API SL set at {sl_price}")
+                print(f"[SL OK] Direct API SL set at {sl_price}")
             else:
                 print(f"[SL FAIL] {res}")
         except Exception as e:
             print(f"[SL ERROR] {e}")
 
     def _set_tp_ccxt(self, symbol, side, size, tp_price):
-        """Set take_profit_val via Dedicated TPSL API V2"""
+        """Set take_profit_val via Direct API V2 Plan Order"""
         try:
             clean_symbol = symbol.replace("/", "").split(":")[0]
             if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
 
-            path = "/api/v2/mix/order/place-tpsl-order"
+            path = "/api/v2/mix/order/place-plan-order"
             method = "POST"
             
             payload = {
                 "symbol": clean_symbol,
                 "productType": "USDT-FUTURES",
                 "marginCoin": "USDT",
+                "marginMode": "isolated",
+                "planType": "pos_profit",
                 "triggerPrice": str(tp_price),
                 "triggerType": "mark_price",
-                "holdSide": "long" if side.lower() in ['buy', 'long'] else "short",
-                "tpslType": "tp",
-                "orderType": "market"
+                "side": "sell" if side.lower() in ['buy', 'long'] else "buy",
+                "orderType": "market",
+                "size": str(size)
             }
             
             res = self._v3_request(method, path, body=payload)
             if res.get('code') == '00000':
-                print(f"[TP OK] TPSL API TP set at {tp_price}")
+                print(f"[TP OK] Direct API TP set at {tp_price}")
             else:
                 print(f"[TP FAIL] {res}")
         except Exception as e:
