@@ -1413,6 +1413,8 @@ def run_crypto_engine():
 
                 # Print log per koin
                 rvol_val = tech.get('rvol', 0)
+                atr_val  = tech.get('atr', 0)
+                atr_pct  = (atr_val / mark_price * 100) if mark_price > 0 else 0
                 status = "PASS" if reject is None else f"SKIP:{reject}"
                 print(
                     f"[EVAL] {clean_base:<10} {(side or 'N/A'):<5} "
