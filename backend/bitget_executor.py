@@ -395,8 +395,27 @@ class BitgetExecutor:
             # Dummy order object for compatibility
             order = {'id': order_id, 'symbol': symbol, 'side': side, 'amount': amount}
 
-            # 5. SET SL & TP SEPARATELY (To ensure 2 orders appear in Bitget)
-            self._set_sl_tp_bitget(symbol, side, amount, sl_price=final_sl, tp_price=final_tp)
+            # 5. SET SL & TP (Using CCXT with Manual Market Injection to bypass Spot hang)
+            try:
+                # Inject manual market data biar CCXT nggak manggil API Spot
+                clean_sym = symbol.replace("/", "").split(":")[0]
+                if not clean_sym.endswith('USDT'): clean_sym += 'USDT'
+                
+                market_id = clean_sym
+                self.exchange.markets = {
+                    symbol: {
+                        'id': market_id, 'symbol': symbol, 'base': symbol.split("/")[0], 'quote': 'USDT',
+                        'type': 'swap', 'spot': False, 'swap': True, 'active': True, 'contract': True, 'linear': True,
+                        'precision': {'amount': 0, 'price': 6},
+                        'limits': {'amount': {'min': 1}, 'price': {'min': 0.000001}}
+                    }
+                }
+                self.exchange.markets_by_id = {market_id: self.exchange.markets[symbol]}
+                
+                # Sekarang panggil SL/TP via CCXT (Harusnya lancar karena data market sudah di-inject)
+                self._set_sl_tp_ccxt_v2(symbol, side, amount, sl_price=final_sl, tp_price=final_tp)
+            except Exception as e:
+                print(f"[SL/TP INJECTION FAIL] {e}")
             
             # 6. INVALIDATE CACHE (PENTING!)
             from shared_state import state
@@ -512,12 +531,36 @@ class BitgetExecutor:
         except Exception as e:
             print(f"[TP ERROR] {e}")
 
-    def _set_sl_tp_ccxt(self, symbol, side, size, sl_price=None, tp_price=None):
-        """Fallback lengkap: set stop_loss_val dan take_profit_val via ccxt."""
+    def _set_sl_tp_ccxt_v2(self, symbol, side, amount, sl_price=None, tp_price=None):
+        """Set SL/TP using CCXT logic (Assuming markets are already injected/loaded)"""
+        tp_side = 'sell' if side.lower() in ['buy', 'long'] else 'buy'
+        
         if sl_price and sl_price > 0:
-            self._set_sl_ccxt(symbol, side, size, sl_price)
+            try:
+                params = {
+                    'stopLossPrice': sl_price,
+                    'productType': 'USDT-FUTURES',
+                    'marginCoin': 'USDT',
+                    'reduceOnly': True
+                }
+                # CCXT will use the injected markets and call private_post_v2_mix_order_place_plan_order internally
+                self.exchange.create_order(symbol, 'market', tp_side, amount, None, params)
+                print(f"[SL CCXT OK] set at {sl_price}")
+            except Exception as e:
+                print(f"[SL CCXT FAIL] {e}")
+
         if tp_price and tp_price > 0:
-            self._set_tp_ccxt(symbol, side, size, tp_price)
+            try:
+                params = {
+                    'takeProfitPrice': tp_price,
+                    'productType': 'USDT-FUTURES',
+                    'marginCoin': 'USDT',
+                    'reduceOnly': True
+                }
+                self.exchange.create_order(symbol, 'market', tp_side, amount, None, params)
+                print(f"[TP CCXT OK] set at {tp_price}")
+            except Exception as e:
+                print(f"[TP CCXT FAIL] {e}")
 
     def update_sl_price(self, symbol, side, amount, new_price, is_tp=False):
         """Update stop_loss_val atau take_profit_val yang sudah ada via Plan Order API."""
