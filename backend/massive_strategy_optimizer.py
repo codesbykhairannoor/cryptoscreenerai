@@ -1,119 +1,159 @@
 import requests
 import pandas as pd
-import numpy as np
-import concurrent.futures
+import time
+import urllib3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# --- MASSIVE STRATEGY OPTIMIZER v33.0 ---
-# Mencari Kombinasi "Holy Grail" dari Timeframe, SL, TP, dan Trailing
+# Disable SSL warnings
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-def fetch_data(symbol, interval):
-    url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}&limit=1000"
+# --- CONFIG OPTIMIZER ---
+COINS_TO_TEST = 50
+SCENARIOS = [
+    # (TP%, SL%, RSI, RVOL)
+    (2.0, 2.0, 65, 2.0),
+    (3.0, 3.0, 65, 2.0),
+    (4.0, 4.0, 65, 2.0),
+    (4.0, 5.0, 65, 2.0), # Current Champion (v39.0)
+    (5.0, 5.0, 70, 2.5), # Ultra Conservative
+    (2.0, 1.5, 60, 1.5), # Aggressive Scalp
+    (6.0, 4.0, 65, 2.0), # High RR
+    (4.0, 2.0, 65, 2.0), # Tight SL
+    (2.0, 4.0, 65, 2.0), # Wide SL
+]
+
+def fetch_data(symbol):
     try:
-        r = requests.get(url, timeout=10).json()
-        df = pd.DataFrame(r, columns=['ts','o','h','l','c','v','cts','qv','t','tb','tv','i'])
-        for col in ['o','h','l','c','v']: df[col] = df[col].astype(float)
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        # Limit 200 candle (lebih aman dibanding 1000)
+        url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=15m&limit=200&productType=USDT-FUTURES"
+        r = requests.get(url, timeout=10, verify=False, headers=headers)
+        if r.status_code != 200:
+            print(f"[DEBUG] {symbol} Failed: HTTP {r.status_code}")
+            return symbol, None
         
-        df['ema_9'] = df['c'].ewm(span=9).mean()
-        df['ema_21'] = df['c'].ewm(span=21).mean()
-        df['atr'] = (df['h'] - df['l']).rolling(14).mean()
-        df['vwap'] = (df['c'] * df['v']).cumsum() / df['v'].cumsum()
-        return symbol, df.dropna()
-    except: return symbol, None
+        rj = r.json()
+        if rj.get('code') != '00000':
+            print(f"[DEBUG] {symbol} API Error: {rj.get('msg')}")
+            return symbol, None
 
-def simulate(df, sl_pct, tp_mult, trail_step):
-    wallet = 10.0
-    margin = 5.0
-    lev = 10
-    fee = 0.0006
-    in_pos = None
-    trades = []
+        data = rj.get('data', [])
+        if not data: return symbol, None
+        
+        df = pd.DataFrame(data, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd'])
+        df[['open', 'high', 'low', 'close', 'vol']] = df[['open', 'high', 'low', 'close', 'vol']].astype(float)
+        df = df.iloc[::-1].reset_index(drop=True)
+        return symbol, df
+    except:
+        pass
+    return symbol, None
+
+def run_backtest(df, tp_pct, sl_pct, rsi_min, rvol_min):
+    if df is None or len(df) < 50: return 0, 0, 0
     
-    for i in range(50, len(df)):
-        row = df.iloc[i]
-        if in_pos:
-            cpnl = ((row['c'] - in_pos['ent'])/in_pos['ent']) * lev * 100
-            if cpnl > in_pos['peak']: in_pos['peak'] = cpnl
+    trades = 0
+    wins = 0
+    total_pnl = 0
+    in_position_until = 0
+    
+    closes = df['close']
+    delta = closes.diff()
+    gain = (delta.where(delta > 0, 0)).ewm(span=14, adjust=False).mean()
+    loss = (-delta.where(delta < 0, 0)).ewm(span=14, adjust=False).mean()
+    rs = gain / loss
+    rsi_vals = 100 - (100 / (1 + rs))
+
+    for i in range(30, len(df) - 1):
+        if i < in_position_until: continue # SEDANG DALAM TRADE, SKIP.
+
+        rsi = rsi_vals.iloc[i]
+        avg_vol = df['vol'].iloc[i-20:i].mean()
+        cur_vol = df['vol'].iloc[i]
+        rvol = cur_vol / avg_vol if avg_vol > 0 else 1
+        
+        if rsi > rsi_min and rvol > rvol_min:
+            entry_p = df['close'].iloc[i]
+            tp_p = entry_p * (1 + tp_pct/100)
+            sl_p = entry_p * (1 - sl_pct/100)
             
-            # Trailing
-            if in_pos['peak'] >= trail_step:
-                locked = (int(in_pos['peak'] / trail_step) * trail_step) - (trail_step/2)
-                new_sl = in_pos['ent'] * (1 + (max(0, locked)/100)/lev)
-                if new_sl > in_pos['sl']: in_pos['sl'] = new_sl
-
-            # Exit
-            ep = 0
-            if row['l'] <= in_pos['sl']: ep = in_pos['sl']
-            elif row['h'] >= in_pos['tp']: ep = in_pos['tp']
+            trades += 1
+            # Cari candle mana yang kena duluan (TP atau SL)
+            outcome_found = False
+            for j in range(i+1, len(df)):
+                if df['high'].iloc[j] >= tp_p:
+                    wins += 1
+                    total_pnl += tp_pct
+                    in_position_until = j + 1
+                    outcome_found = True
+                    break
+                if df['low'].iloc[j] <= sl_p:
+                    total_pnl -= sl_pct
+                    in_position_until = j + 1
+                    outcome_found = True
+                    break
             
-            if ep > 0:
-                f_pnl = ((ep - in_pos['ent'])/in_pos['ent']) * lev * 100
-                net = (f_pnl/100 * margin) - (margin * lev * fee * 2)
-                wallet += net
-                trades.append(net)
-                in_pos = None
-            continue
-
-        if in_pos is None and wallet >= margin:
-            if row['ema_9'] > row['ema_21'] and row['c'] > row['vwap']:
-                in_pos = {
-                    'ent': row['c'], 'peak': 0, 'margin': margin,
-                    'sl': row['c'] * (1 - sl_pct/100),
-                    'tp': row['c'] + (row['atr'] * tp_mult)
-                }
-    
-    win_rate = (len([t for t in trades if t > 0]) / len(trades) * 100) if trades else 0
-    return wallet, win_rate, len(trades)
-
-def main():
-    print("\n" + "="*80)
-    print("MASSIVE OPTIMIZER: MENCARI POLA HOLY GRAIL v33.0")
-    print("="*80)
-    
-    symbols = ["SOLUSDT", "BTCUSDT", "ETHUSDT", "WLDUSDT", "ENAUSDT"] # Sample representatif
-    timeframes = ["15m", "1h"]
-    sl_options = [1.0, 1.5, 2.0] # Price % (10%, 15%, 20% PnL)
-    trail_options = [5, 10, 15] # PnL %
-    
-    results = []
-    
-    for tf in timeframes:
-        print(f"\n[SCAN] Menguji Timeframe {tf}...")
-        all_data = {}
-        for s in symbols:
-            _, df = fetch_data(s, tf)
-            if df is not None: all_data[s] = df
-            
-        for sl in sl_options:
-            for trail in trail_options:
-                total_bal = 0
-                total_wr = 0
-                total_trades = 0
-                for s, df in all_data.items():
-                    bal, wr, count = simulate(df, sl, 4.0, trail)
-                    total_bal += bal
-                    total_wr += wr
-                    total_trades += count
+            if not outcome_found:
+                in_position_until = len(df)
                 
-                avg_bal = total_bal / len(symbols)
-                avg_wr = total_wr / len(symbols)
-                results.append({
-                    'tf': tf, 'sl': sl, 'trail': trail, 
-                    'avg_bal': avg_bal, 'avg_wr': avg_wr, 'total_trades': total_trades
-                })
+    return trades, wins, total_pnl
 
-    # Sort by balance
-    results.sort(key=lambda x: x['avg_bal'], reverse=True)
-    
-    print("\n" + "="*80)
-    print(f"{'TF':<5} | {'SL%':<5} | {'TRAIL':<6} | {'AVG BAL':<10} | {'WR%':<8} | {'TRADES'}")
-    print("-" * 80)
-    for r in results[:15]:
-        print(f"{r['tf']:<5} | {r['sl']:<5.1f} | {r['trail']:<6} | ${r['avg_bal']:<9.2f} | {r['avg_wr']:>6.1f}% | {r['total_trades']}")
-    
-    print("="*80)
-    best = results[0]
-    print(f"KESIMPULAN: Pola TERBAIK adalah Timeframe {best['tf']} dengan SL {best['sl']}% dan Trailing {best['trail']}%")
-    print("="*80 + "\n")
+print(f"\n{'='*65}")
+print(f"   STRATEGY OPTIMIZER MASSAL - 50 KOIN (5 HARI DATA)")
+print(f"{'='*65}")
 
-if __name__ == "__main__":
-    main()
+# Get liquid candidates
+try:
+    url_tickers = "https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES"
+    r_t = requests.get(url_tickers, verify=False)
+    tickers = r_t.json().get('data', [])
+    if tickers:
+        print(f"[DEBUG] Full ticker sample: {tickers[0]}")
+    # Filter koin dengan volume harian > $5M (agar lebih banyak koin masuk)
+    candidates = [t['symbol'] for t in tickers if float(t.get('baseVolume', 0)) > 5000000][:COINS_TO_TEST]
+    if not candidates:
+        print(f"[DEBUG] Tickers found: {len(tickers)}, but none match volume > $5M")
+except Exception as e:
+    print(f"[ERROR] Gagal ambil list koin: {e}")
+    exit()
+
+print(f"[1/2] Menarik data history {len(candidates)} koin...")
+print(f"[DEBUG] Sampel kandidat: {candidates[:5]}")
+all_data = {}
+with ThreadPoolExecutor(max_workers=15) as executor:
+    futures = [executor.submit(fetch_data, s) for s in candidates]
+    for f in as_completed(futures):
+        sym, df = f.result()
+        if df is not None:
+            all_data[sym] = df
+        else:
+            # Silent fail for now, but we know 0 koin means all failed
+            pass
+
+print(f"{'TP%':<6} {'SL%':<6} {'RSI':<6} {'RVOL':<6} | {'TRADES':<8} {'WIN%':<8} {'PnL':<10}")
+print("-" * 65)
+results = []
+for tp, sl, rsi_m, rvol_m in SCENARIOS:
+    total_t = 0
+    total_w = 0
+    total_p = 0
+    for sym, df in all_data.items():
+        t, w, p = run_backtest(df, tp, sl, rsi_m, rvol_m)
+        total_t += t
+        total_w += w
+        total_p += p
+    
+    wr = (total_w / total_t * 100) if total_t > 0 else 0
+    print(f"{tp:<6.1f} {sl:<6.1f} {rsi_m:<6} {rvol_m:<6.1f} | {total_t:<8} {wr:<8.1f}% {total_p:<+10.1f}%")
+    results.append({'tp': tp, 'sl': sl, 'rsi': rsi_m, 'rvol': rvol_m, 'pnl': total_p, 'trades': total_t})
+
+print("-" * 65)
+if not results:
+    print("[ERROR] Tidak ada hasil simulasi.")
+    exit()
+
+best = max(results, key=lambda x: x['pnl'])
+print(f"\n[HASIL OPTIMASI]")
+print(f"WINNER: TP:{best['tp']}% | SL:{best['sl']}% | RSI:{best['rsi']} | RVOL:{best['rvol']}")
+print(f"TOTAL PnL: {best['pnl']:+.1f}%")
+print(f"TOTAL TRADES: {best['trades']} trades")
+print("-" * 65)
