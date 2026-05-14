@@ -1024,6 +1024,13 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
         if ai_bias == "LONG" and rsi > 50: long_score += 15
         if ai_bias == "SHORT" and rsi < 50: short_score += 15
 
+    # --- WINNING DNA BOOSTER v32.0 (The DNA of Winners) ---
+    # 73% of winners had Golden Cross + Above VWAP + RSI 50-65
+    has_dna_bull = (tech['ema_9'] > tech['ema_21']) and (tech['close'] > tech['vwap']) and (50 <= tech['rsi'] <= 65)
+    if has_dna_bull:
+        long_score += 100 # ULTRA BOOST!
+        print(f"[DNA] {tech['symbol']} matched WINNING DNA! Score boosted.", flush=True)
+
     # 5. ANTI-FALLING-KNIFE & STRICT CANDLE CONFIRMATION
     is_candle_green = tech.get('is_bullish', False)
     is_candle_red = tech.get('is_bearish', False)
