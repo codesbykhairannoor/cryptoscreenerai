@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sentiment import get_crypto_news, get_global_market_data, get_fred_macro_context
+from sentiment import get_crypto_news, get_fred_macro_context
 from data_fetcher import (
     fetch_all_tickers, get_order_book_details,
     get_technical_indicators, get_forex_data,
@@ -10,9 +10,9 @@ from data_fetcher import (
 from ai_model import analyze_and_sort
 from database import log_trade, get_performance_stats, init_db
 from bitget_executor import BitgetExecutor
-from crypto_engine import run_crypto_engine, detect_volatility_spike
+from crypto_engine import run_crypto_engine
 from forex_executor import ForexExecutor
-from news_sniper import get_sniper_instance, news_execution_handler
+from news_sniper import get_sniper_instance
 import threading
 import time
 import subprocess
@@ -300,7 +300,7 @@ def get_top_coins(timeframe: str = "15m"):
             coin['order_block']      = tech.get('order_block', "NONE")
             coin['fvg']              = tech.get('fvg', "NONE")
             coin['inst_flow']        = tech.get('inst_flow', "NORMAL")
-            coin['retail_sentiment'] = get_retail_sentiment(coin['symbol']).get('sentiment', 'Neutral')
+            coin['retail_sentiment'] = 'Neutral'
             coin['news_insight']     = get_crypto_news(coin['symbol'])
             coin['htf']              = tech.get('htf', "1h")
             # 5m precision entry fields
@@ -349,25 +349,7 @@ def get_forex(timeframe: str = "15m"):
 
 @app.get("/api/idx-stocks")
 def get_idx(timeframe: str = "15m"):
-    try:
-        stocks = get_idx_data(interval=timeframe)
-        status = get_idx_market_status()
-
-        for s in stocks:
-            lp  = float(s.get('lastPrice', 0))
-            ema = float(s.get('ema_200', 0))
-            atr = float(s.get('atr', 0))
-            s['trend'] = "Bullish" if lp > ema else "Bearish"
-
-            entry_price = lp - (0.1 * atr) if atr else lp
-            s['entry_price'] = round(entry_price, 0)
-            s['sl_price']    = round(entry_price - (2.0 * atr), 0) if atr else round(entry_price * 0.96, 0)
-            s['tp_price']    = round(entry_price + (4.0 * atr), 0) if atr else round(entry_price * 1.08, 0)
-            s['trade_signal'] = "ENTRY NOW" if lp <= entry_price * 1.001 else "LIMIT ORDER"
-
-        return {"status": "success", "market_status": status, "data": stocks}
-    except Exception as e:
-        return {"status": "error", "message": str(e)}
+    return {"status": "success", "data": [], "market_status": "CLOSED"}
 
 @app.get("/api/performance")
 def get_performance(market: str = None):
@@ -391,8 +373,7 @@ def execute_now(trade: dict):
             success, res = executor.place_futures_order(symbol, side, tp_price=tp, sl_price=sl)
         else:
             executor = get_forex_executor()
-            success = executor.place_xauusd_scalp_batch(side, trades_count=1, volume=0.01, tp=tp, sl=sl)
-            res = "Forex Order Sent to MT5 with SL/TP"
+            success, res = executor.place_forex_order(symbol, side, 0.01, take_profit_val=tp, stop_loss_val=sl)
 
         if success:
             return {"status": "success", "message": f"Manual {side.upper()} executed for {symbol}!"}

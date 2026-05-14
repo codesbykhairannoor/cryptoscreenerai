@@ -20,7 +20,7 @@ Perbaikan besar dari v7.0:
 """
 import requests, os, time, datetime
 from dotenv import load_dotenv
-from notifier import send_telegram_message, format_trade_message
+from notifier import send_telegram_message
 load_dotenv()
 
 # == KONFIGURASI UTAMA ==========================================================
@@ -888,10 +888,6 @@ class ForexExecutor:
         # Semua dihitung dari candle MetaAPI yang sudah ada
         try:
             import pandas as _pd
-            from data_fetcher import (
-                get_fibonacci_levels as _fib_func,
-                detect_stop_hunt as _hunt_func,
-            )
             df_for_fib = _pd.DataFrame({
                 'open': [float(c.get("open", closes[i])) for i, c in enumerate(candles)],
                 'high': highs, 'low': lows, 'close': closes, 'vol': vols,
@@ -1411,7 +1407,7 @@ class ForexExecutor:
         # == POSITION GUARD (v26.64) ==
         # Mencegah duplikasi posisi XAUUSD saat API lag
         try:
-            from shared_state import state
+            pass
             existing = self.get_open_positions() # Fetch fresh from MetaAPI
             if existing:
                 for pos in existing:
