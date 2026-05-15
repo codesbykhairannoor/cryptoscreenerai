@@ -978,9 +978,16 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
     if tech.get('fvg') == 'BULLISH':
         score += 30
         reasons.append("FVG+")
+    elif tech.get('fvg') == 'BEARISH':
+        score += 30
+        reasons.append("FVG-")
+
     if tech.get('in_demand'):
         score += 30
         reasons.append("OB+")
+    elif tech.get('in_supply'):
+        score += 30
+        reasons.append("OB-")
 
     # RSI Filter (Balanced) - v41.0: Lebih sensitif terhadap Technical Shift
     side = None
@@ -1417,7 +1424,7 @@ def run_crypto_engine():
 
                 if side is None:
                     reject = "NO_SIDE"
-                elif market_sentiment == "PENDING" and tech_score < 100:
+                elif market_sentiment == "PENDING" and tech_score < 50:
                     reject = "SENTIMENT_PENDING"
                 elif combined_score < current_min_momentum:
                     reject = f"SCORE_LOW({combined_score}<{current_min_momentum})"
