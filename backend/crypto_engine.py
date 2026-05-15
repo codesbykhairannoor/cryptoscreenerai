@@ -1001,7 +1001,7 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
             score += 20
         
     # Final Decision for Balanced Logic
-    if side and score >= 60:
+    if side and score >= 40:
         if side == "sell" and not SELL_TRADING_ENABLED:
             return None, "SELL_DISABLED", 0
         return side, f"SMC_{'+'.join(reasons)}", score
@@ -1571,28 +1571,28 @@ def run_crypto_engine():
                     rvol = getattr(_ws_st, 'rt_rvol', {}).get(sym_ws, 1.0)
                 except: pass
                 
-                # 1. FAST MOMENTUM: EMA 9 > EMA 21 (Confirmation)
+                # 1. FAST MOMENTUM Confirmation (EMA 9/21)
                 ema_9 = tech.get('ema_9', mark_price)
                 ema_21 = tech.get('ema_21', mark_price)
                 if side == "buy" and ema_9 < ema_21:
-                    continue
+                    if combined_score < 80: # Biarkan SMC kuat nembus EMA
+                        print(f"  [SKIP] {clean_base} EMA 9 < 21 (Confirmation Fail)", flush=True)
+                        continue
                 if side == "sell" and ema_9 > ema_21:
-                    continue
+                    if combined_score < 80:
+                        print(f"  [SKIP] {clean_base} EMA 9 > 21 (Confirmation Fail)", flush=True)
+                        continue
 
-                # 2. JUNK FILTER: ATR > 5% Price
+                # 2. JUNK FILTER: ATR > 5% Price (Volatility Guard)
                 atr = tech.get('atr', 0)
                 if atr > (mark_price * 0.05):
+                    print(f"  [SKIP] {clean_base} ATR {atr} too high (>5% price)", flush=True)
                     continue
 
-                # 3. BALANCED THRESHOLD (v31.0)
-                # v39.0: Lebih agresif! Holy Grail (Tech 100) butuh skor 50 saja.
-                is_holy = (tech.get('rsi', 50) > 65 and tech.get('rvol', 0) > 2.0)
-                threshold = 50 if is_holy else 70
-                if combined_score < threshold:
-                    print(f"  [SKIP] {clean_base} Score {combined_score} < {threshold} threshold.", flush=True)
-                    continue
-                if rvol < 1.1: # Lebih agresif lagi
-                    print(f"  [SKIP] {clean_base} RVOL {rvol} < 1.1.", flush=True)
+                # 3. BALANCED THRESHOLD (v41.0)
+                # v41.0: Gunakan threshold yang sama dengan evaluator (0.4)
+                if rvol < 0.4: 
+                    print(f"  [SKIP] {clean_base} RVOL {rvol} < 0.4 (Secondary Check)", flush=True)
                     continue
 
                 sl_m = 1.5
