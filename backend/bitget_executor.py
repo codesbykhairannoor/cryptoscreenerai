@@ -674,19 +674,37 @@ class BitgetExecutor:
 
                 #    INITIAL GUARD - Jika stop_loss_val/take_profit_val hilang, pasang LANGSUNG tanpa cooldown
                 if (not has_sl or not has_tp) and now - self.startup_time > 5:
-                    # stop_loss_val 5% price = 50% PnL at 10x (Optimized v9.3)
-                    sl_price = entry * 0.95 if side in ['long','buy'] else entry * 1.05
-                    tp_price = entry * 1.09 if side in ['long','buy'] else entry * 0.91
+                    # BLUE WHALE INITIALS (v53.0): SL -2% price (-20% PnL), TP +10% price (+100% PnL)
+                    sl_price = entry * 0.98 if side in ['long','buy'] else entry * 1.02
+                    tp_price = entry * 1.10 if side in ['long','buy'] else entry * 0.90
                     if not has_sl: self._set_sl_tp_bitget(symbol, side, size, sl_price=sl_price)
                     if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                     self._last_sl_set[symbol] = now
 
-                #    TSL v37.0 - DISABLED (PURE SCALPER MODE)
+                #    BLUE WHALE TRAILING v53.0 (PEAK PNL RATCHET)
                 # =====================================================
-                # Trailing SL dimatikan. Kita murni mengejar Limit Order TP 1.0%
-                # untuk memastikan Win Rate 90.9% tercapai tanpa dipotong di tengah jalan.
+                # 1. Start trailing after +15% PnL
+                # 2. Always keep SL 20% below Peak PnL
+                # 3. SL only moves UP (for buy) or DOWN (for sell)
                 # =====================================================
-                pass # Bypass trailing logic completely
+                if peak_pnl >= 15.0:
+                    # Target SL PnL (Ratchet)
+                    target_sl_pnl = peak_pnl - 20.0
+                    
+                    # Convert PnL to Price
+                    lev = float(pos.get('leverage', 10))
+                    if side in ['long', 'buy']:
+                        new_sl_price = entry * (1 + (target_sl_pnl / 100 / lev))
+                        if new_sl_price > sl_p: # Only move UP
+                            print(f"[WHALE] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
+                            self.update_sl_price(symbol, side, size, new_sl_price)
+                            self._last_sl_set[symbol] = now
+                    else:
+                        new_sl_price = entry * (1 - (target_sl_pnl / 100 / lev))
+                        if sl_p == 0 or new_sl_price < sl_p: # Only move DOWN
+                            print(f"[WHALE] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
+                            self.update_sl_price(symbol, side, size, new_sl_price)
+                            self._last_sl_set[symbol] = now
 
         except Exception as e:
             print(f"[POSITION MANAGER CRASH] {e}")
