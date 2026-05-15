@@ -1005,33 +1005,22 @@ PENALTY_DURATION_HOURS = 24
 def run_crypto_engine():
     """
     CRYPTO SCALPER v5.1 - Direct Execution Mode
-    =============================================
-    - Scan top 40 coins every 10 seconds (parallel, 8 workers)
-    - 5m precision entry: demand/supply zone detection
-    - FRED macro filter + Dune on-chain boost
-    - stop_loss_val: 24% PnL (-2.4% price), take_profit_val: 90% PnL (+9% price)
-    - Session: 08:00-22:00 WIB only
-    - Cooldown: 120 seconds between trades
     """
-    executor = BitgetExecutor()
-    take_profit_val, stop_loss_val = 0.0, 0.0
+    # Use Singleton Executor from main to prevent duplicate initialization hangs
+    try:
+        from main import get_bitget_executor
+        executor = get_bitget_executor()
+    except ImportError:
+        # Fallback if run standalone
+        from bitget_executor import BitgetExecutor
+        executor = BitgetExecutor()
+
+    print("\n" + "="*50, flush=True)
+    print("[CRYPTO SCALPER v5.1] INITIALIZING ENGINE...", flush=True)
+    print("="*50, flush=True)
 
     from database import check_pending_trades, get_performance_stats
     from sentiment import get_market_news_digest
-
-    print("[CRYPTO SCALPER v5.1] Direct Execution Mode AKTIF!", flush=True)
-    print(f"  Strategy : 1 trade terbaik | {LEVERAGE}x leverage | stop_loss_val:30% take_profit_val:80%", flush=True)
-    print(f"  Scan     : Top 40 koin setiap {SCAN_INTERVAL}s (8 workers parallel)", flush=True)
-    print(f"  Cooldown : {COOLDOWN_AFTER_TRADE}s antara trade", flush=True)
-    print(f"  Session  : 08:00-22:00 WIB (01:00-15:00 UTC)", flush=True)
-    print(f"  5m Entry : Demand/Supply zone precision entry AKTIF", flush=True)
-
-    try:
-        print("[SYSTEM] Sinkronisasi awal dengan Bitget...", flush=True)
-        executor.sync_state_with_exchange()
-        print("[SYSTEM] Sinkronisasi Bitget SUKSES.", flush=True)
-    except Exception as e:
-        print(f"[SYSTEM WARNING] Gagal sinkronisasi awal: {e}", flush=True)
 
     last_exec_time      = 0
     last_news_report    = 0
