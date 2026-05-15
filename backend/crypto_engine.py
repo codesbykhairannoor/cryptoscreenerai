@@ -1543,14 +1543,14 @@ def run_crypto_engine():
                 ema_9 = tech.get('ema_9', mark_price)
                 ema_21 = tech.get('ema_21', mark_price)
                 if side == "buy" and ema_9 < ema_21:
-                    return None
+                    continue
                 if side == "sell" and ema_9 > ema_21:
-                    return None
+                    continue
 
                 # 2. JUNK FILTER: ATR > 5% Price
                 atr = tech.get('atr', 0)
                 if atr > (mark_price * 0.05):
-                    return None
+                    continue
 
                 # 3. BALANCED THRESHOLD (v31.0)
                 # v39.0: Jika Holy Grail (Tech 100), skor 60 sudah cukup untuk hajar!
@@ -1560,7 +1560,7 @@ def run_crypto_engine():
                     sl_m = 1.5
                     tp_m = 5.0
                 else:
-                    return None
+                    continue
                 
                 # Hitung take_profit_val/stop_loss_val dengan multiplier dinamis
                 take_profit_val, stop_loss_val = 0.0, 0.0
