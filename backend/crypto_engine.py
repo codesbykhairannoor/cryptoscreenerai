@@ -1022,6 +1022,7 @@ def run_crypto_engine():
     from database import check_pending_trades, get_performance_stats
     from sentiment import get_market_news_digest
 
+    take_profit_val, stop_loss_val = 0.0, 0.0
     last_exec_time      = 0
     last_news_report    = 0
     last_global_report  = 0
@@ -1376,8 +1377,10 @@ def run_crypto_engine():
 
                 # == DYNAMIC RISK SIZER (v18.0) ====================-
                 # Hitung modal agar jika kena stop_loss_val, kerugian tetap $0.50
-                # sl_dist_pct = abs(stop_loss_val - mark_price) / mark_price
-                sl_dist_pct = abs(stop_loss_val - mark_price) / mark_price if mark_price > 0 else 0
+                atr_val = tech.get('atr', 0)
+                # Estimasi jarak stop_loss_val menggunakan multiplier ATR standar
+                sl_dist_pct = (atr_val * ATR_SL_MULT) / mark_price if mark_price > 0 else 0.02
+                
                 if sl_dist_pct > 0:
                     # Margin * sl_dist_pct * Leverage = Risk
                     # Margin = Risk / (sl_dist_pct * Leverage)

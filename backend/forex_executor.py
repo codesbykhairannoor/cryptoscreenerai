@@ -98,6 +98,27 @@ class ForexExecutor:
             print("[FOREX ERROR] Account fetch failed: " + str(e))
         return None
 
+    def get_open_positions(self):
+        """Fetch all active MetaAPI positions for the current account."""
+        if not self.is_active: return []
+        now = time.time()
+        
+        # 1. Cache Priority (5s TTL)
+        if now - self._positions_cache_ts < 5:
+            return self._positions_cache
+            
+        try:
+            url = self.base_url + "/users/current/accounts/" + self.account_id + "/positions"
+            res = requests.get(url, headers={"auth-token": self.api_token}, timeout=15)
+            if res.status_code == 200:
+                data = res.json()
+                self._positions_cache = data
+                self._positions_cache_ts = now
+                return data
+        except Exception as e:
+            print("[FOREX POS ERROR] " + str(e))
+        return self._positions_cache # Return stale if error
+
     def test_connection(self):
         info = self.get_account_information()
         if info and "balance" in info:
