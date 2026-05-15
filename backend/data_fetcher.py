@@ -1,4 +1,4 @@
-﻿import requests
+import requests
 import pandas as pd
 import numpy as np
 import time
@@ -517,7 +517,7 @@ def get_technical_indicators(symbol, interval="15m"):
         # 3. LIQUIDITY SWEEPS
         last_candle = df_cur.iloc[-1]
         prev_candle = df_cur.iloc[-2]
-        avg_vol = df_cur['vol'].rolling(20).mean().iloc[-1]
+        avg_vol = df_cur['vol'].rolling(20).mean().iloc[-2] if len(df_cur) >= 21 else df_cur['vol'].mean()
         is_bull_sweep = last_candle['low'] < prev_candle['low'] and last_candle['close'] > prev_candle['low']
         is_bear_sweep = last_candle['high'] > prev_candle['high'] and last_candle['close'] < prev_candle['high']
         
@@ -716,7 +716,7 @@ def get_technical_indicators(symbol, interval="15m"):
         return {
             "mark_price": mark_price,
             "rsi": rsi_val,
-            "rvol": round(last_candle['vol'] / avg_vol, 2) if avg_vol > 0 else 1.0,
+            "rvol": round(prev_candle['vol'] / avg_vol, 2) if avg_vol > 0 else 1.0,
             "atr": atr_val,
             "candle_pattern": pattern,
             "is_liquidity_sweep": is_bull_sweep or is_bear_sweep,

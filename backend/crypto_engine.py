@@ -960,8 +960,8 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
 
     # --- 2. BALANCED PREDATOR (SMC + MOMENTUM) ---
     # Syarat minimal untuk trade normal:
-    if rvol < 1.0: # Tetap butuh volume minimal
-        return None, "VOL_LOW", 0
+    if rvol < 0.4: # Sangat rendah baru skip (Market lagi sepi)
+        return None, "VOL_DEAD", 0
         
     score = 0
     reasons = []
