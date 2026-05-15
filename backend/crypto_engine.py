@@ -1000,31 +1000,31 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
             side = "sell"
             score += 20
         
-    # Final Decision for SNIPER ELITE MODE (v46.0) - TARGET WR 80%
-    # 1. Extreme Score: 90 (Wajib Triple Combo: MSS + FVG + OB)
-    # 2. Volume Surge: RVOL > 1.5 (Whale Participation)
-    # 3. OBI Guard: Antrian Order Book harus mendukung
+    # Final Decision for PREDATOR PRO (v46.1) - BALANCE WR & FREQUENCY
+    # 1. High Score: 80 (Double Combo: MSS + FVG/OB)
+    # 2. Volume: RVOL > 1.0 (Active Market)
+    # 3. OBI Guard: Tetap cek antrian order book
     
     obi = tech.get('obi', 0)
     
-    if side and score >= 90:
-        if rvol < 1.5:
-            return None, "VOL_NOT_ELITE", 0
+    if side and score >= 80:
+        if rvol < 1.0:
+            return None, "VOL_TOO_LOW", 0
             
         if atr_pct < 0.3:
             return None, "LOW_VOLATILITY_SIDEWAYS", 0
             
         if side == "buy":
-            if rsi < 55: return None, "RSI_NOT_STRONG_ENOUGH_BUY", 0
-            if obi < 0.1: return None, "OBI_NOT_BULLISH_ENOUGH", 0
+            if rsi < 55: return None, "RSI_NOT_BULLISH", 0
+            if obi < 0.05: return None, "OBI_WEAK_BUY", 0
         if side == "sell":
-            if rsi > 45: return None, "RSI_NOT_STRONG_ENOUGH_SELL", 0
-            if obi > -0.1: return None, "OBI_NOT_BEARISH_ENOUGH", 0
+            if rsi > 45: return None, "RSI_NOT_BEARISH", 0
+            if obi > -0.05: return None, "OBI_WEAK_SELL", 0
 
         if side == "sell" and not SELL_TRADING_ENABLED:
             return None, "SELL_DISABLED", 0
             
-        return side, f"SNIPER_{'+'.join(reasons)}", score
+        return side, f"PRO_{'+'.join(reasons)}", score
 
     return None, "WAITING_FOR_CONFIRMATION", 0
 
