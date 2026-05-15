@@ -373,7 +373,10 @@ class BitgetExecutor:
             hold_side = "buy" if s in ['long', 'buy', 'open_long'] else "sell"
             
             def round_p(p):
-                return round(p, 2) if p > 10 else round(p, 4)
+                try:
+                    return self.exchange.price_to_precision(symbol, p)
+                except:
+                    return str(round(p, 2) if p > 10 else round(p, 3))
 
             if sl_price and sl_price > 0:
                 payload = {
