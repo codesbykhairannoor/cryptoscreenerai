@@ -1000,33 +1000,32 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
             side = "sell"
             score += 20
         
-    # Final Decision for ULTIMATE SNIPER (v47.0) - TARGET WR 80%
-    # 1. Trend Filter: Harus searah dengan EMA 21
-    # 2. Score 100: Triple Combo Sempurna + Momentum
-    # 3. OBI & RSI: Wajib mendukung penuh
+    # Final Decision for AGILE PREDATOR (v47.1) - NO MORE DEADLOCKS
+    # 1. Balanced Score: 60 (Cukup satu sinyal kuat + momentum)
+    # 2. Volume Sensitivity: RVOL > 0.4 (Nangkep peluang lebih awal)
+    # 3. OBI & RSI: Tetap sebagai filter pengaman
     
     ema_21 = tech.get('ema_21', mark_price)
     obi = tech.get('obi', 0)
     
-    if side and score >= 80:
-        # Trend Guard
+    if side and score >= 60:
+        # Trend Guard (EMA 21)
         if side == "buy" and mark_price < ema_21: return None, "AGAINST_TREND_BUY", 0
         if side == "sell" and mark_price > ema_21: return None, "AGAINST_TREND_SELL", 0
         
-        if rvol < 1.0: return None, "VOL_TOO_LOW", 0
-        if atr_pct < 0.3: return None, "LOW_VOLATILITY", 0
+        if rvol < 0.4: return None, "VOL_TOO_LOW", 0
             
         if side == "buy":
-            if rsi < 55: return None, "RSI_WEAK_BUY", 0
-            if obi < 0.1: return None, "OBI_WEAK_BUY", 0
+            if rsi < 50: return None, "RSI_WEAK_BUY", 0
+            if obi < 0.05: return None, "OBI_WEAK_BUY", 0
         if side == "sell":
-            if rsi > 45: return None, "RSI_WEAK_SELL", 0
-            if obi > -0.1: return None, "OBI_WEAK_SELL", 0
+            if rsi > 50: return None, "RSI_WEAK_SELL", 0
+            if obi > -0.05: return None, "OBI_WEAK_SELL", 0
 
         if side == "sell" and not SELL_TRADING_ENABLED:
             return None, "SELL_DISABLED", 0
             
-        return side, f"ULTIMATE_{'+'.join(reasons)}", score
+        return side, f"AGILE_{'+'.join(reasons)}", score
 
     return None, "WAITING_FOR_CONFIRMATION", 0
 
