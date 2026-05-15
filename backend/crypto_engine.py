@@ -1011,19 +1011,20 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    v39.0: THE CHAMPION (BRUTE FORCE PROVEN)
-    Mengabaikan ATR dan multiplier dinamis. Menggunakan settingan absolut juara:
-    TP: 4.0% (Ambil untung besar)
-    SL: 5.0% (Napas super panjang, hindari noise)
+    v44.0: THE CHAMPION (RR 2:1 OPTIMIZED)
+    Berdasarkan Pattern Analyzer v44.0:
+    TP: 6.0% (Ambil untung lebih besar)
+    SL: 3.0% (Cut loss lebih ketat untuk jaga RR)
+    RR: 2.0 (Matematika Profit Aman)
     """
     base_p = tech.get('limit_price', mark_price)
     
     if side == "buy":
-        take_profit_val = base_p * 1.04  # +4.0% Harga
-        stop_loss_val = base_p * 0.95    # -5.0% Harga
+        take_profit_val = base_p * 1.06  # +6.0% Harga
+        stop_loss_val = base_p * 0.97    # -3.0% Harga
     else:
-        take_profit_val = base_p * 0.96  # -4.0% Harga
-        stop_loss_val = base_p * 1.05    # +5.0% Harga
+        take_profit_val = base_p * 0.94  # -6.0% Harga
+        stop_loss_val = base_p * 1.03    # +3.0% Harga
         
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
