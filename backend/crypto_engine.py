@@ -982,18 +982,19 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
         score += 30
         reasons.append("OB+")
 
-    # RSI Filter (Balanced)
+    # RSI Filter (Balanced) - v41.0: Lebih sensitif terhadap Technical Shift
     side = None
-    if rsi > 55 and (tech.get('mss_bullish') or tech.get('fvg') == 'BULLISH'):
-        side = "buy"
-        score += 20
-    elif rsi < 45 and (tech.get('mss_bearish') or tech.get('fvg') == 'BEARISH'):
-        side = "sell"
-        score += 20
+    if tech.get('mss_bullish') or tech.get('fvg') == 'BULLISH':
+        if rsi > 45: # Cukup di atas area oversold/neutral
+            side = "buy"
+            score += 20
+    elif tech.get('mss_bearish') or tech.get('fvg') == 'BEARISH':
+        if rsi < 55: # Cukup di bawah area overbought/neutral
+            side = "sell"
+            score += 20
         
     # Final Decision for Balanced Logic
     if side and score >= 60:
-        from config import SELL_TRADING_ENABLED
         if side == "sell" and not SELL_TRADING_ENABLED:
             return None, "SELL_DISABLED", 0
         return side, f"SMC_{'+'.join(reasons)}", score
