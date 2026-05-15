@@ -1504,7 +1504,7 @@ def run_crypto_engine():
                     trend1h = tech.get('trend_1h', 'N')
                     trend4h = tech.get('trend_4h', 'N')
 
-                    marker = ">> EXECUTE" if i == 0 else f"  #{i+1}"
+                    marker = f"  #{i+1}"
                     print(
                         f"  {marker} {sym:<8} {side:<5} Score:{score:>3} | "
                         f"RSI:{rsi:.0f} VWAP:{vwap:+.1f}% | "
@@ -1553,14 +1553,18 @@ def run_crypto_engine():
                     continue
 
                 # 3. BALANCED THRESHOLD (v31.0)
-                # v39.0: Jika Holy Grail (Tech 100), skor 60 sudah cukup untuk hajar!
+                # v39.0: Lebih agresif! Holy Grail (Tech 100) butuh skor 50 saja.
                 is_holy = (tech.get('rsi', 50) > 65 and tech.get('rvol', 0) > 2.0)
-                threshold = 60 if is_holy else 75
-                if combined_score >= threshold and rvol >= 1.5:
-                    sl_m = 1.5
-                    tp_m = 5.0
-                else:
+                threshold = 50 if is_holy else 70
+                if combined_score < threshold:
+                    print(f"  [SKIP] {clean_base} Score {combined_score} < {threshold} threshold.", flush=True)
                     continue
+                if rvol < 1.1: # Lebih agresif lagi
+                    print(f"  [SKIP] {clean_base} RVOL {rvol} < 1.1.", flush=True)
+                    continue
+
+                sl_m = 1.5
+                tp_m = 5.0
                 
                 # Hitung take_profit_val/stop_loss_val dengan multiplier dinamis
                 take_profit_val, stop_loss_val = 0.0, 0.0
