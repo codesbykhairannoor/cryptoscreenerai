@@ -1011,20 +1011,20 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    v44.0: THE CHAMPION (RR 2:1 OPTIMIZED)
-    Berdasarkan Pattern Analyzer v44.0:
-    TP: 6.0% (Ambil untung lebih besar)
-    SL: 3.0% (Cut loss lebih ketat untuk jaga RR)
-    RR: 2.0 (Matematika Profit Aman)
+    v44.1: THE BALANCED PREDATOR (RR 1:1 PROVEN)
+    Berdasarkan Backtest v42.0 Manual Audit:
+    TP: 5.0% (Profit stabil)
+    SL: 5.0% (Napas pas, hindari noise)
+    RR: 1.0 (Titik Keseimbangan Cuan)
     """
     base_p = tech.get('limit_price', mark_price)
     
     if side == "buy":
-        take_profit_val = base_p * 1.06  # +6.0% Harga
-        stop_loss_val = base_p * 0.97    # -3.0% Harga
+        take_profit_val = base_p * 1.05  # +5.0% Harga
+        stop_loss_val = base_p * 0.95    # -5.0% Harga
     else:
-        take_profit_val = base_p * 0.94  # -6.0% Harga
-        stop_loss_val = base_p * 1.03    # +3.0% Harga
+        take_profit_val = base_p * 0.95  # -5.0% Harga
+        stop_loss_val = base_p * 1.05    # +5.0% Harga
         
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 

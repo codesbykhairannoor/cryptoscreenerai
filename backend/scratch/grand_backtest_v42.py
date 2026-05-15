@@ -96,8 +96,10 @@ def run_simulation():
                     in_position = True
                     pos_side = side
                     entry_price = row['close']
-                    tp, sl = _calc_tp_sl(entry_price, side, tech)
-                    tp_price, sl_price = tp, sl
+                    
+                    # MANUAL RR 1:1 TEST
+                    tp_price = entry_price * 1.05 if side == "buy" else entry_price * 0.95
+                    sl_price = entry_price * 0.95 if side == "buy" else entry_price * 1.05
                     
                     all_trades.append({
                         'symbol': symbol,

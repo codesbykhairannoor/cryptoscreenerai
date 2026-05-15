@@ -69,9 +69,9 @@ def audit_strategy(rr_ratio=1.5, use_atr=False):
                 
                 if side and rvol > 0.4:
                     in_pos = True
-                    # DYNAMIC RR CALCULATION
-                    sl_pct = 0.04 # 4% SL Fixed for baseline
-                    tp_pct = sl_pct * rr_ratio
+                    # TEST RR 1:1
+                    sl_pct = 0.05 
+                    tp_pct = 0.05 
                     
                     tp = row['close'] * (1 + tp_pct) if side == "buy" else row['close'] * (1 - tp_pct)
                     sl = row['close'] * (1 - sl_pct) if side == "buy" else row['close'] * (1 + sl_pct)
