@@ -101,16 +101,21 @@ def run_10usd_audit():
                 df = market_dfs[symbol]
                 row = df.iloc[t_idx]
                 
-                # Simple Indicators (Mock real engine)
+                # Mock technical sensors based on real engine logic
                 mss_bull = row['close'] > df['high'].iloc[t_idx-20:t_idx].max()
                 mss_bear = row['close'] < df['low'].iloc[t_idx-20:t_idx].min()
                 rvol = np.random.uniform(0.3, 2.5)
                 rsi = 50 + (10 if mss_bull else (-10 if mss_bear else 0))
+                ema_21 = df['close'].iloc[t_idx-21:t_idx].mean()
                 
                 tech = {
                     'mss_bullish': mss_bull, 'mss_bearish': mss_bear,
                     'fvg': 'BULLISH' if mss_bull and rvol > 1.2 else ('BEARISH' if mss_bear and rvol > 1.2 else 'NONE'),
-                    'rvol': rvol, 'atr': row['high'] - row['low']
+                    'in_demand': mss_bull and rvol > 1.3,
+                    'in_supply': mss_bear and rvol > 1.3,
+                    'rvol': rvol, 'atr': row['high'] - row['low'],
+                    'obi': 0.3 if mss_bull else (-0.3 if mss_bear else 0),
+                    'ema_21': ema_21
                 }
                 
                 side, reason, score = _determine_trade_side(tech, rsi, 0.0, "NEUTRAL", row['close'], 50, 50)
