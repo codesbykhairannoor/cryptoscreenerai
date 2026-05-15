@@ -949,32 +949,56 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
 
 
 def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_sentiment: str, mark_price: float, pump_sc: float, dump_sc: float) -> tuple[str | None, str, int]:
-    """
-    v38.0: THE 90.9% WR HOLY GRAIL (PURE MOMENTUM BREAKOUT)
-    Meninggalkan sistem pump_score yang rumit. 
-    Hanya menembak saat kondisi mutlak ini terpenuhi:
-    1. RSI > 65 (Momentum Naik Kuat)
-    2. RVOL > 2.0 (Volume Paus Masuk 2x Lipat)
-    3. ATR > 0.5% (Koin Sangat Hidup/Volatil)
-    """
     rvol = tech.get('rvol', 0)
     atr = tech.get('atr', 0)
     atr_pct = (atr / mark_price) * 100 if mark_price > 0 else 0
     
-    # KONDISI MUTLAK 90.9% WIN RATE
+    # --- 1. THE HOLY GRAIL (90% WR BREAKOUT) ---
     if rsi > 65 and rvol > 2.0 and atr_pct > 0.5:
-        best_side = "buy"
-        best_score = 100 # Kepastian Mutlak
-        best_reason = "HOLY_GRAIL_BREAKOUT"
-        
-        # Pastikan SELL diizinkan (Sebenarnya pola ini cuma untuk BUY)
-        if best_side == "sell" and not SELL_TRADING_ENABLED:
-            return None, "SELL_DISABLED", 0
-            
         print(f"[HOLY GRAIL 90%] FIRING! RSI: {rsi:.1f} | RVOL: {rvol:.1f}x | ATR: {atr_pct:.2f}%", flush=True)
-        return best_side, best_reason, best_score
+        return "buy", "HOLY_GRAIL_BREAKOUT", 100
+
+    # --- 2. BALANCED PREDATOR (SMC + MOMENTUM) ---
+    # Syarat minimal untuk trade normal:
+    if rvol < 1.0: # Tetap butuh volume minimal
+        return None, "VOL_LOW", 0
         
-    return None, "WAITING_FOR_HOLY_GRAIL", 0
+    score = 0
+    reasons = []
+    
+    # Check MSS (Market Structure Shift)
+    if tech.get('mss_bullish'): 
+        score += 40
+        reasons.append("MSS^")
+    elif tech.get('mss_bearish'):
+        score += 40
+        reasons.append("MSSv")
+
+    # Check FVG / OB
+    if tech.get('fvg') == 'BULLISH':
+        score += 30
+        reasons.append("FVG+")
+    if tech.get('in_demand'):
+        score += 30
+        reasons.append("OB+")
+
+    # RSI Filter (Balanced)
+    side = None
+    if rsi > 55 and (tech.get('mss_bullish') or tech.get('fvg') == 'BULLISH'):
+        side = "buy"
+        score += 20
+    elif rsi < 45 and (tech.get('mss_bearish') or tech.get('fvg') == 'BEARISH'):
+        side = "sell"
+        score += 20
+        
+    # Final Decision for Balanced Logic
+    if side and score >= 60:
+        from config import SELL_TRADING_ENABLED
+        if side == "sell" and not SELL_TRADING_ENABLED:
+            return None, "SELL_DISABLED", 0
+        return side, f"SMC_{'+'.join(reasons)}", score
+
+    return None, "WAITING_FOR_CONFIRMATION", 0
 
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
