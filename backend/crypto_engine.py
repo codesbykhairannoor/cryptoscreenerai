@@ -1000,24 +1000,31 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
             side = "sell"
             score += 20
         
-    # Final Decision for STRICT MODE (v45.1)
-    # 1. Minimum Score: 70 (Hanya trade yang beneran "Sempurna")
-    # 2. RSI Guard: Hindari area abu-abu (45-55)
-    # 3. Volatility Guard: Harus ada pergerakan (ATR > 0.3%)
+    # Final Decision for SNIPER ELITE MODE (v46.0) - TARGET WR 80%
+    # 1. Extreme Score: 90 (Wajib Triple Combo: MSS + FVG + OB)
+    # 2. Volume Surge: RVOL > 1.5 (Whale Participation)
+    # 3. OBI Guard: Antrian Order Book harus mendukung
     
-    if side and score >= 70:
+    obi = tech.get('obi', 0)
+    
+    if side and score >= 90:
+        if rvol < 1.5:
+            return None, "VOL_NOT_ELITE", 0
+            
         if atr_pct < 0.3:
             return None, "LOW_VOLATILITY_SIDEWAYS", 0
             
-        if side == "buy" and rsi < 55:
-            return None, "RSI_NOT_STRONG_ENOUGH_BUY", 0
-        if side == "sell" and rsi > 45:
-            return None, "RSI_NOT_STRONG_ENOUGH_SELL", 0
+        if side == "buy":
+            if rsi < 55: return None, "RSI_NOT_STRONG_ENOUGH_BUY", 0
+            if obi < 0.1: return None, "OBI_NOT_BULLISH_ENOUGH", 0
+        if side == "sell":
+            if rsi > 45: return None, "RSI_NOT_STRONG_ENOUGH_SELL", 0
+            if obi > -0.1: return None, "OBI_NOT_BEARISH_ENOUGH", 0
 
         if side == "sell" and not SELL_TRADING_ENABLED:
             return None, "SELL_DISABLED", 0
             
-        return side, f"SMC_{'+'.join(reasons)}", score
+        return side, f"SNIPER_{'+'.join(reasons)}", score
 
     return None, "WAITING_FOR_CONFIRMATION", 0
 
