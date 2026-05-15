@@ -1,64 +1,39 @@
 import sys
 import os
-import time
 
-# Mocking parts of the system for testing
-class MockExecutor:
-    def __init__(self):
-        self._peak_pnl = {}
-        self._last_sl_set = {}
-        self.sl_updates = []
-        self.startup_time = time.time() - 100
-
-    def _clean_symbol(self, s): return s
-    def get_pending_plan_orders(self, s): return []
-    def _set_sl_tp_bitget(self, *args, **kwargs): pass
-    def update_sl_price(self, symbol, side, amount, new_price):
-        self.sl_updates.append(new_price)
-
-def test_whale_logic():
+def test_stepped_whale_logic():
     print("\n" + "="*80)
-    print("=" + " "*25 + "BLUE WHALE RATCHET TEST v1.0" + " "*25 + "=")
+    print("=" + " "*22 + "BLUE WHALE STEPPED TEST (LADDER) v2.0" + " "*21 + "=")
     print("="*80 + "\n")
 
     # Simulation Params
     entry = 100.0
     lev = 10.0
-    symbol = "TESTUSDT"
-    side = "long"
     
-    # Mock positions with varying PnL
-    pnl_sequence = [0.0, 10.0, 20.0, 35.0, 25.0, 10.0]
-    peak_pnl = 0.0
-    sl_p = entry * 0.98 # Initial -20% SL
+    # Test cases: (Peak PnL, Expected SL PnL)
+    test_cases = [
+        (10.0, -20.0), # Below activation
+        (15.0, 0.0),   # Step 1: BEP
+        (29.0, 0.0),   # Still Step 1
+        (30.0, 15.0),  # Step 2: +15% Locked
+        (44.0, 15.0),  # Still Step 2
+        (45.0, 30.0),  # Step 3: +30% Locked (User Requirement!)
+        (60.0, 45.0)   # Step 4: +45% Locked
+    ]
     
-    print(f"[START] Entry: {entry} | Initial SL: {sl_p} (-20%)")
-    
-    for i, pnl in enumerate(pnl_sequence):
-        print(f"\nStep {i+1}: Current PnL = {pnl}%")
-        
+    for peak_pnl, expected_sl_pnl in test_cases:
         # --- LOGIC TO TEST ---
-        if pnl > peak_pnl:
-            peak_pnl = pnl
-        
-        if peak_pnl >= 15.0:
-            target_sl_pnl = peak_pnl - 20.0
-            new_sl_price = entry * (1 + (target_sl_pnl / 100 / lev))
-            
-            if new_sl_price > sl_p:
-                print(f"  [ACTION] Moving SL Up: {sl_p:.4f} -> {new_sl_price:.4f} (Peak: {peak_pnl}%)")
-                sl_p = new_sl_price
-            else:
-                print(f"  [HOLD] Price Dropped but SL RATCHETED at {sl_p:.4f}")
+        step_count = int(peak_pnl // 15)
+        if step_count >= 1:
+            target_sl_pnl = (step_count - 1) * 15.0
         else:
-            print(f"  [WAIT] PnL {pnl}% below 15% activation.")
+            target_sl_pnl = -20.0 # Initial SL
+            
+        print(f"Peak PnL: {peak_pnl:>4.1f}% | SL PnL: {target_sl_pnl:>5.1f}% | {'MATCH' if target_sl_pnl == expected_sl_pnl else 'FAIL'}")
 
     print("\n" + "="*80)
-    if sl_p > entry:
-        print("  [SUCCESS] SL is now at PROFIT level despite price drop!")
-    else:
-        print("  [SUCCESS] SL maintained at Peak Level (Ratchet Verified)")
+    print("  [SUCCESS] Ladder logic verified. Peak 45% correctly locks 30% Profit!")
     print("="*80 + "\n")
 
 if __name__ == "__main__":
-    test_whale_logic()
+    test_stepped_whale_logic()

@@ -681,28 +681,29 @@ class BitgetExecutor:
                     if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                     self._last_sl_set[symbol] = now
 
-                #    BLUE WHALE TRAILING v53.0 (PEAK PNL RATCHET)
+                #    BLUE WHALE STEPPED TRAILING v54.0 (LADDER MODE)
                 # =====================================================
                 # 1. Start trailing after +15% PnL
-                # 2. Always keep SL 20% below Peak PnL
-                # 3. SL only moves UP (for buy) or DOWN (for sell)
+                # 2. For every 15% gain, move SL up by 15%
+                # 3. Peak 15% -> SL 0% | Peak 30% -> SL 15% | Peak 45% -> SL 30%
                 # =====================================================
-                if peak_pnl >= 15.0:
-                    # Target SL PnL (Ratchet)
-                    target_sl_pnl = peak_pnl - 20.0
+                step_count = int(peak_pnl // 15)
+                if step_count >= 1:
+                    # Logic: 15% step intervals
+                    target_sl_pnl = (step_count - 1) * 15.0
                     
                     # Convert PnL to Price
                     lev = float(pos.get('leverage', 10))
                     if side in ['long', 'buy']:
                         new_sl_price = entry * (1 + (target_sl_pnl / 100 / lev))
                         if new_sl_price > sl_p: # Only move UP
-                            print(f"[WHALE] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
+                            print(f"[WHALE-STEP] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
                             self.update_sl_price(symbol, side, size, new_sl_price)
                             self._last_sl_set[symbol] = now
                     else:
                         new_sl_price = entry * (1 - (target_sl_pnl / 100 / lev))
                         if sl_p == 0 or new_sl_price < sl_p: # Only move DOWN
-                            print(f"[WHALE] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
+                            print(f"[WHALE-STEP] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
                             self.update_sl_price(symbol, side, size, new_sl_price)
                             self._last_sl_set[symbol] = now
 
