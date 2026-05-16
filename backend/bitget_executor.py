@@ -681,29 +681,29 @@ class BitgetExecutor:
                     if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                     self._last_sl_set[symbol] = now
 
-                #    BLUE WHALE STEPPED TRAILING v54.0 (LADDER MODE)
+                #    BLUE WHALE STEPPED TRAILING v71.0 (THE KING - 10% LADDER)
                 # =====================================================
-                # 1. Start trailing after +15% PnL
-                # 2. For every 15% gain, move SL up by 15%
-                # 3. Peak 15% -> SL 0% | Peak 30% -> SL 15% | Peak 45% -> SL 30%
+                # 1. Start trailing after +10% PnL (Faster Lock!)
+                # 2. For every 10% gain, move SL up by 10%
+                # 3. Peak 10% -> SL 0% | Peak 20% -> SL 10% | Peak 30% -> SL 20%
                 # =====================================================
-                step_count = int(peak_pnl // 15)
+                step_count = int(peak_pnl // 10)
                 if step_count >= 1:
-                    # Logic: 15% step intervals
-                    target_sl_pnl = (step_count - 1) * 15.0
+                    # Logic: 10% step intervals
+                    target_sl_pnl = (step_count - 1) * 10.0
                     
                     # Convert PnL to Price
                     lev = float(pos.get('leverage', 10))
                     if side in ['long', 'buy']:
                         new_sl_price = entry * (1 + (target_sl_pnl / 100 / lev))
                         if new_sl_price > sl_p: # Only move UP
-                            print(f"[WHALE-STEP] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
+                            print(f"[WHALE-KING] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
                             self.update_sl_price(symbol, side, size, new_sl_price)
                             self._last_sl_set[symbol] = now
                     else:
                         new_sl_price = entry * (1 - (target_sl_pnl / 100 / lev))
                         if sl_p == 0 or new_sl_price < sl_p: # Only move DOWN
-                            print(f"[WHALE-STEP] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
+                            print(f"[WHALE-KING] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
                             self.update_sl_price(symbol, side, size, new_sl_price)
                             self._last_sl_set[symbol] = now
 

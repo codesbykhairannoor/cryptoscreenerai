@@ -1000,11 +1000,32 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
             side = "sell"
             score += 20
         
-    # Final Decision for AGILE PREDATOR (v47.1) - NO MORE DEADLOCKS
-    # 1. Balanced Score: 60 (Cukup satu sinyal kuat + momentum)
-    # 2. Volume Sensitivity: RVOL > 0.4 (Nangkep peluang lebih awal)
-    # 3. OBI & RSI: Tetap sebagai filter pengaman
+    # ==========================================================================
+    #    GOD MODE v79.0 (INSTITUTIONAL PREDATOR)
+    # ==========================================================================
+    price = mark_price
+    low_15m = tech.get('low_15m', 0)
+    rsi = tech.get('rsi', 50)
+    obi = tech.get('obi', 0)
+    oi_change = tech.get('oi_change', 'NEUTRAL') # RISING, FALLING, NEUTRAL
+    is_liq_event = tech.get('is_liquidation_event', False)
     
+    # 1. THE LIQUIDATION SNIPER (Priority #1)
+    if is_liq_event and price < low_15m * 1.01:
+        return "buy", "GOD-MODE: Liquidation Sniper (Bottom Serok)", 100
+        
+    # 2. THE TRUTH FILTER (Anti-Whale Trap)
+    # If price is rising but OI is falling, it's a fake move!
+    if side == "buy" and oi_change == "FALLING":
+        return None, "GOD-MODE: Whale Trap Detected (Price Up / OI Down)", 0
+
+    # 3. THE STALKER (v62.0)
+    is_shakeout = price < (low_15m * 0.99) if low_15m > 0 else False
+    if is_shakeout and rsi < 30 and obi > 0.15:
+        return "buy", "STALKER: Liquidity Sweep + Whale Confirmation", 100
+    # ==========================================================================
+
+    # Final Decision for AGILE PREDATOR (v47.1) - NO MORE DEADLOCKS
     ema_21 = tech.get('ema_21', mark_price)
     obi = tech.get('obi', 0)
     
@@ -1032,20 +1053,18 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    v44.1: THE BALANCED PREDATOR (RR 1:1 PROVEN)
-    Berdasarkan Backtest v42.0 Manual Audit:
-    TP: 5.0% (Profit stabil)
-    SL: 5.0% (Napas pas, hindari noise)
-    RR: 1.0 (Titik Keseimbangan Cuan)
+    v62.0: BLUE WHALE INITIALS
+    SL: -2.0% Price (-20% PnL at 10x) - Survival Gap
+    TP: +10.0% Price (+100% PnL at 10x) - Moonshot Target
     """
     base_p = tech.get('limit_price', mark_price)
     
     if side == "buy":
-        take_profit_val = base_p * 1.05  # +5.0% Harga
-        stop_loss_val = base_p * 0.95    # -5.0% Harga
+        take_profit_val = base_p * 1.10  # +10.0% Harga
+        stop_loss_val = base_p * 0.98    # -2.0% Harga
     else:
-        take_profit_val = base_p * 0.95  # -5.0% Harga
-        stop_loss_val = base_p * 1.05    # +5.0% Harga
+        take_profit_val = base_p * 0.90  # -10.0% Harga
+        stop_loss_val = base_p * 1.02    # +2.0% Harga
         
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
