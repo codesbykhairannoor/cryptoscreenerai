@@ -379,13 +379,31 @@ class BitgetExecutor:
                     return str(round(p, 2) if p > 10 else round(p, 3))
 
             if sl_price and sl_price > 0:
+                # Strictly cancel previous SL plan orders first to avoid hanging order conflicts
+                try:
+                    existing = self.exchange.private_get_v2_mix_order_plan_current_orders({
+                        'symbol': clean_symbol, 'productType': 'USDT-FUTURES'
+                    })
+                    if existing.get('code') == '00000' and existing.get('data'):
+                        for order in existing['data']:
+                            plan_type = order.get('planType', '').lower()
+                            if any(x in plan_type for x in ['loss', 'stop_loss_val', 'stop', 'psl']):
+                                order_id = order.get('orderId', order.get('planId'))
+                                if order_id:
+                                    self._v3_request("POST", "/api/v2/mix/order/plan/cancelPlan", body={
+                                        "symbol": clean_symbol, "productType": "USDT-FUTURES",
+                                        "marginCoin": "USDT", "orderId": str(order_id)
+                                    })
+                except Exception as ex:
+                    print(f"[SL CANCEL FAIL] {symbol}: {ex}")
+
                 payload = {
                     "symbol": clean_symbol,
                     "productType": "USDT-FUTURES",
                     "marginCoin": "USDT",
                     "planType": "pos_loss",
                     "triggerPrice": str(round_p(sl_price)),
-                    "triggerType": "mark_price",
+                    "triggerType": "last_price", # Changed from mark_price to last_price for precision!
                     "holdSide": hold_side,
                     "executePrice": "0"
                 }
@@ -402,7 +420,7 @@ class BitgetExecutor:
                     "marginCoin": "USDT",
                     "planType": "pos_profit",
                     "triggerPrice": str(round_p(tp_price)),
-                    "triggerType": "mark_price",
+                    "triggerType": "last_price", # Changed from mark_price to last_price for precision!
                     "holdSide": hold_side,
                     "executePrice": "0"
                 }
@@ -672,28 +690,35 @@ class BitgetExecutor:
                     state.recently_exited[clean] = time.time()
                     continue
 
+                # Extract actual leverage from position to calibrate precise PnL triggers
+                lev = float(pos.get('leverage', 10))
+
                 #    INITIAL GUARD - Jika stop_loss_val/take_profit_val hilang, pasang LANGSUNG tanpa cooldown
                 if (not has_sl or not has_tp) and now - self.startup_time > 5:
-                    # BLUE WHALE INITIALS (v53.0): SL -2% price (-20% PnL), TP +10% price (+100% PnL)
-                    sl_price = entry * 0.98 if side in ['long','buy'] else entry * 1.02
-                    tp_price = entry * 1.10 if side in ['long','buy'] else entry * 0.90
+                    # Calibrate exact -20% PnL (SL) and +100% PnL (TP) dynamically using leverage
+                    if side in ['long','buy']:
+                        sl_price = entry * (1 - (20.0 / 100 / lev))
+                        tp_price = entry * (1 + (100.0 / 100 / lev))
+                    else:
+                        sl_price = entry * (1 + (20.0 / 100 / lev))
+                        tp_price = entry * (1 - (100.0 / 100 / lev))
+                        
                     if not has_sl: self._set_sl_tp_bitget(symbol, side, size, sl_price=sl_price)
                     if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                     self._last_sl_set[symbol] = now
 
-                #    BLUE WHALE STEPPED TRAILING v71.0 (THE KING - 10% LADDER)
+                #    BLUE WHALE STEPPED TRAILING v89.0 (THE KING - 10% LADDER + 4% LOCK)
                 # =====================================================
                 # 1. Start trailing after +10% PnL (Faster Lock!)
-                # 2. For every 10% gain, move SL up by 10%
-                # 3. Peak 10% -> SL 0% | Peak 20% -> SL 10% | Peak 30% -> SL 20%
+                # 2. For every 10% gain, move SL up by 10% + 4% lock
+                # 3. Peak 10% -> SL 4% | Peak 20% -> SL 14% | Peak 30% -> SL 24%
                 # =====================================================
                 step_count = int(peak_pnl // 10)
                 if step_count >= 1:
-                    # Logic: 10% step intervals
-                    target_sl_pnl = (step_count - 1) * 10.0
+                    # Logic: 10% step intervals + 4% locked profit (guarantees +1% to +3% NET at 10x leverage)
+                    target_sl_pnl = ((step_count - 1) * 10.0) + 4.0
                     
                     # Convert PnL to Price
-                    lev = float(pos.get('leverage', 10))
                     if side in ['long', 'buy']:
                         new_sl_price = entry * (1 + (target_sl_pnl / 100 / lev))
                         if new_sl_price > sl_p: # Only move UP
