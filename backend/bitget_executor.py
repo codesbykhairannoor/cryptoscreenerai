@@ -574,7 +574,7 @@ class BitgetExecutor:
                     full_symbol = f"{clean}USDT"
                     # Asumsikan exit_price mendekati mark_price terakhir atau hitung dari PnL
                     # Ini untuk estimasi jika kita tidak punya harga exit eksak dari WS
-                    close_trade(full_symbol, exit_price=0, pnl_usd=0) 
+                    close_trade(full_symbol, exit_price=0, pnl_usd=0, pnl_pct=last_pnl) 
                 except: pass
 
                 print(f"\n[TRACKER] [DONE] TRADE CLOSED: {clean} | PnL: {last_pnl}%")
