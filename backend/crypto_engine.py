@@ -42,20 +42,16 @@ NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
-MIN_MOMENTUM_SCORE   = 50     # v100.0: Lebih ketat - kualitas > kuantitas
-# == STRATEGY v100.0: MEAN REVERSION + CONFLUENCE ==
-# Prinsip: Masuk di KEY LEVEL (EMA/VWAP), bukan di breakout puncak
-# Referensi: Nial Fuller Price Action, ICT concepts, Smart Money
-SCALP_TP_PCT         = 0.05   # +5% price = +50% PnL @ 10x (achievable)
-SCALP_SL_PCT         = 0.025  # -2.5% price = -25% PnL @ 10x (ATR-adaptive)
-ATR_SL_MULT          = 1.5    # SL = 1.5x ATR (survive market noise)
-ATR_TP_MULT          = 3.0    # TP = 3x ATR (minimum 2:1 RR always)
-MIN_PUMP_SCORE       = 20
-MIN_TECH_SCORE       = 30
-SELL_ENABLED         = True   # SHORT juga diaktifkan
-# Confluence scoring thresholds
-MIN_CONFLUENCE_SCORE = 3      # Minimal 3 dari 5 sinyal harus konfirmasi
-# ===============================================================
+MIN_MOMENTUM_SCORE   = 30     # Turun ke 30 untuk lebih banyak sinyal!
+# == INSTITUTIONAL HUNTER CONFIG (v26.70-GOD-MODE) ==
+HUNTER_ATR_SL_MULT   = 0.8    # Optimized from 700+ scenarios
+HUNTER_ATR_TP_MULT   = 2.0    # Optimized for massive Profit Factor
+FVG_GAP_THRESHOLD    = 0.005  
+SCALP_TP_PCT         = 0.08   
+SCALP_SL_PCT         = 0.015  # 1.5% price = 15% PnL (Strict SL v31.8)
+# =========================================
+MIN_PUMP_SCORE       = 15     # Lebih rendah, lebih banyak sinyal
+MIN_TECH_SCORE       = 20     # Lebih rendah, lebih banyak sinyal
 
 #  WHALE OBSERVER CONFIG (Legacy/Reference)
 MIN_APPEARANCES      = 1
@@ -67,12 +63,14 @@ COIN_PENALTY_HOURS          = 24  # Hukuman 24 jam untuk koin bandel
 
 # OI & Funding thresholds
 OI_SURGE_THRESHOLD   = 0.05
-FUNDING_SQUEEZE_THR  = -0.0003
-VOLUME_SPIKE_RATIO   = 2.0
+FUNDING_SQUEEZE_THR  = -0.0003  # Fix: -0.03% lebih realistis (sebelumnya -0.1% hampir tidak pernah terjadi)
+VOLUME_SPIKE_RATIO   = 2.5
 
-# PRECISION STRIKE
-TRAIL_GAP_ATR   = 2.0
-BTC_SYNC_ENABLED = True
+# == PRECISION STRIKE CONFIG (v22.0) ============================
+ATR_SL_MULT     = 2.0    # stop_loss_val lebih lebar (2.0x ATR) untuk WR 70%+
+ATR_TP_MIN_MULT = 4.0    
+TRAIL_GAP_ATR   = 2.5    
+BTC_SYNC_ENABLED = True  # Hanya LONG jika BTC juga Bullish
 # ===============================================================
 
 # DATA-PROVEN BLACKLIST (dari analisis 345 trades, 0% WR)
@@ -951,156 +949,124 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
 
 
 def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_sentiment: str, mark_price: float, pump_sc: float, dump_sc: float) -> tuple[str | None, str, int]:
-    """
-    v100.0: MEAN REVERSION + CONFLUENCE STRATEGY
-    ================================================
-    Prinsip dasar:
-    - JANGAN beli di puncak/breakout (WR rendah)
-    - BELI saat harga pullback ke KEY LEVEL (EMA21, EMA50, VWAP)
-    - JUAL saat harga menyentuh KEY RESISTANCE dari bawah
-    - Minimal 3 konfirmasi sebelum entry
-    - SL di bawah key level (bukan fixed %)
-    Referensi: ICT Smart Money Concepts, Nial Fuller Price Action
-    """
-    rvol  = tech.get('rvol', 0)
-    atr   = tech.get('atr', 0)
+    rvol = tech.get('rvol', 0)
+    atr = tech.get('atr', 0)
     atr_pct = (atr / mark_price) * 100 if mark_price > 0 else 0
-    ema21 = tech.get('ema_21', mark_price)
-    ema50 = tech.get('ema_50', mark_price)
-    obi   = tech.get('obi', 0)
-    funding = tech.get('funding_rate', 0)
-    trend_1h = tech.get('trend_1h', 'NEUTRAL')
-    trend_4h = tech.get('trend_4h', 'NEUTRAL')
-    in_demand = tech.get('in_demand', False)
-    in_supply = tech.get('in_supply', False)
-    mss_bull  = tech.get('mss_bullish', False)
-    mss_bear  = tech.get('mss_bearish', False)
-    is_liq    = tech.get('is_liquidation_event', False)
-    low_15m   = tech.get('low_15m', 0)
-    high_15m  = tech.get('high_15m', mark_price)
+    
+    # --- 1. THE HOLY GRAIL (90% WR BREAKOUT) ---
+    if rsi > 65 and rvol > 2.0 and atr_pct > 0.5:
+        print(f"[HOLY GRAIL 90%] FIRING! RSI: {rsi:.1f} | RVOL: {rvol:.1f}x | ATR: {atr_pct:.2f}%", flush=True)
+        return "buy", "HOLY_GRAIL_BREAKOUT", 100
 
-    # --- GUARD: Volatile/choppy market filter ---
-    if atr_pct > 6.0:
-        return None, "ATR_TOO_HIGH", 0  # Skip coins too volatile to trade safely
-    if rvol < 0.5:
+    # --- 2. BALANCED PREDATOR (SMC + MOMENTUM) ---
+    # Syarat minimal untuk trade normal:
+    if rvol < 0.4: # Sangat rendah baru skip (Market lagi sepi)
         return None, "VOL_DEAD", 0
+        
+    score = 0
+    reasons = []
+    
+    # Check MSS (Market Structure Shift)
+    if tech.get('mss_bullish'): 
+        score += 40
+        reasons.append("MSS^")
+    elif tech.get('mss_bearish'):
+        score += 40
+        reasons.append("MSSv")
 
-    # =========================================================
-    # STRATEGY A: LONG - MEAN REVERSION AT KEY SUPPORT
-    # Entry: Price pulls back to EMA21/50 or VWAP in uptrend
-    # Requires: 1H uptrend + RSI not overbought + key level touch
-    # =========================================================
-    long_score = 0
-    long_reasons = []
+    # Check FVG / OB
+    if tech.get('fvg') == 'BULLISH':
+        score += 30
+        reasons.append("FVG+")
+    elif tech.get('fvg') == 'BEARISH':
+        score += 30
+        reasons.append("FVG-")
 
-    # 1. Higher Timeframe Trend Confirmation (most important)
-    if trend_1h in ('BULLISH', 'UP'):
-        long_score += 2
-        long_reasons.append('1H_BULL')
-    if trend_4h in ('BULLISH', 'UP'):
-        long_score += 2
-        long_reasons.append('4H_BULL')
+    if tech.get('in_demand'):
+        score += 30
+        reasons.append("OB+")
+    elif tech.get('in_supply'):
+        score += 30
+        reasons.append("OB-")
 
-    # 2. Price at KEY SUPPORT LEVEL (not chasing breakout)
-    near_ema21 = (ema21 > 0) and (abs(mark_price - ema21) / ema21 < 0.015)  # within 1.5% of EMA21
-    near_ema50 = (ema50 > 0) and (abs(mark_price - ema50) / ema50 < 0.020)  # within 2% of EMA50
-    below_vwap = vwap_dist < -0.5  # Price below VWAP = potential support
-    if near_ema21 or near_ema50:
-        long_score += 2
-        long_reasons.append('AT_EMA_SUPPORT')
-    if below_vwap and vwap_dist > -4.0:  # Not too far below VWAP
-        long_score += 1
-        long_reasons.append('VWAP_SUPPORT')
+    # RSI Filter (Balanced) - v41.0: Lebih sensitif terhadap Technical Shift
+    side = None
+    if tech.get('mss_bullish') or tech.get('fvg') == 'BULLISH':
+        if rsi > 45: # Cukup di atas area oversold/neutral
+            side = "buy"
+            score += 20
+    elif tech.get('mss_bearish') or tech.get('fvg') == 'BEARISH':
+        if rsi < 55: # Cukup di bawah area overbought/neutral
+            side = "sell"
+            score += 20
+        
+    # ==========================================================================
+    #    GOD MODE v79.0 (INSTITUTIONAL PREDATOR)
+    # ==========================================================================
+    price = mark_price
+    low_15m = tech.get('low_15m', 0)
+    rsi = tech.get('rsi', 50)
+    obi = tech.get('obi', 0)
+    oi_change = tech.get('oi_change', 'NEUTRAL') # RISING, FALLING, NEUTRAL
+    is_liq_event = tech.get('is_liquidation_event', False)
+    
+    # 1. THE LIQUIDATION SNIPER (Priority #1)
+    if is_liq_event and price < low_15m * 1.01:
+        return "buy", "GOD-MODE: Liquidation Sniper (Bottom Serok)", 100
+        
+    # 2. THE TRUTH FILTER (Anti-Whale Trap)
+    # If price is rising but OI is falling, it's a fake move!
+    if side == "buy" and oi_change == "FALLING":
+        return None, "GOD-MODE: Whale Trap Detected (Price Up / OI Down)", 0
 
-    # 3. RSI in BUY ZONE (oversold/neutral, not overbought)
-    if 30 <= rsi <= 50:
-        long_score += 2
-        long_reasons.append(f'RSI_BUY({rsi:.0f})')
-    elif 50 < rsi <= 58:
-        long_score += 1
-        long_reasons.append(f'RSI_NEUTRAL({rsi:.0f})')
-    elif rsi < 30:
-        long_score += 3  # Oversold bounce setup
-        long_reasons.append(f'RSI_OVERSOLD({rsi:.0f})')
+    # 3. THE STALKER (v62.0)
+    is_shakeout = price < (low_15m * 0.99) if low_15m > 0 else False
+    if is_shakeout and rsi < 30 and obi > 0.15:
+        return "buy", "STALKER: Liquidity Sweep + Whale Confirmation", 100
+    # ==========================================================================
 
-    # 4. Order Flow Confirmation
-    if obi > 0.10:
-        long_score += 2
-        long_reasons.append(f'OBI_BUY({obi:+.2f})')
-    if in_demand or mss_bull:
-        long_score += 2
-        long_reasons.append('SMC_DEMAND')
+    # Final Decision for AGILE PREDATOR (v47.1) - NO MORE DEADLOCKS
+    ema_21 = tech.get('ema_21', mark_price)
+    obi = tech.get('obi', 0)
+    
+    if side and score >= 60:
+        # Trend Guard (EMA 21)
+        if side == "buy" and mark_price < ema_21: return None, "AGAINST_TREND_BUY", 0
+        if side == "sell" and mark_price > ema_21: return None, "AGAINST_TREND_SELL", 0
+        
+        if rvol < 0.4: return None, "VOL_TOO_LOW", 0
+            
+        if side == "buy":
+            if rsi < 50: return None, "RSI_WEAK_BUY", 0
+            if obi < 0.05: return None, "OBI_WEAK_BUY", 0
+        if side == "sell":
+            if rsi > 50: return None, "RSI_WEAK_SELL", 0
+            if obi > -0.05: return None, "OBI_WEAK_SELL", 0
 
-    # 5. Liquidation Sniper (special high-probability setup)
-    if is_liq and mark_price < low_15m * 1.01 and rsi < 40:
-        return "buy", "LIQ_SNIPER_v100", 90
+        if side == "sell" and not SELL_TRADING_ENABLED:
+            return None, "SELL_DISABLED", 0
+            
+        return side, f"AGILE_{'+'.join(reasons)}", score
 
-    # 6. Funding rate squeeze (negative = longs squeezed, good for bounce)
-    if funding < -0.0002:
-        long_score += 1
-        long_reasons.append('FUNDING_SQUEEZE')
-
-    # =========================================================
-    # STRATEGY B: SHORT - MEAN REVERSION AT KEY RESISTANCE
-    # Entry: Price rallies to EMA21/50 or VWAP in downtrend
-    # Requires: 1H downtrend + RSI not oversold + key level touch
-    # =========================================================
-    short_score = 0
-    short_reasons = []
-
-    if trend_1h in ('BEARISH', 'DOWN'):
-        short_score += 2
-        short_reasons.append('1H_BEAR')
-    if trend_4h in ('BEARISH', 'DOWN'):
-        short_score += 2
-        short_reasons.append('4H_BEAR')
-
-    above_ema21 = (ema21 > 0) and (abs(mark_price - ema21) / ema21 < 0.015)
-    above_ema50 = (ema50 > 0) and (abs(mark_price - ema50) / ema50 < 0.020)
-    above_vwap = vwap_dist > 0.5
-    if above_ema21 or above_ema50:
-        short_score += 2
-        short_reasons.append('AT_EMA_RESIST')
-    if above_vwap and vwap_dist < 4.0:
-        short_score += 1
-        short_reasons.append('VWAP_RESIST')
-
-    if 50 <= rsi <= 70:
-        short_score += 2
-        short_reasons.append(f'RSI_SELL({rsi:.0f})')
-    elif 42 <= rsi < 50:
-        short_score += 1
-        short_reasons.append(f'RSI_NEUTRAL({rsi:.0f})')
-    elif rsi > 70:
-        short_score += 3  # Overbought
-        short_reasons.append(f'RSI_OVERBOUGHT({rsi:.0f})')
-
-    if obi < -0.10:
-        short_score += 2
-        short_reasons.append(f'OBI_SELL({obi:+.2f})')
-    if in_supply or mss_bear:
-        short_score += 2
-        short_reasons.append('SMC_SUPPLY')
-    if funding > 0.0003:
-        short_score += 1
-        short_reasons.append('FUNDING_HIGH')
-
-    # =========================================================
-    # DECISION: Pick the better side, require MIN 5 score points
-    # =========================================================
-    MIN_SCORE = 5
-
-    if long_score >= MIN_SCORE and long_score >= short_score:
-        reason = 'CONFLUENCE_LONG:' + '+'.join(long_reasons)
-        return 'buy', reason, min(long_score * 9, 100)
-
-    if short_score >= MIN_SCORE and short_score > long_score and SELL_ENABLED:
-        reason = 'CONFLUENCE_SHORT:' + '+'.join(short_reasons)
-        return 'sell', reason, min(short_score * 9, 100)
-
-    return None, f'NO_CONFLUENCE(L:{long_score}/S:{short_score})', 0
+    return None, "WAITING_FOR_CONFIRMATION", 0
 
 
+def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
+    """
+    v62.0: BLUE WHALE INITIALS
+    SL: -2.0% Price (-20% PnL at 10x) - Survival Gap
+    TP: +10.0% Price (+100% PnL at 10x) - Moonshot Target
+    """
+    base_p = tech.get('limit_price', mark_price)
+    
+    if side == "buy":
+        take_profit_val = base_p * 1.10  # +10.0% Harga
+        stop_loss_val = base_p * 0.98    # -2.0% Harga
+    else:
+        take_profit_val = base_p * 0.90  # -10.0% Harga
+        stop_loss_val = base_p * 1.02    # +2.0% Harga
+        
+    return round(take_profit_val, 6), round(stop_loss_val, 6)
 
 
 # == PERFORMANCE TRACKING (v21.0) ================================

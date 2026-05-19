@@ -1,4 +1,4 @@
-import os
+﻿import os
 import time
 import sqlite3
 from dotenv import load_dotenv
@@ -130,7 +130,7 @@ def log_trade(symbol, entry, tp, sl, market='crypto', side='buy', lot_size=0, sc
         print(f"[DB LOG ERROR] {symbol}: {e}")
         return False
 
-def close_trade(symbol, exit_price, pnl_usd=0, market='crypto', pnl_pct=None):
+def close_trade(symbol, exit_price, pnl_usd=0, market='crypto'):
     """
     Update trade yang sudah close dengan exit price dan PnL aktual.
     Dipanggil saat SL/TP kena atau manual close.
@@ -161,27 +161,15 @@ def close_trade(symbol, exit_price, pnl_usd=0, market='crypto', pnl_pct=None):
 
     entry = trade['entry_price']
     side = str(trade['side']).lower()
-    leverage = 10.0
     
-    # 2. Tentukan PnL % aktual dan hitung estimasi harga exit
-    if pnl_pct is not None:
-        pnl_pct = float(pnl_pct)
-        # Hitung harga exit secara matematis berdasarkan PnL aktual yang dilaporkan
-        if entry > 0:
-            if side in ['long', 'buy']:
-                exit_price = entry * (1.0 + (pnl_pct / (leverage * 100.0)))
-            else:
-                exit_price = entry * (1.0 - (pnl_pct / (leverage * 100.0)))
-    else:
-        pnl_pct = 0.0
-        if entry > 0 and exit_price > 0:
-            if side in ['long', 'buy']:
-                pnl_pct = ((exit_price - entry) / entry) * leverage * 100
-            else:
-                pnl_pct = ((entry - exit_price) / entry) * leverage * 100
-        elif entry > 0 and exit_price == 0:
-            # Fallback aman jika exit_price = 0 dan pnl_pct tidak dikirim
-            pnl_pct = 0.0
+    # 2. Hitung PnL % (ROI dengan asumsi leverage 10x)
+    leverage = 10.0
+    pnl_pct = 0.0
+    if entry > 0:
+        if side in ['long', 'buy']:
+            pnl_pct = ((exit_price - entry) / entry) * leverage * 100
+        else:
+            pnl_pct = ((entry - exit_price) / entry) * leverage * 100
     
     placeholder = "%s" if not is_sqlite(conn) else "?"
     cursor.execute(f'''
