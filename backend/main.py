@@ -71,10 +71,14 @@ def _kill_stale_port(port: int = 8000):
 _bitget_executor: BitgetExecutor = None
 _forex_executor: ForexExecutor = None
 
-def get_bitget_executor() -> BitgetExecutor:
+def get_bitget_executor():
     global _bitget_executor
     if _bitget_executor is None:
-        _bitget_executor = BitgetExecutor()
+        if _os.getenv("TRADE_MODE", "live").lower() == "paper":
+            from paper_executor import PaperExecutor
+            _bitget_executor = PaperExecutor()
+        else:
+            _bitget_executor = BitgetExecutor()
     return _bitget_executor
 
 def get_forex_executor() -> ForexExecutor:

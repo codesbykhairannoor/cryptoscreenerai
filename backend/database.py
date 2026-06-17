@@ -1,4 +1,4 @@
-﻿import os
+import os
 import time
 import sqlite3
 from dotenv import load_dotenv
@@ -51,9 +51,24 @@ def init_db():
             reason TEXT DEFAULT '',
             session TEXT DEFAULT '',
             timestamp BIGINT,
-            closed_at BIGINT DEFAULT 0
+            closed_at BIGINT DEFAULT 0,
+            is_paper BOOLEAN DEFAULT FALSE
         )
     ''')
+
+    # Tabel Virtual Account (untuk Paper Trading)
+    cursor.execute(f'''
+        CREATE TABLE IF NOT EXISTS virtual_account (
+            id {id_type} {pk_extra},
+            balance DOUBLE PRECISION DEFAULT 1000.0,
+            updated_at BIGINT
+        )
+    ''')
+
+    # Seed initial virtual balance if empty
+    cursor.execute("SELECT COUNT(*) FROM virtual_account")
+    if cursor.fetchone()[0] == 0:
+        cursor.execute("INSERT INTO virtual_account (balance, updated_at) VALUES (1000.0, %s)" if not is_sqlite(conn) else "INSERT INTO virtual_account (balance, updated_at) VALUES (1000.0, ?)", (int(time.time() * 1000),))
 
     # Tambah kolom baru kalau belum ada (untuk database yang sudah ada)
     new_columns = [
@@ -70,6 +85,7 @@ def init_db():
         ("entry_sentiment", "TEXT DEFAULT 'NEUTRAL'"),
         ("session", "TEXT DEFAULT ''"),
         ("closed_at", "BIGINT DEFAULT 0"),
+        ("is_paper", "BOOLEAN DEFAULT FALSE"),
     ]
     for col_name, col_def in new_columns:
         try:
@@ -116,12 +132,12 @@ def log_trade(symbol, entry, tp, sl, market='crypto', side='buy', lot_size=0, sc
             INSERT INTO trades
                 (symbol, entry_price, tp_price, sl_price, status, market, side,
                  lot_size, score, reason, session, timestamp, 
-                 entry_rsi, entry_vwap, entry_rvol, entry_sentiment)
+                 entry_rsi, entry_vwap, entry_rvol, entry_sentiment, is_paper)
             VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 'PENDING', {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 
-                    {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                    {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
         ''', (symbol, entry, tp, sl, market, side,
               float(lot_size), int(score), str(reason)[:200], session,
-              int(time.time() * 1000), float(rsi), float(vwap), float(rvol), str(sentiment)))
+              int(time.time() * 1000), float(rsi), float(vwap), float(rvol), str(sentiment), os.getenv("TRADE_MODE", "live").lower() == "paper"))
         conn.commit()
         cursor.close()
         conn.close()
@@ -343,5 +359,40 @@ def get_trade_history(market=None, limit=50):
     conn.close()
     return [dict(r) for r in rows]
 
+# =========================================================================
+# VIRTUAL ACCOUNT (PAPER TRADING) FUNCTIONS
+# =========================================================================
 
+def get_virtual_balance():
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT balance FROM virtual_account ORDER BY id ASC LIMIT 1")
+    row = cursor.fetchone()
+    cursor.close()
+    conn.close()
+    if row:
+        return float(row[0] if is_sqlite(conn) else row[0])
+    return 1000.0
 
+def update_virtual_balance(amount_change: float):
+    """Menambah atau mengurangi saldo virtual."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    placeholder = "%s" if not is_sqlite(conn) else "?"
+    
+    cursor.execute("SELECT id, balance FROM virtual_account ORDER BY id ASC LIMIT 1")
+    row = cursor.fetchone()
+    if row:
+        v_id, current_balance = row
+        new_balance = float(current_balance) + amount_change
+        cursor.execute(f"UPDATE virtual_account SET balance = {placeholder}, updated_at = {placeholder} WHERE id = {placeholder}",
+                       (new_balance, int(time.time() * 1000), v_id))
+    else:
+        new_balance = float(os.getenv("VIRTUAL_BALANCE", "1000")) + amount_change
+        cursor.execute(f"INSERT INTO virtual_account (balance, updated_at) VALUES ({placeholder}, {placeholder})",
+                       (new_balance, int(time.time() * 1000)))
+    
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return new_balance
