@@ -252,7 +252,10 @@ def check_pending_trades():
         tp       = trade['tp_price']
         sl       = trade['sl_price']
         current_status = trade['status']
-        market   = trade.get('market', 'crypto')
+        try:
+            market = trade['market']
+        except Exception:
+            market = 'crypto'
 
         try:
             current_price = get_current_price(symbol, market=market)
