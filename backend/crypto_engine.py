@@ -1671,7 +1671,7 @@ def run_crypto_engine():
                     if order_success:
                         from database import log_trade
                         log_trade(symbol, mark_price, take_profit_val, stop_loss_val, 
-                                  side=side, score=combined_score, reason=reason,
+                                  side=side, lot_size=amount, score=combined_score, reason=reason,
                                   rsi=rsi, vwap=vwap_dist, rvol=rvol, sentiment=market_sentiment)
                         last_exec_time = time.time()
                         _consec_losses = 0
