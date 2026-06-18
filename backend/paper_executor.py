@@ -239,6 +239,24 @@ class PaperExecutor:
             if pnl > self._peak_pnl[symbol]: self._peak_pnl[symbol] = pnl
             peak_pnl = self._peak_pnl[symbol]
             
+            # INITIAL GUARD: Set default SL (-20%) / TP (+100%) if missing
+            lev = pos['leverage']
+            ent = pos['entry']
+            if (sl == 0 or tp == 0) and now - self.startup_time > 5:
+                if side in ['long','buy']:
+                    default_sl = ent * (1 - (20.0 / 100 / lev))
+                    default_tp = ent * (1 + (100.0 / 100 / lev))
+                else:
+                    default_sl = ent * (1 + (20.0 / 100 / lev))
+                    default_tp = ent * (1 - (100.0 / 100 / lev))
+                    
+                if sl == 0:
+                    self.update_sl_price(symbol, side, pos['amount'], default_sl, is_tp=False)
+                    sl = default_sl
+                if tp == 0:
+                    self.update_sl_price(symbol, side, pos['amount'], default_tp, is_tp=True)
+                    tp = default_tp
+
             # Cek Hit SL/TP Statis
             is_long = side in ['long', 'buy']
             hit_sl = False
@@ -261,6 +279,34 @@ class PaperExecutor:
                 if symbol in self._peak_pnl: del self._peak_pnl[symbol]
                 continue
                 
+            # SIDEWAYS DETECTION
+            try:
+                from shared_state import state
+                if symbol not in state.pos_start_time:
+                    state.pos_start_time[symbol] = now
+                duration_hours = (now - state.pos_start_time[symbol]) / 3600
+                ent = pos['entry']
+                price_move_pct = abs((mrk - ent) / ent * 100) if ent > 0 else 0
+                
+                MIN_HOLD_HOURS     = 0.5
+                SIDEWAYS_WARN_HOURS    = 3.0
+                SIDEWAYS_TIMEOUT_HOURS = 4.0
+                
+                is_sideways = (-10.0 < pnl < 10.0) and (price_move_pct < 2.0)
+                
+                if duration_hours >= MIN_HOLD_HOURS:
+                    if duration_hours > SIDEWAYS_WARN_HOURS and is_sideways:
+                        if duration_hours > SIDEWAYS_TIMEOUT_HOURS:
+                            self._close_paper_position(pos, mrk, reason="Sideways Timeout")
+                            if symbol in state.pos_start_time: del state.pos_start_time[symbol]
+                            if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                            clean = self._clean_symbol(symbol)
+                            if not hasattr(state, 'recently_exited'): state.recently_exited = {}
+                            state.recently_exited[clean] = time.time()
+                            continue
+            except Exception as e:
+                print(f"[PAPER SIDEWAYS ERROR] {e}")
+
             # Cek Hard Exit
             if pnl <= -50:
                 self._close_paper_position(pos, mrk, reason="Hard Exit PnL -50%")
