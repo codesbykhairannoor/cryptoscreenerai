@@ -10,7 +10,9 @@ class PaperExecutor:
     """
     def __init__(self):
         self.trade_mode = "paper"
-        self._peak_pnl = {}
+        self._peak_pnl = {}       # Akan di-sync ke shared_state setelah startup
+        self._tracked_positions = {}   # Untuk mendeteksi posisi yang baru saja tutup
+        self._last_sl_check = {}       # Throttle cek SL per 10 detik per symbol
         self.startup_time = time.time()
         print("[PAPER TRADING] PaperExecutor initialized. Running in simulation mode.")
         bal = self.get_balance()
@@ -220,112 +222,171 @@ class PaperExecutor:
 
     def manage_open_positions(self):
         """
-        Position Manager untuk Paper Trading. 
-        Mengecek SL/TP dan menjalankan Stepped Trailing logic.
+        Position Manager untuk Paper Trading.
+        100% synchronized dengan bitget_executor:
+        - Trailing SL Whale King 10% Ladder + 4% Lock
+        - Hard Exit -50%
+        - Sideways Timeout 4 jam
+        - Initial Guard SL/TP otomatis
+        - Peak PnL persist via shared_state
+        - Close tracker untuk sync ke database
         """
-        positions = self.get_all_positions()
-        now = time.time()
-        
-        for pos in positions:
-            symbol = pos['symbol']
-            pnl = pos['pnl']
-            mrk = pos['mark_price']
-            sl = float(pos.get('sl_price') or 0)
-            tp = float(pos.get('tp_price') or 0)
-            side = pos['side']
-            
-            # Update peak PnL
-            if symbol not in self._peak_pnl: self._peak_pnl[symbol] = 0
-            if pnl > self._peak_pnl[symbol]: self._peak_pnl[symbol] = pnl
-            peak_pnl = self._peak_pnl[symbol]
-            
-            # INITIAL GUARD: Set default SL (-20%) / TP (+100%) if missing
-            lev = pos['leverage']
-            ent = pos['entry']
-            if (sl == 0 or tp == 0) and now - self.startup_time > 5:
-                if side in ['long','buy']:
-                    default_sl = ent * (1 - (20.0 / 100 / lev))
-                    default_tp = ent * (1 + (100.0 / 100 / lev))
-                else:
-                    default_sl = ent * (1 + (20.0 / 100 / lev))
-                    default_tp = ent * (1 - (100.0 / 100 / lev))
-                    
-                if sl == 0:
-                    self.update_sl_price(symbol, side, pos['amount'], default_sl, is_tp=False)
-                    sl = default_sl
-                if tp == 0:
-                    self.update_sl_price(symbol, side, pos['amount'], default_tp, is_tp=True)
-                    tp = default_tp
+        try:
+            if not hasattr(self, '_last_sl_check'): self._last_sl_check = {}
+            if not hasattr(self, '_tracked_positions'): self._tracked_positions = {}
 
-            # Cek Hit SL/TP Statis
-            is_long = side in ['long', 'buy']
-            hit_sl = False
-            hit_tp = False
-            
-            if is_long:
-                if sl > 0 and mrk <= sl: hit_sl = True
-                if tp > 0 and mrk >= tp: hit_tp = True
-            else:
-                if sl > 0 and mrk >= sl: hit_sl = True
-                if tp > 0 and mrk <= tp: hit_tp = True
-                
-            if hit_sl:
-                self._close_paper_position(pos, mrk, reason="Hit SL")
-                if symbol in self._peak_pnl: del self._peak_pnl[symbol]
-                continue
-                
-            if hit_tp:
-                self._close_paper_position(pos, mrk, reason="Hit TP")
-                if symbol in self._peak_pnl: del self._peak_pnl[symbol]
-                continue
-                
-            # SIDEWAYS DETECTION
+            # Sync peak_pnl ke shared_state agar persist saat restart
             try:
                 from shared_state import state
-                if symbol not in state.pos_start_time:
-                    state.pos_start_time[symbol] = now
-                duration_hours = (now - state.pos_start_time[symbol]) / 3600
-                ent = pos['entry']
-                price_move_pct = abs((mrk - ent) / ent * 100) if ent > 0 else 0
-                
-                MIN_HOLD_HOURS     = 0.5
-                SIDEWAYS_WARN_HOURS    = 3.0
-                SIDEWAYS_TIMEOUT_HOURS = 4.0
-                
-                is_sideways = (-10.0 < pnl < 10.0) and (price_move_pct < 2.0)
-                
-                if duration_hours >= MIN_HOLD_HOURS:
-                    if duration_hours > SIDEWAYS_WARN_HOURS and is_sideways:
-                        if duration_hours > SIDEWAYS_TIMEOUT_HOURS:
-                            self._close_paper_position(pos, mrk, reason="Sideways Timeout")
-                            if symbol in state.pos_start_time: del state.pos_start_time[symbol]
-                            if symbol in self._peak_pnl: del self._peak_pnl[symbol]
-                            clean = self._clean_symbol(symbol)
-                            if not hasattr(state, 'recently_exited'): state.recently_exited = {}
-                            state.recently_exited[clean] = time.time()
-                            continue
-            except Exception as e:
-                print(f"[PAPER SIDEWAYS ERROR] {e}")
+                if not hasattr(state, 'peak_pnl'): state.peak_pnl = {}
+                self._peak_pnl = state.peak_pnl
+            except: pass
 
-            # Cek Hard Exit
-            if pnl <= -50:
-                self._close_paper_position(pos, mrk, reason="Hard Exit PnL -50%")
-                if symbol in self._peak_pnl: del self._peak_pnl[symbol]
-                continue
-                
-            # Stepped Trailing Logic (Sama dengan Whale King)
-            step_count = int(peak_pnl // 10)
-            lev = pos['leverage']
-            ent = pos['entry']
-            if step_count >= 1:
-                target_sl_pnl = ((step_count - 1) * 10.0) + 4.0
+            positions = self.get_all_positions()
+            now = time.time()
+
+            # Detect posisi yang baru saja ditutup (sama persis dengan bitget_executor)
+            try:
+                from shared_state import state
+                current_symbols = {self._clean_symbol(p['symbol']): p.get('pnl', 0) for p in positions}
+                closed_symbols = set(self._tracked_positions.keys()) - set(current_symbols.keys())
+                for clean in closed_symbols:
+                    last_pnl = self._tracked_positions[clean]
+                    if not hasattr(state, 'recently_exited'): state.recently_exited = {}
+                    state.recently_exited[clean] = now
+                    print(f"[PAPER TRACKER] Trade Closed: {clean} | PnL: {last_pnl}%")
+                self._tracked_positions = current_symbols
+            except: pass
+
+
+            for pos in positions:
+                symbol = pos['symbol']
+                pnl = pos['pnl']
+                mrk = pos['mark_price']
+                sl = float(pos.get('sl_price') or 0)
+                tp = float(pos.get('tp_price') or 0)
+                side = pos['side']
+                lev = pos['leverage']
+                ent = pos['entry']
+
+                # Throttle: cek setiap posisi max 1x per 10 detik
+                if now - self._last_sl_check.get(symbol, 0) < 10: continue
+                self._last_sl_check[symbol] = now
+
+                # Update peak PnL (sync ke shared_state)
+                if symbol not in self._peak_pnl: self._peak_pnl[symbol] = 0
+                if pnl > self._peak_pnl[symbol]: self._peak_pnl[symbol] = pnl
+                peak_pnl = self._peak_pnl[symbol]
+
+                # INITIAL GUARD: Set default SL (-20%) / TP (+100%) jika belum ada
+                if (sl == 0 or tp == 0) and now - self.startup_time > 5:
+                    if side in ['long','buy']:
+                        default_sl = ent * (1 - (20.0 / 100 / lev))
+                        default_tp = ent * (1 + (100.0 / 100 / lev))
+                    else:
+                        default_sl = ent * (1 + (20.0 / 100 / lev))
+                        default_tp = ent * (1 - (100.0 / 100 / lev))
+                    if sl == 0:
+                        self.update_sl_price(symbol, side, pos['amount'], default_sl, is_tp=False)
+                        sl = default_sl
+                    if tp == 0:
+                        self.update_sl_price(symbol, side, pos['amount'], default_tp, is_tp=True)
+                        tp = default_tp
+
+                # Cek Hit SL/TP Statis
+                is_long = side in ['long', 'buy']
+                hit_sl = False
+                hit_tp = False
+
                 if is_long:
-                    new_sl = ent * (1 + (target_sl_pnl / 100 / lev))
-                    if sl == 0 or new_sl > sl:
-                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
-                        print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl:.6f} (+{target_sl_pnl:.1f}%)")
+                    if sl > 0 and mrk <= sl: hit_sl = True
+                    if tp > 0 and mrk >= tp: hit_tp = True
                 else:
-                    new_sl = ent * (1 - (target_sl_pnl / 100 / lev))
-                    if sl == 0 or new_sl < sl:
-                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
-                        print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl:.6f} (+{target_sl_pnl:.1f}%)")
+                    if sl > 0 and mrk >= sl: hit_sl = True
+                    if tp > 0 and mrk <= tp: hit_tp = True
+
+                if hit_sl:
+                    self._close_paper_position(pos, mrk, reason="Hit SL")
+                    if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                    continue
+
+                if hit_tp:
+                    self._close_paper_position(pos, mrk, reason="Hit TP")
+                    if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                    continue
+
+                # SIDEWAYS DETECTION (4 jam timeout)
+                try:
+                    from shared_state import state
+                    if symbol not in state.pos_start_time:
+                        state.pos_start_time[symbol] = now
+                    duration_hours = (now - state.pos_start_time[symbol]) / 3600
+                    price_move_pct = abs((mrk - ent) / ent * 100) if ent > 0 else 0
+
+                    MIN_HOLD_HOURS         = 0.5
+                    SIDEWAYS_WARN_HOURS    = 3.0
+                    SIDEWAYS_TIMEOUT_HOURS = 4.0
+                    is_sideways = (-10.0 < pnl < 10.0) and (price_move_pct < 2.0)
+
+                    if duration_hours >= MIN_HOLD_HOURS:
+                        if duration_hours > SIDEWAYS_WARN_HOURS and is_sideways:
+                            if duration_hours > SIDEWAYS_TIMEOUT_HOURS:
+                                self._close_paper_position(pos, mrk, reason="Sideways Timeout")
+                                if symbol in state.pos_start_time: del state.pos_start_time[symbol]
+                                if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                                clean = self._clean_symbol(symbol)
+                                if not hasattr(state, 'recently_exited'): state.recently_exited = {}
+                                state.recently_exited[clean] = time.time()
+                                continue
+                except Exception as e:
+                    print(f"[PAPER SIDEWAYS ERROR] {e}")
+
+                # HARD EXIT -50%
+                if pnl <= -50:
+                    self._close_paper_position(pos, mrk, reason="Hard Exit PnL -50%")
+                    if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                    continue
+
+                # BLUE WHALE STEPPED TRAILING (10% LADDER + 4% LOCK) - identik dengan Whale King
+                step_count = int(peak_pnl // 10)
+                if step_count >= 1:
+                    target_sl_pnl = ((step_count - 1) * 10.0) + 4.0
+                    if is_long:
+                        new_sl = ent * (1 + (target_sl_pnl / 100 / lev))
+                        if sl == 0 or new_sl > sl:
+                            self.update_sl_price(symbol, side, pos['amount'], new_sl)
+                            print(f"[PAPER WHALE-KING] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl:.6f} (+{target_sl_pnl:.1f}%)")
+                    else:
+                        new_sl = ent * (1 - (target_sl_pnl / 100 / lev))
+                        if sl == 0 or new_sl < sl:
+                            self.update_sl_price(symbol, side, pos['amount'], new_sl)
+                            print(f"[PAPER WHALE-KING] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl:.6f} (+{target_sl_pnl:.1f}%)")
+
+
+
+        except Exception as e:
+            print(f"[PAPER POSITION MANAGER CRASH] {e}")
+
+    def sync_memory(self):
+        """Sync DB: pastikan trade di DB yang sudah tidak ada di posisi aktif ditandai CLOSED."""
+        try:
+            positions = self.get_all_positions()
+            open_symbols = [self._clean_symbol(p['symbol']) for p in positions]
+
+            conn = get_connection()
+            cursor = conn.cursor()
+            placeholder = "%s" if not is_sqlite(conn) else "?"
+            cursor.execute("SELECT id, symbol FROM trades WHERE status IN ('PENDING', 'RUNNING') AND is_paper = 1")
+            for row in cursor.fetchall():
+                tid, sym = row[0], row[1]
+                if self._clean_symbol(sym) not in open_symbols:
+                    cursor.execute(f"UPDATE trades SET status = 'CLOSED' WHERE id = {placeholder}", (tid,))
+            conn.commit()
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            print(f"[PAPER SYNC_MEMORY ERROR] {e}")
+
+    def sync_state_with_exchange(self):
+        return self.sync_memory()
+
