@@ -278,14 +278,15 @@ class PaperExecutor:
                 if pnl > self._peak_pnl[symbol]: self._peak_pnl[symbol] = pnl
                 peak_pnl = self._peak_pnl[symbol]
 
-                # INITIAL GUARD: Set default SL (-20%) / TP (+100%) jika belum ada
+                # INITIAL GUARD: Set default SL (-35%) / TP (+100%) jika belum ada
+                # DISESUAIKAN dengan _calc_tp_sl: -3.5% harga = -35% PnL @ 10x
                 if (sl == 0 or tp == 0) and now - self.startup_time > 5:
                     if side in ['long','buy']:
-                        default_sl = ent * (1 - (20.0 / 100 / lev))
-                        default_tp = ent * (1 + (100.0 / 100 / lev))
+                        default_sl = ent * 0.965   # -3.5% harga
+                        default_tp = ent * 1.10    # +10.0% harga
                     else:
-                        default_sl = ent * (1 + (20.0 / 100 / lev))
-                        default_tp = ent * (1 - (100.0 / 100 / lev))
+                        default_sl = ent * 1.035   # +3.5% harga
+                        default_tp = ent * 0.90    # -10.0% harga
                     if sl == 0:
                         self.update_sl_price(symbol, side, pos['amount'], default_sl, is_tp=False)
                         sl = default_sl
@@ -324,8 +325,8 @@ class PaperExecutor:
                     price_move_pct = abs((mrk - ent) / ent * 100) if ent > 0 else 0
 
                     MIN_HOLD_HOURS         = 0.5
-                    SIDEWAYS_WARN_HOURS    = 3.0
-                    SIDEWAYS_TIMEOUT_HOURS = 4.0
+                    SIDEWAYS_WARN_HOURS    = 6.0
+                    SIDEWAYS_TIMEOUT_HOURS = 8.0  # Lebih panjang: crypto butuh waktu
                     is_sideways = (-10.0 < pnl < 10.0) and (price_move_pct < 2.0)
 
                     if duration_hours >= MIN_HOLD_HOURS:

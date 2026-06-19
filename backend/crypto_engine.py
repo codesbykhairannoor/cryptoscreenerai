@@ -35,7 +35,7 @@ from bitget_executor import BitgetExecutor
 #  KONFIGURASI SNIPER (v31.8)
 MAX_POSITIONS        = 1      # FOKUS: 1 trade terbaik sampai selesai
 RISK_PER_TRADE_USDT  = 0.50   
-FIXED_MARGIN_USDT    = 5.0    # Pakai $5 biar berasa profitnya di saldo $10
+FIXED_MARGIN_USDT    = 20.0   # Paper mode: $20/trade dari $1000 saldo (2% risk)
 SCAN_INTERVAL        = 2      # Scan lebih cepat (2 detik)
 COOLDOWN_AFTER_TRADE = 30     # 30 detik cooldown saja (cepat masuk lagi)
 NEWS_REPORT_INTERVAL = 600
@@ -1053,18 +1053,18 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    v62.0: BLUE WHALE INITIALS
-    SL: -2.0% Price (-20% PnL at 10x) - Survival Gap
-    TP: +10.0% Price (+100% PnL at 10x) - Moonshot Target
+    v63.0: IMPROVED PAPER TRADING TP/SL
+    SL: -3.5% Price (-35% PnL at 10x) - Cukup napas sebelum kena cut
+    TP: +10.0% Price (+100% PnL at 10x) - Moonshot Target tetap
     """
     base_p = tech.get('limit_price', mark_price)
     
     if side == "buy":
         take_profit_val = base_p * 1.10  # +10.0% Harga
-        stop_loss_val = base_p * 0.98    # -2.0% Harga
+        stop_loss_val = base_p * 0.965   # -3.5% Harga (lebih lebar napasnya)
     else:
         take_profit_val = base_p * 0.90  # -10.0% Harga
-        stop_loss_val = base_p * 1.02    # +2.0% Harga
+        stop_loss_val = base_p * 1.035   # +3.5% Harga
         
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
