@@ -1,4 +1,5 @@
 import time
+import os
 VERSION_TAG = "v26.16-FORCE-BOOT"
 print(f"\n[BOOT] Starting Institutional Predator {VERSION_TAG}...")
 
@@ -1224,7 +1225,9 @@ def run_crypto_engine():
                 continue
 
             #  7. BERSIHKAN recently_exited + TRACK LOSSES
-            _recently_exited = {k: v for k, v in _recently_exited.items() if now - v < 1800}
+            # Paper mode: 5 menit cooldown per koin. Live mode: 30 menit.
+            _exit_cooldown = 300 if os.getenv("TRADE_MODE", "live").lower() == "paper" else 1800
+            _recently_exited = {k: v for k, v in _recently_exited.items() if now - v < _exit_cooldown}
             try:
                 from shared_state import state as _state
                 if hasattr(_state, 'recently_exited'):

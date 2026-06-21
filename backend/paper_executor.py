@@ -26,9 +26,31 @@ class PaperExecutor:
         pass
 
     def get_balance(self):
-        """Mengambil saldo virtual dari database."""
-        bal = get_virtual_balance()
-        return {'total': bal, 'free': bal}
+        """
+        Mengambil saldo virtual dari database.
+        PENTING: total harus mencerminkan saldo AWAL + open margin,
+        free mencerminkan saldo yang benar-benar tersedia.
+        Ini agar GHOST TRADE GUARD di crypto_engine tidak salah baca.
+        """
+        free_bal = get_virtual_balance()
+        # Hitung margin yang sedang dipakai dari posisi aktif
+        try:
+            conn = get_connection()
+            import sqlite3
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) as cnt FROM trades WHERE status IN ('PENDING','RUNNING') AND is_paper = 1")
+            row = cursor.fetchone()
+            open_count = row['cnt'] if row else 0
+            cursor.close()
+            conn.close()
+        except:
+            open_count = 0
+        # Total = free + estimasi margin yang dipakai (open_count * margin_per_trade)
+        # Dengan ini, used_margin = total - free = open_count * 20 (tidak 0)
+        margin_per_trade = float(os.getenv("VIRTUAL_MARGIN_PER_TRADE", "20"))
+        total_bal = free_bal + (open_count * margin_per_trade)
+        return {'total': total_bal, 'free': free_bal}
 
     def _clean_symbol(self, s):
         if not s: return ""
