@@ -13,6 +13,7 @@ class PaperExecutor:
         self._peak_pnl = {}       # Akan di-sync ke shared_state setelah startup
         self._tracked_positions = {}   # Untuk mendeteksi posisi yang baru saja tutup
         self._last_sl_check = {}       # Throttle cek SL per 10 detik per symbol
+        self._price_cache = {}         # Cache harga: {sym: (price, timestamp)} - hemat CPU!
         self.startup_time = time.time()
         print("[PAPER TRADING] PaperExecutor initialized. Running in simulation mode.")
         bal = self.get_balance()
@@ -100,6 +101,7 @@ class PaperExecutor:
                 
             rows = cursor.fetchall()
             positions = []
+            now_ts = time.time()
             
             for row in rows:
                 sym = row['symbol']
@@ -109,7 +111,16 @@ class PaperExecutor:
                 leverage = 10.0
                 margin = (amount * ent) / leverage if ent > 0 else 0
                 
-                mrk = get_current_price(sym, 'crypto') or ent
+                # PRICE CACHE: jangan hit API lebih dari 1x per 10 detik per simbol
+                # Ini yang menyebabkan CPU 124%! Setiap 2 detik, setiap posisi hit API harga
+                cache_key = f"price_{sym}"
+                cache_entry = self._price_cache.get(cache_key, (0, 0))
+                if now_ts - cache_entry[1] < 10:
+                    mrk = cache_entry[0]  # Pakai cache
+                else:
+                    mrk = get_current_price(sym, 'crypto') or ent
+                    self._price_cache[cache_key] = (mrk, now_ts)  # Simpan ke cache
+
                 
                 pnl_pct = 0.0
                 if ent > 0:

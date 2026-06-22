@@ -37,13 +37,16 @@ from bitget_executor import BitgetExecutor
 MAX_POSITIONS        = 1      # FOKUS: 1 trade terbaik sampai selesai
 RISK_PER_TRADE_USDT  = 0.50   
 FIXED_MARGIN_USDT    = 20.0   # Paper mode: $20/trade dari $1000 saldo (2% risk)
-SCAN_INTERVAL        = 2      # Scan lebih cepat (2 detik)
-COOLDOWN_AFTER_TRADE = 30     # 30 detik cooldown saja (cepat masuk lagi)
+
+# PAPER MODE: lebih hemat CPU, lebih selektif masuk trade
+_IS_PAPER = os.getenv("TRADE_MODE", "live").lower() == "paper"
+SCAN_INTERVAL        = 15 if _IS_PAPER else 2   # Paper: 15s (hemat CPU). Live: 2s
+COOLDOWN_AFTER_TRADE = 60 if _IS_PAPER else 30  # Paper: 60s cooldown
 NEWS_REPORT_INTERVAL = 600
 GLOBAL_REPORT_INTERVAL = 300
 FRED_REPORT_INTERVAL   = 3600  # FRED data update harian, cukup fetch 1x/jam
 DUNE_REPORT_INTERVAL   = 1800  # Dune on-chain data, refresh setiap 30 menit
-MIN_MOMENTUM_SCORE   = 30     # Turun ke 30 untuk lebih banyak sinyal!
+MIN_MOMENTUM_SCORE   = 50 if _IS_PAPER else 30  # Paper: lebih selektif
 # == INSTITUTIONAL HUNTER CONFIG (v26.70-GOD-MODE) ==
 HUNTER_ATR_SL_MULT   = 0.8    # Optimized from 700+ scenarios
 HUNTER_ATR_TP_MULT   = 2.0    # Optimized for massive Profit Factor
@@ -51,8 +54,8 @@ FVG_GAP_THRESHOLD    = 0.005
 SCALP_TP_PCT         = 0.08   
 SCALP_SL_PCT         = 0.015  # 1.5% price = 15% PnL (Strict SL v31.8)
 # =========================================
-MIN_PUMP_SCORE       = 15     # Lebih rendah, lebih banyak sinyal
-MIN_TECH_SCORE       = 20     # Lebih rendah, lebih banyak sinyal
+MIN_PUMP_SCORE       = 20 if _IS_PAPER else 15  # Paper: pump lebih kuat
+MIN_TECH_SCORE       = 35 if _IS_PAPER else 20  # Paper: tech lebih kuat
 
 #  WHALE OBSERVER CONFIG (Legacy/Reference)
 MIN_APPEARANCES      = 1
@@ -1532,10 +1535,13 @@ def run_crypto_engine():
                     "mark_price": mark_price, "rsi": rsi, "vwap_dist": vwap_dist
                 }
 
-            # Run parallel evaluation
+            # Run parallel evaluation - paper mode pakai 4 thread, live 8 thread
+            _max_workers = 4 if _IS_PAPER else 8
             results = []
-            with ThreadPoolExecutor(max_workers=8) as pool:
-                futures = [pool.submit(evaluate_coin, c, not is_golden_session) for c in candidates[:40]]
+            with ThreadPoolExecutor(max_workers=_max_workers) as pool:
+                # Paper mode: scan top 20 koin saja (lebih hemat CPU)
+                _scan_limit = 20 if _IS_PAPER else 40
+                futures = [pool.submit(evaluate_coin, c, not is_golden_session) for c in candidates[:_scan_limit]]
                 for f in as_completed(futures):
                     res = f.result()
                     if res: results.append(res)
