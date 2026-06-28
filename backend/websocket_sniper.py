@@ -1,4 +1,4 @@
-﻿import hmac
+import hmac
 import hashlib
 import base64
 import asyncio
@@ -405,9 +405,10 @@ class BinanceWS:
 
 WHALE_THRESHOLD_USD   = 50_000   # Trade > $50k = whale
 WHALE_WINDOW_SECONDS  = 300      # Rolling 5 menit untuk akumulasi whale volume
-MAX_SYMBOLS_PER_CONN  = 30       # Bitget WS limit per connection
+MAX_SYMBOLS_PER_CONN  = 60       # Naikkan ke 60: lebih sedikit koneksi WS (hemat CPU)
 TICKER_CHANNELS       = ["ticker", "books5", "trade"]
-FUNDING_REFRESH_SEC   = 60       # Refresh funding rate setiap 1 menit via REST
+FUNDING_REFRESH_SEC   = 300      # Refresh funding rate setiap 5 menit (bukan 1 menit)
+MAX_WS_SYMBOLS        = 60       # Batasi total simbol WS ke top 60 (bukan semua 676!)
 
 
 class BitgetMarketWS:
@@ -763,9 +764,10 @@ class BitgetMarketWS:
             )
             if r.status_code == 200:
                 tickers = r.json().get("data", [])
-                # Sort by 24h volume, ambil top 60
+                # Sort by 24h volume, ambil TOP 60 saja (bukan semua 676!)
+                # 676 simbol = 23 WS koneksi = CPU 150%. Top 60 = hanya 1 koneksi!
                 tickers.sort(key=lambda x: float(x.get("baseVolume", 0) or 0), reverse=True)
-                syms = [t["symbol"] for t in tickers if t.get("symbol")]  # Semua koin
+                syms = [t["symbol"] for t in tickers[:MAX_WS_SYMBOLS] if t.get("symbol")]
                 self.update_symbols(syms)
         except Exception as e:
             print(f"[MARKET WS] Seed symbols error: {e}", flush=True)

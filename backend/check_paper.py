@@ -28,24 +28,37 @@ def check_paper():
 
     # 2. Cek Performa Keseluruhan
     try:
-        cursor.execute("SELECT COUNT(*) as total, SUM(CASE WHEN status='WIN' THEN 1 ELSE 0 END) as wins, SUM(CASE WHEN status='LOSS' THEN 1 ELSE 0 END) as losses, SUM(pnl_usd) as total_pnl FROM trades WHERE status IN ('WIN', 'LOSS') AND is_paper = 1")
+        cursor.execute("""SELECT 
+            COUNT(*) as total,
+            SUM(CASE WHEN status='WIN' THEN 1 ELSE 0 END) as wins,
+            SUM(CASE WHEN status='LOSS' THEN 1 ELSE 0 END) as losses,
+            SUM(CASE WHEN status='NEUTRAL' THEN 1 ELSE 0 END) as neutrals,
+            SUM(CASE WHEN status='WIN' THEN pnl_usd ELSE 0 END) as win_pnl,
+            SUM(CASE WHEN status='LOSS' THEN pnl_usd ELSE 0 END) as loss_pnl,
+            SUM(pnl_usd) as total_pnl
+            FROM trades WHERE status IN ('WIN', 'LOSS', 'NEUTRAL') AND is_paper = 1""")
         stats = cursor.fetchone()
         
         total_closed = stats['total'] or 0
         wins = stats['wins'] or 0
         losses = stats['losses'] or 0
+        neutrals = stats['neutrals'] or 0
+        win_pnl = stats['win_pnl'] or 0.0
+        loss_pnl = stats['loss_pnl'] or 0.0
         total_pnl = stats['total_pnl'] or 0.0
         
-        winrate = (wins / total_closed * 100) if total_closed > 0 else 0
+        # Win Rate dihitung hanya dari WIN vs LOSS (bukan termasuk NEUTRAL)
+        decisive = wins + losses
+        winrate = (wins / decisive * 100) if decisive > 0 else 0
         
         print(f"\n📈 Statistik Performa (Paper Trading):")
-        print(f"   Total Trade Selesai : {total_closed}")
-        print(f"   Total Menang (WIN)  : {wins}")
-        print(f"   Total Kalah (LOSS)  : {losses}")
-        print(f"   Win Rate            : {winrate:.1f}%")
+        print(f"   Total Trade Selesai : {total_closed} (WIN:{wins} LOSS:{losses} NEUTRAL:{neutrals})")
+        print(f"   Win Rate (W vs L)   : {winrate:.1f}%  [{wins}W / {losses}L] (Sideways Timeout tidak dihitung)")
+        print(f"   Total PnL WIN       : ${win_pnl:.2f}")
+        print(f"   Total PnL LOSS      : ${loss_pnl:.2f}")
         print(f"   Total PnL (Bersih)  : ${total_pnl:.2f}")
     except Exception as e:
-        print(f"\n📈 Statistik belum tersedia.")
+        print(f"\n📈 Statistik belum tersedia: {e}")
 
     # 3. Cek Posisi Berjalan (RUNNING)
     try:

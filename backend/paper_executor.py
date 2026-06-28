@@ -208,16 +208,27 @@ class PaperExecutor:
             conn = get_connection()
             cursor = conn.cursor()
             placeholder = "%s" if not is_sqlite(conn) else "?"
+            # Tentukan status: WIN/LOSS/NEUTRAL
+            # Sideways Timeout = NEUTRAL (tidak menang, tidak kalah)
+            # Ini penting agar Win Rate di laporan akurat dan tidak misleading
+            is_sideways_close = "Sideways" in reason or "Timeout" in reason
+            if is_sideways_close:
+                final_status = "NEUTRAL"
+            elif pnl_pct >= 0:
+                final_status = "WIN"
+            else:
+                final_status = "LOSS"
+
             cursor.execute(f'''
                 UPDATE trades
                 SET exit_price = {placeholder},
                     pnl_usd = {placeholder},
                     pnl_pct = {placeholder},
-                    status = CASE WHEN {placeholder} >= 0 THEN 'WIN' ELSE 'LOSS' END,
+                    status = {placeholder},
                     closed_at = {placeholder},
                     reason = {placeholder}
                 WHERE id = {placeholder}
-            ''', (current_price, pnl_usd, pnl_pct, pnl_pct, int(time.time() * 1000), reason, p['id']))
+            ''', (current_price, pnl_usd, pnl_pct, final_status, int(time.time() * 1000), reason, p['id']))
             conn.commit()
             cursor.close()
             conn.close()

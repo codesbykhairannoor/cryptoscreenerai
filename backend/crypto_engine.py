@@ -1480,11 +1480,27 @@ def run_crypto_engine():
                 elif "NONE" in reason and combined_score < 80:
                     reject = "SMC_REQUIRED"
                 else:
-                    btc_signal = btc_ctx.get("signal", "NEUTRAL")
-                    if btc_signal == "AVOID_LONG" and side == "buy":
-                        reject = f"BTC_BEAR"
-                    elif btc_signal == "AVOID_SHORT" and side == "sell":
-                        reject = f"BTC_BULL"
+                    # TREND ALIGNMENT FILTER (v64.0 - KEY improvement for Win Rate)
+                    # Hanya masuk trade jika tren 1H DAN 4H searah dengan side yang dipilih
+                    # Ini mencegah counter-trend entry yang jadi penyebab utama loss
+                    trend_1h = tech.get('trend_1h', '').lower()
+                    trend_4h = tech.get('trend_4h', '').lower()
+                    if side == "buy":
+                        # BUY: minimal 1H harus bullish. 4H boleh neutral (jangan terlalu ketat)
+                        if 'bear' in trend_1h and 'bear' in trend_4h:
+                            reject = f"TREND_MISMATCH(1h:{trend_1h} 4h:{trend_4h})"
+                    elif side == "sell":
+                        # SELL: minimal 1H harus bearish
+                        if 'bull' in trend_1h and 'bull' in trend_4h:
+                            reject = f"TREND_MISMATCH(1h:{trend_1h} 4h:{trend_4h})"
+
+                    if reject is None:
+                        btc_signal = btc_ctx.get("signal", "NEUTRAL")
+                        if btc_signal == "AVOID_LONG" and side == "buy":
+                            reject = f"BTC_BEAR"
+                        elif btc_signal == "AVOID_SHORT" and side == "sell":
+                            reject = f"BTC_BULL"
+
 
                 # Print log per koin
                 rvol_val = tech.get('rvol', 0)
