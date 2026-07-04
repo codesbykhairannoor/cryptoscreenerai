@@ -251,7 +251,7 @@ def get_orderbook_imbalance(symbol):
 
     # 2. REST Fallback
     try:
-        url = f"https://api.bitget.com/api/v2/mix/market/depth?symbol={symbol}&limit=50&productType=USDT-FUTURES"
+        url = f"https://api.bitget.com/api/v2/spot/market/orderbook?symbol={symbol}&limit=50"
         r = requests.get(url, timeout=5, verify=False)
         if r.status_code == 200:
             data = r.json().get('data', {})
@@ -275,7 +275,7 @@ def detect_whale_activity(symbol):
 
     # 2. REST Fallback
     try:
-        url = f"https://api.bitget.com/api/v2/mix/market/fills?symbol={symbol}&limit=50&productType=USDT-FUTURES"
+        url = f"https://api.bitget.com/api/v2/spot/market/fills?symbol={symbol}&limit=50"
         r = requests.get(url, timeout=5, verify=False)
         if r.status_code == 200:
             trades = r.json().get('data', [])
@@ -303,38 +303,13 @@ def get_open_interest(symbol):
     if ws_oi is not None and ws_oi > 0:
         return ws_oi
 
-    # 2. REST Fallback - dedicated OI endpoint
-    try:
-        url = f"https://api.bitget.com/api/v2/mix/market/open-interest?symbol={symbol}&productType=USDT-FUTURES"
-        r = requests.get(url, timeout=5, verify=False)
-        if r.status_code == 200:
-            data = r.json().get('data', {})
-            # Response: {"openInterestList": [{"symbol": "BTCUSDT", "size": "30728.0304"}]}
-            oi_list = data.get('openInterestList', [])
-            if oi_list:
-                return float(oi_list[0].get('size', 0))
-            # Fallback ke field lama kalau format berbeda
-            return float(data.get('openInterest', data.get('size', 0)))
-    except: pass
+    # Di pasar Spot, tidak ada Open Interest (OI)
     return 0
 
 def get_funding_rate(symbol):
     """
-    WS-FIRST: pakai shared_state.rt_funding (refresh setiap 60s via BitgetMarketWS), fallback REST.
+    Di pasar Spot, tidak ada Funding Rate.
     """
-    # 1. WS Cache
-    ws_fr = _ws_funding(symbol)
-    if ws_fr is not None:
-        return ws_fr
-
-    # 2. REST Fallback
-    try:
-        url = f"https://api.bitget.com/api/v2/mix/market/current-funding-rate?symbol={symbol}&productType=USDT-FUTURES"
-        r = requests.get(url, timeout=5, verify=False)
-        if r.status_code == 200:
-            data = r.json().get('data', [{}])[0]
-            return float(data.get('fundingRate', 0))
-    except: pass
     return 0
 
 def get_binance_ls_ratio(symbol):
@@ -360,9 +335,13 @@ def get_binance_ls_ratio(symbol):
         pass
     return None  # None = API gagal, beda dengan 1.0 yang berarti balanced
 
+def _spot_gran(interval: str) -> str:
+    mapping = {"1m": "1min", "5m": "5min", "15m": "15min", "30m": "30min", "1d": "1day"}
+    return mapping.get(interval, interval)
+
 def get_volume_profile(symbol):
     try:
-        url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=1h&limit=24&productType=USDT-FUTURES"
+        url = f"https://api.bitget.com/api/v2/spot/market/candles?symbol={symbol}&granularity=1h&limit=24"
         r = requests.get(url, timeout=3, verify=False)
         if r.status_code != 200: return {}
         data = r.json().get('data', [])
@@ -383,7 +362,7 @@ def get_volume_profile(symbol):
 
 def get_htf_key_levels(symbol):
     try:
-        url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=4h&limit=42&productType=USDT-FUTURES"
+        url = f"https://api.bitget.com/api/v2/spot/market/candles?symbol={symbol}&granularity=4h&limit=42"
         r = requests.get(url, timeout=3, verify=False)
         if r.status_code != 200: return {}
         data = r.json().get('data', [])
@@ -407,7 +386,7 @@ def get_htf_key_levels(symbol):
 
 def get_fibonacci_levels(symbol):
     try:
-        url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=1h&limit=100&productType=USDT-FUTURES"
+        url = f"https://api.bitget.com/api/v2/spot/market/candles?symbol={symbol}&granularity=1h&limit=100"
         r = requests.get(url, timeout=3, verify=False)
         if r.status_code != 200: return {}
         data = r.json().get('data', [])
@@ -426,7 +405,7 @@ def get_fibonacci_levels(symbol):
 
 def detect_stop_hunt(symbol):
     try:
-        url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=15m&limit=10&productType=USDT-FUTURES"
+        url = f"https://api.bitget.com/api/v2/spot/market/candles?symbol={symbol}&granularity=15min&limit=10"
         r = requests.get(url, timeout=3, verify=False)
         if r.status_code != 200: return {}
         data = r.json().get('data', [])
@@ -442,7 +421,7 @@ def get_technical_indicators(symbol, interval="15m"):
     ULTIMATE INDICATOR ENGINE v5.1: SMC + Order Flow + Predictive Structure
     """
     try:
-        url = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity={interval}&limit=100&productType=USDT-FUTURES"
+        url = f"https://api.bitget.com/api/v2/spot/market/candles?symbol={symbol}&granularity={_spot_gran(interval)}&limit=100"
         r = requests.get(url, timeout=15, verify=False)
         if r.status_code != 200: return {}
         
@@ -465,7 +444,7 @@ def get_technical_indicators(symbol, interval="15m"):
             ema_50_4h = htf_data['ema_50_4h']
         else:
             # 2. HTF CONTEXT (1H + 4H)
-            url_htf = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=1h&limit=100&productType=USDT-FUTURES"
+            url_htf = f"https://api.bitget.com/api/v2/spot/market/candles?symbol={symbol}&granularity=1h&limit=100"
             r_htf = requests.get(url_htf, timeout=5, verify=False)
             ema_200_htf_val = 0
             trend_1h = "NEUTRAL"
@@ -481,7 +460,7 @@ def get_technical_indicators(symbol, interval="15m"):
                                "BEARISH" if last_1h < ema_200_htf_val * 0.999 else "NEUTRAL"
 
             # 4H TREND
-            url_4h = f"https://api.bitget.com/api/v2/mix/market/history-candles?symbol={symbol}&granularity=4h&limit=50&productType=USDT-FUTURES"
+            url_4h = f"https://api.bitget.com/api/v2/spot/market/candles?symbol={symbol}&granularity=4h&limit=50"
             r_4h = requests.get(url_4h, timeout=5, verify=False)
             trend_4h = "NEUTRAL"
             ema_50_4h = 0
@@ -823,11 +802,11 @@ def get_technical_indicators(symbol, interval="15m"):
         print(f"Error indicators for {symbol}: {e}")
 def fetch_all_tickers():
     """
-    Fetches all USDT-FUTURES tickers from Bitget.
+    Fetches all Spot tickers from Bitget.
     Setelah fetch, update BitgetMarketWS symbol list supaya WS coverage selalu fresh.
     """
     try:
-        url = "https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES"
+        url = "https://api.bitget.com/api/v2/spot/market/tickers"
         r = requests.get(url, timeout=10, verify=False)
         if r.status_code == 200:
             data = r.json().get('data', [])
@@ -835,7 +814,7 @@ def fetch_all_tickers():
             try:
                 from websocket_sniper import get_market_ws
                 sorted_data = sorted(data, key=lambda x: float(x.get('baseVolume', 0) or 0), reverse=True)
-                top_syms = [t['symbol'] for t in sorted_data if t.get('symbol')]  # Semua koin, tidak dibatasi
+                top_syms = [t['symbol'] for t in sorted_data if t.get('symbol')]
                 get_market_ws().update_symbols(top_syms)
             except Exception:
                 pass
@@ -845,12 +824,12 @@ def fetch_all_tickers():
 
 def get_order_book_details(symbol):
     """
-    Real order book bid/ask ratio untuk konfirmasi entry.
+    Real order book bid/ask ratio untuk konfirmasi entry di pasar Spot.
     Positif = buyer dominance, negatif = seller dominance.
-    Threshold: > +0.1 = valid BUY, < -0.1 = valid SELL.
+    Threshold: > +0.1 = valid BUY.
     """
     try:
-        url = f"https://api.bitget.com/api/v2/mix/market/depth?symbol={symbol}&limit=20&productType=USDT-FUTURES"
+        url = f"https://api.bitget.com/api/v2/spot/market/orderbook?symbol={symbol}&limit=20"
         r = requests.get(url, timeout=3, verify=False)
         if r.status_code == 200:
             data = r.json().get('data', {})
@@ -1229,8 +1208,8 @@ def get_5m_precision_entry(symbol: str) -> dict:
     }
 
     try:
-        url = (f"https://api.bitget.com/api/v2/mix/market/history-candles"
-               f"?symbol={symbol}&granularity=5m&limit=80&productType=USDT-FUTURES")
+        url = (f"https://api.bitget.com/api/v2/spot/market/candles"
+               f"?symbol={symbol}&granularity=5min&limit=80")
         r = requests.get(url, timeout=5, verify=False)
         if r.status_code != 200:
             return empty

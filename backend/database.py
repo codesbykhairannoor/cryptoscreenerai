@@ -215,7 +215,7 @@ def get_current_price(symbol, market='crypto'):
             if mid > 0: return mid
 
         clean_symbol = symbol.replace("/", "").replace(":USDT", "").replace("USDT", "") + "USDT"
-        url = f"https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES"
+        url = "https://api.bitget.com/api/v2/spot/market/tickers"
         res = requests.get(url, timeout=5, verify=False).json()
         if res.get('code') == '00000':
             for t in res.get('data', []):

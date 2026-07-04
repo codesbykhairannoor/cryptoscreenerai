@@ -109,9 +109,9 @@ def analyze_and_sort(raw_data):
         return False
 
     df = df[~df['symbol'].apply(is_blacklisted)]
-    df = df[df['quoteVolume'] > 1_000_000]   # Min $1M volume
-    df = df[df['priceChangePercent'] < 20]    # Belum pump terlalu jauh
-    df = df[df['priceChangePercent'] > -25]   # Bukan panic sell
+    df = df[df['quoteVolume'] > 500_000]       # Min $500k volume untuk Top Gainer Spot
+    df = df[df['priceChangePercent'] <= 25.0]  # Belum pump terlalu jauh
+    df = df[df['priceChangePercent'] >= 2.0]   # Top Gainer Spot (Hanya koin yang sedang naik >= 2%)
 
     # Range 24h
     df['range_pct'] = ((df['high24h'] - df['low24h']) / df['low24h'].replace(0, 1)) * 100
@@ -180,10 +180,10 @@ def analyze_and_sort(raw_data):
         except Exception:
             pass
 
-        if 1.5 <= pct <= 6:    score += 20   # Sweet spot
-        elif 0.5 <= pct < 1.5: score += 12   # Mulai bergerak
-        elif 6 < pct <= 12:    score += 8    # Sudah bergerak
-        elif pct < 0:          score += 5    # Reversal candidate
+        if 3.0 <= pct <= 15.0:    score += 25   # Sweet spot Top Gainer!
+        elif 2.0 <= pct < 3.0:    score += 15   # Mulai breakout
+        elif 15.0 < pct <= 25.0:  score += 10   # Strong gainer
+        elif pct < 2.0:           score += 0    # Bukan gainer
 
         # -- BONUS: Whale + OBI dari WebSocket --
         try:

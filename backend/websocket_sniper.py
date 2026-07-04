@@ -72,10 +72,10 @@ class BitgetPrivateWS:
         subs = {
             "op": "subscribe",
             "args": [
-                {"instType": "USDT-FUTURES", "channel": "order", "instId": "default"},
-                {"instType": "USDT-FUTURES", "channel": "orders-algo", "instId": "default"},
-                {"instType": "USDT-FUTURES", "channel": "account", "instId": "default"},
-                {"instType": "USDT-FUTURES", "channel": "positions", "instId": "default"}
+                {"instType": "SPOT", "channel": "order", "instId": "default"},
+                {"instType": "SPOT", "channel": "orders-algo", "instId": "default"},
+                {"instType": "SPOT", "channel": "account", "instId": "default"},
+                {"instType": "SPOT", "channel": "positions", "instId": "default"}
             ]
         }
         await ws.send(json.dumps(subs))
@@ -183,10 +183,10 @@ class BitgetPublicWS:
     async def subscribe(self, ws):
         args = []
         for sym in self.symbols:
-            # Bitget V2 expects instId in full (e.g. BTCUSDT) for USDT-FUTURES
-            args.append({"instType": "USDT-FUTURES", "channel": "ticker", "instId": sym})
-            args.append({"instType": "USDT-FUTURES", "channel": "trade", "instId": sym})
-            args.append({"instType": "USDT-FUTURES", "channel": "books5", "instId": sym})
+            # Bitget V2 expects instId in full (e.g. BTCUSDT) for SPOT
+            args.append({"instType": "SPOT", "channel": "ticker", "instId": sym})
+            args.append({"instType": "SPOT", "channel": "trade", "instId": sym})
+            args.append({"instType": "SPOT", "channel": "books5", "instId": sym})
         
         subs = {"op": "subscribe", "args": args}
         await ws.send(json.dumps(subs))
@@ -493,7 +493,7 @@ class BitgetMarketWS:
             # e.g. BTCUSDT >> instId = "BTCUSDT" for mix futures
             for ch in TICKER_CHANNELS:
                 args.append({
-                    "instType": "USDT-FUTURES",
+                    "instType": "SPOT",
                     "channel": ch,
                     "instId": sym  # BTCUSDT format
                 })
@@ -660,23 +660,8 @@ class BitgetMarketWS:
         Fetch via REST setiap 1 menit untuk semua tracked symbols.
         Ini jauh lebih efisien dari fetch per-symbol di data_fetcher.
         """
-        from shared_state import state
-        syms = self._symbols[:50]  # Batch max 50
-        if not syms:
-            return
-        try:
-            url = "https://api.bitget.com/api/v2/mix/market/current-fund-rate?productType=USDT-FUTURES"
-            r = requests.get(url, timeout=8, verify=False)
-            if r.status_code == 200:
-                data = r.json().get("data", [])
-                for item in data:
-                    sym = item.get("symbol", "")
-                    fr  = item.get("fundingRate")
-                    if sym and fr is not None:
-                        state.rt_funding[sym] = float(fr)
-                print(f"[MARKET WS] Funding rates refreshed: {len(data)} symbols", flush=True)
-        except Exception as e:
-            print(f"[MARKET WS] Funding refresh error: {e}", flush=True)
+        """Di pasar Spot, tidak ada funding rate."""
+        return
 
     # == Single Connection Loop ================================================
 
@@ -759,7 +744,7 @@ class BitgetMarketWS:
         # Seed symbols dari Bitget REST sebelum WS start
         try:
             r = requests.get(
-                "https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES",
+                "https://api.bitget.com/api/v2/spot/market/tickers",
                 timeout=10, verify=False
             )
             if r.status_code == 200:

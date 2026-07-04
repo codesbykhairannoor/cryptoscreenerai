@@ -17,14 +17,14 @@ _dt          = time
 
 # == CRITICAL CONFIG (ABS TOP) ==
 ADX_PERIOD           = 14
-LEVERAGE             = 10
+LEVERAGE             = 1
 # ===============================
 
 from data_fetcher import (
     get_technical_indicators, fetch_all_tickers,
     get_volume_profile, get_htf_key_levels, get_fibonacci_levels, 
     detect_stop_hunt, detect_institutional_liquidity_grab,
-    get_dune_macro_metrics, get_5m_precision_entry
+    get_dune_macro_metrics, get_5m_precision_entry, _spot_gran
 )
 from sentiment import get_crypto_news, get_global_market_data, get_fred_macro_context
 from ai_model import analyze_and_sort
@@ -36,7 +36,7 @@ from bitget_executor import BitgetExecutor
 #  KONFIGURASI SNIPER (v31.8)
 MAX_POSITIONS        = 1      # FOKUS: 1 trade terbaik sampai selesai
 RISK_PER_TRADE_USDT  = 0.50   
-FIXED_MARGIN_USDT    = 20.0   # Paper mode: $20/trade dari $1000 saldo (2% risk)
+FIXED_MARGIN_USDT    = 50.0   # Spot mode: $50/trade dari $1000 saldo (5% risk)
 
 # PAPER MODE: lebih hemat CPU, lebih selektif masuk trade
 _IS_PAPER = os.getenv("TRADE_MODE", "live").lower() == "paper"
@@ -95,9 +95,8 @@ DATA_PROVEN_BLACKLIST = {
 # Bot akan memindai Top 100 koin secara dinamis.
 STAR_COINS = set() # Kosongkan agar bot memindai secara universal
 
-# SELL TRADING DISABLED -- data menunjukkan 0% WR dari 33 SELL trades
-# Setiap SELL yang diambil bot hampir pasti kalah
-SELL_TRADING_ENABLED = True   # ENABLED based on v26.70 optimization (WR 70%+)
+# SELL TRADING DISABLED -- Di pasar Spot, kita adalah 100% Long-Only!
+SELL_TRADING_ENABLED = False   # Spot Market is 100% Long-Only!
 
 # Session filter - DINONAKTIFKAN untuk trading 24 jam!
 CRYPTO_SESSION_START_UTC = 0
@@ -192,8 +191,8 @@ def _calc_adx(symbol: str, period: int = ADX_PERIOD, interval: str = "15m") -> f
     """
     try:
         url = (
-            f"https://api.bitget.com/api/v2/mix/market/history-candles"
-            f"?symbol={symbol}&granularity={interval}&limit={period*3}&productType=USDT-FUTURES"
+            f"https://api.bitget.com/api/v2/spot/market/candles"
+            f"?symbol={symbol}&granularity={_spot_gran(interval)}&limit={period*3}"
         )
         r = requests.get(url, timeout=5, verify=False)
         if r.status_code != 200:
@@ -267,8 +266,8 @@ def _calc_volatility_regime(symbol: str, interval: str = "15m") -> dict:
     """
     try:
         url = (
-            f"https://api.bitget.com/api/v2/mix/market/history-candles"
-            f"?symbol={symbol}&granularity={interval}&limit=50&productType=USDT-FUTURES"
+            f"https://api.bitget.com/api/v2/spot/market/candles"
+            f"?symbol={symbol}&granularity={_spot_gran(interval)}&limit=50"
         )
         r = requests.get(url, timeout=5, verify=False)
         if r.status_code != 200:
@@ -398,8 +397,8 @@ def _get_btc_context() -> dict:
 
     try:
         # Ambil candle 1h BTC dari Bitget
-        url = ("https://api.bitget.com/api/v2/mix/market/history-candles"
-               "?symbol=BTCUSDT&granularity=1h&limit=3&productType=USDT-FUTURES")
+        url = ("https://api.bitget.com/api/v2/spot/market/candles"
+               "?symbol=BTCUSDT&granularity=1h&limit=3")
         r = requests.get(url, timeout=5, verify=False)
         if r.status_code != 200:
             return _get_btc_context._cache["result"]
@@ -713,8 +712,8 @@ def _calc_vwap_dist(mark_price: float, symbol: str) -> float:
     """
     try:
         url = (
-            f"https://api.bitget.com/api/v2/mix/market/history-candles"
-            f"?symbol={symbol}&granularity=15m&limit=32&productType=USDT-FUTURES"
+            f"https://api.bitget.com/api/v2/spot/market/candles"
+            f"?symbol={symbol}&granularity=15min&limit=32"
         )
         r = requests.get(url, timeout=5, verify=False)
         if r.status_code != 200:
@@ -758,8 +757,8 @@ def _calc_rsi(symbol: str, period: int = 14, interval: str = "15m") -> float:
     """Hitung RSI dari candle Bitget."""
     try:
         url = (
-            f"https://api.bitget.com/api/v2/mix/market/history-candles"
-            f"?symbol={symbol}&granularity={interval}&limit=100&productType=USDT-FUTURES"
+            f"https://api.bitget.com/api/v2/spot/market/candles"
+            f"?symbol={symbol}&granularity={_spot_gran(interval)}&limit=100"
         )
         r = requests.get(url, timeout=5, verify=False)
         if r.status_code != 200:
@@ -956,119 +955,69 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
     rvol = tech.get('rvol', 0)
     atr = tech.get('atr', 0)
     atr_pct = (atr / mark_price) * 100 if mark_price > 0 else 0
+    trend_1h = tech.get('trend_1h', 'NEUTRAL')
+    trend_4h = tech.get('trend_4h', 'NEUTRAL')
     
-    # --- 1. THE HOLY GRAIL (90% WR BREAKOUT) ---
-    if rsi > 65 and rvol > 2.0 and atr_pct > 0.5:
-        print(f"[HOLY GRAIL 90%] FIRING! RSI: {rsi:.1f} | RVOL: {rvol:.1f}x | ATR: {atr_pct:.2f}%", flush=True)
-        return "buy", "HOLY_GRAIL_BREAKOUT", 100
-
-    # --- 2. BALANCED PREDATOR (SMC + MOMENTUM) ---
-    # Syarat minimal untuk trade normal:
-    if rvol < 0.4: # Sangat rendah baru skip (Market lagi sepi)
-        return None, "VOL_DEAD", 0
+    # Di pasar Spot, kita adalah 100% LONG-ONLY (Hanya BUY)
+    # Kita mencari TOP GAINER MOMENTUM ("Masuk Cepat, Keluar Cepat")
+    
+    # 1. Filter Dasar Pasar Spot Top Gainer
+    if rvol < 1.5:  # Volume harus meledak (RVOL >= 1.5x)
+        return None, "VOL_BELOW_1.5X", 0
         
-    score = 0
-    reasons = []
+    if rsi < 52 or rsi > 80:  # RSI harus dalam momentum naik (52 - 80), bukan yang mati atau terlampau pucuk
+        return None, f"RSI_{rsi:.1f}_OUT_OF_MOMENTUM_RANGE", 0
+        
+    if trend_1h == "BEARISH":  # Jangan lawan tren 1 jam yang sedang turun
+        return None, "1H_TREND_BEARISH", 0
+
+    # 2. THE HOLY GRAIL BREAKOUT (Top Gainer Superstar)
+    if rsi > 60 and rvol > 2.5 and trend_1h == "BULLISH":
+        print(f"[SPOT TOP GAINER] MOMENTUM BREAKOUT! {tech.get('symbol')} | RSI: {rsi:.1f} | RVOL: {rvol:.1f}x", flush=True)
+        return "buy", "TOP_GAINER_BREAKOUT", 100
+
+    # 3. SMC & STRUCTURE CONFIRMATION (Breakout & Pullback)
+    score = 50
+    reasons = ["SPOT_MOMENTUM"]
     
-    # Check MSS (Market Structure Shift)
     if tech.get('mss_bullish'): 
-        score += 40
+        score += 25
         reasons.append("MSS^")
-    elif tech.get('mss_bearish'):
-        score += 40
-        reasons.append("MSSv")
-
-    # Check FVG / OB
     if tech.get('fvg') == 'BULLISH':
-        score += 30
+        score += 20
         reasons.append("FVG+")
-    elif tech.get('fvg') == 'BEARISH':
-        score += 30
-        reasons.append("FVG-")
-
-    if tech.get('in_demand'):
-        score += 30
+    if tech.get('in_demand') or tech.get('in_5m_demand'):
+        score += 25
         reasons.append("OB+")
-    elif tech.get('in_supply'):
-        score += 30
-        reasons.append("OB-")
-
-    # RSI Filter (Balanced) - v41.0: Lebih sensitif terhadap Technical Shift
-    side = None
-    if tech.get('mss_bullish') or tech.get('fvg') == 'BULLISH':
-        if rsi > 45: # Cukup di atas area oversold/neutral
-            side = "buy"
-            score += 20
-    elif tech.get('mss_bearish') or tech.get('fvg') == 'BEARISH':
-        if rsi < 55: # Cukup di bawah area overbought/neutral
-            side = "sell"
-            score += 20
+    if trend_4h == "BULLISH":
+        score += 15
+        reasons.append("4H_BULL")
         
-    # ==========================================================================
-    #    GOD MODE v79.0 (INSTITUTIONAL PREDATOR)
-    # ==========================================================================
-    price = mark_price
-    low_15m = tech.get('low_15m', 0)
-    rsi = tech.get('rsi', 50)
+    # OBI (Order Book Imbalance) confirmation dari WebSocket
     obi = tech.get('obi', 0)
-    oi_change = tech.get('oi_change', 'NEUTRAL') # RISING, FALLING, NEUTRAL
-    is_liq_event = tech.get('is_liquidation_event', False)
-    
-    # 1. THE LIQUIDATION SNIPER (Priority #1)
-    if is_liq_event and price < low_15m * 1.01:
-        return "buy", "GOD-MODE: Liquidation Sniper (Bottom Serok)", 100
+    if obi > 0.05:
+        score += 15
+        reasons.append(f"OBI+{obi:.2f}")
+    elif obi < -0.15:
+        return None, "SELLER_DOMINATED_OBI", 0
         
-    # 2. THE TRUTH FILTER (Anti-Whale Trap)
-    # If price is rising but OI is falling, it's a fake move!
-    if side == "buy" and oi_change == "FALLING":
-        return None, "GOD-MODE: Whale Trap Detected (Price Up / OI Down)", 0
-
-    # 3. THE STALKER (v62.0)
-    is_shakeout = price < (low_15m * 0.99) if low_15m > 0 else False
-    if is_shakeout and rsi < 30 and obi > 0.15:
-        return "buy", "STALKER: Liquidity Sweep + Whale Confirmation", 100
-    # ==========================================================================
-
-    # Final Decision for AGILE PREDATOR (v47.1) - NO MORE DEADLOCKS
-    ema_21 = tech.get('ema_21', mark_price)
-    obi = tech.get('obi', 0)
-    
-    if side and score >= 60:
-        # Trend Guard (EMA 21)
-        if side == "buy" and mark_price < ema_21: return None, "AGAINST_TREND_BUY", 0
-        if side == "sell" and mark_price > ema_21: return None, "AGAINST_TREND_SELL", 0
+    if score >= 70:
+        return "buy", f"SPOT_{'+'.join(reasons)}", score
         
-        if rvol < 0.4: return None, "VOL_TOO_LOW", 0
-            
-        if side == "buy":
-            if rsi < 50: return None, "RSI_WEAK_BUY", 0
-            if obi < 0.05: return None, "OBI_WEAK_BUY", 0
-        if side == "sell":
-            if rsi > 50: return None, "RSI_WEAK_SELL", 0
-            if obi > -0.05: return None, "OBI_WEAK_SELL", 0
-
-        if side == "sell" and not SELL_TRADING_ENABLED:
-            return None, "SELL_DISABLED", 0
-            
-        return side, f"AGILE_{'+'.join(reasons)}", score
-
-    return None, "WAITING_FOR_CONFIRMATION", 0
+    return None, "WAITING_FOR_MOMENTUM", 0
 
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    v63.0: IMPROVED PAPER TRADING TP/SL
-    SL: -3.5% Price (-35% PnL at 10x) - Cukup napas sebelum kena cut
-    TP: +10.0% Price (+100% PnL at 10x) - Moonshot Target tetap
+    v65.0: SPOT TOP GAINER MOMENTUM TP/SL
+    SL: -3.5% Price (Spot Cut Loss Guard)
+    TP: +6.0% Price (Spot Momentum Target)
     """
     base_p = tech.get('limit_price', mark_price)
     
-    if side == "buy":
-        take_profit_val = base_p * 1.10  # +10.0% Harga
-        stop_loss_val = base_p * 0.965   # -3.5% Harga (lebih lebar napasnya)
-    else:
-        take_profit_val = base_p * 0.90  # -10.0% Harga
-        stop_loss_val = base_p * 1.035   # +3.5% Harga
+    # Di pasar Spot, hanya posisi BUY yang valid
+    take_profit_val = base_p * 1.060  # +6.0% Harga
+    stop_loss_val = base_p * 0.965    # -3.5% Harga
         
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 

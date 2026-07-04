@@ -1,4 +1,4 @@
-﻿"""
+"""
 EARLY MOMENTUM SIGNAL ENGINE
 ==============================
 3 sumber sinyal early entry untuk Bitget Futures:
@@ -66,35 +66,9 @@ _rvol_ts: float = 0
 
 def _fetch_all_oi() -> dict:
     """
-    Fetch OI semua USDT-FUTURES dari Bitget dalam 1 call.
-    Field yang benar: 'holdingAmount' (bukan 'openInterest' yang tidak ada di ticker)
-    holdingAmount = jumlah kontrak terbuka (dalam unit base asset)
-    Untuk perbandingan surge, kita pakai nilai raw ini (tidak perlu konversi ke USD)
+    Di pasar Spot, tidak ada Open Interest (OI).
     """
-    try:
-        r = requests.get(
-            "https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES",
-            timeout=20, verify=False
-        )
-        if r.status_code != 200:
-            return {}
-        data = r.json().get("data", [])
-        result = {}
-        for t in data:
-            sym = t.get("symbol", "")
-            # Field yang benar adalah holdingAmount, bukan openInterest
-            oi = t.get("holdingAmount", 0) or t.get("openInterest", 0)
-            if sym and oi:
-                try:
-                    val = float(oi)
-                    if val > 0:
-                        result[sym] = val
-                except (ValueError, TypeError):
-                    pass
-        return result
-    except Exception as e:
-        print(f"[OI TRACKER] Fetch error: {e}", flush=True)
-        return {}
+    return {}
 
 
 def _take_oi_snapshot():
@@ -336,7 +310,7 @@ def get_rvol_batch() -> dict:
 
     try:
         r = requests.get(
-            "https://api.bitget.com/api/v2/mix/market/tickers?productType=USDT-FUTURES",
+            "https://api.bitget.com/api/v2/spot/market/tickers",
             timeout=20, verify=False
         )
         if r.status_code != 200:

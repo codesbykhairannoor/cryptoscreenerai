@@ -1,6 +1,10 @@
 import sqlite3
 import os
 import time
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    try: sys.stdout.reconfigure(encoding='utf-8')
+    except Exception: pass
 
 def check_paper():
     # Gunakan absolute atau relative path ke db
