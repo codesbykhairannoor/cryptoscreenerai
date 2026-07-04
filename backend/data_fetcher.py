@@ -426,7 +426,8 @@ def get_technical_indicators(symbol, interval="15m"):
         if r.status_code != 200: return {}
         
         data = r.json().get('data', [])
-        df_cur = pd.DataFrame(data, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd'])
+        df_cur = pd.DataFrame(data).iloc[:, :7]
+        df_cur.columns = ['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd']
         df_cur[['open', 'high', 'low', 'close', 'vol']] = df_cur[['open', 'high', 'low', 'close', 'vol']].astype(float)
         
         # --- THREAD-SAFE CACHE FOR HTF ---
@@ -450,7 +451,8 @@ def get_technical_indicators(symbol, interval="15m"):
             trend_1h = "NEUTRAL"
             if r_htf.status_code == 200:
                 data_htf = r_htf.json().get('data', [])
-                df_htf = pd.DataFrame(data_htf, columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd'])
+                df_htf = pd.DataFrame(data_htf).iloc[:, :7]
+                df_htf.columns = ['ts', 'open', 'high', 'low', 'close', 'vol', 'vol_usd']
                 df_htf['close'] = df_htf['close'].astype(float)
                 ema_htf = df_htf['close'].ewm(span=200, adjust=False).mean()
                 ema_200_htf_val = ema_htf.iloc[-1] if len(ema_htf) > 0 else 0
