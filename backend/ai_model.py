@@ -160,13 +160,13 @@ def analyze_and_sort(raw_data):
                 rvol_val = getattr(state, 'rt_rvol', {}).get(str(row.get('symbol', '')), 1.0)
             except Exception: pass
 
-            if rvol_val >= 3.0: # MOMENTUM MODE!
-                if pos >= 80:     score += 25   # BREAKOUT! Hajar terus!
-                elif 50 <= pos < 80: score += 15
-            else: # NORMAL MODE (Cari yang murah)
-                if 10 <= pos <= 35:   score += 25   # Dekat bottom, ideal long
-                elif 35 < pos <= 50:  score += 18   
-                elif pos > 85:        score -= 10   # Terlalu tinggi untuk volume rendah
+            if rvol_val >= 2.0: # MOMENTUM / BREAKOUT MODE!
+                if pos >= 75:     score += 25   # BREAKOUT! Hajar terus!
+                elif 50 <= pos < 75: score += 18
+            else: # DIP SNIPING MODE (Cari serokan bawah saat koreksi)
+                if 10 <= pos <= 42:   score += 25   # Dekat bottom / oversold dip, ideal long
+                elif 42 < pos <= 55:  score += 18   
+                elif pos > 85:        score -= 10   # Terlalu pucuk untuk volume normal
 
         # -- 4. MOMENTUM & VELOCITY (max 40 poin) --
         # Koin yang volumenya meledak (RVOL) adalah prioritas utama (The Gainer Hunter)

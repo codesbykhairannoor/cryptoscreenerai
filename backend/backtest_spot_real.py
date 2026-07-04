@@ -16,9 +16,9 @@ if hasattr(sys.stdout, 'reconfigure'):
 
 # --- CONFIG ---
 INITIAL_BALANCE = 1000.0
-FIXED_MARGIN_USDT = 50.0  # $50 per trade (5% risk)
+FIXED_MARGIN_USDT = 150.0 # $150 per trade (Spot mode Cuan Gede)
 LEVERAGE = 1              # 1x Spot murni
-TP_PCT = 0.060            # +6.0% Take Profit
+TP_PCT = 0.075            # +7.5% Take Profit
 SL_PCT = -0.035           # -3.5% Stop Loss
 TRAIL_ACTIVATE_PCT = 0.040  # +4.0% aktifkan trailing
 TRAIL_LOCK_PCT = 0.025      # +2.5% lock profit
@@ -194,15 +194,19 @@ def run_backtest():
                 # 1. Cek Stop Loss
                 if curr_low <= sl_price:
                     exit_price = sl_price
-                    exit_reason = "Hit SL (-3.5%)" if not trailing_active else "Hit Trailing SL (+2.5%)"
+                    exit_reason = "Hit SL (-3.5%)" if not trailing_active else "Hit Trailing SL (Locked)"
                 # 2. Cek Take Profit
                 elif curr_high >= tp_price:
                     exit_price = tp_price
-                    exit_reason = "Hit Take Profit (+6.0%)"
-                # 3. Cek aktivasi Trailing Stop
-                elif max_high_pct >= TRAIL_ACTIVATE_PCT and not trailing_active:
+                    exit_reason = "Hit Take Profit (+7.5%)"
+                # 3. Cek aktivasi Trailing Stop (Dynamic Trailing berbasis Highest High)
+                elif max_high_pct >= TRAIL_ACTIVATE_PCT:
                     trailing_active = True
-                    sl_price = entry_price * (1.0 + TRAIL_LOCK_PCT)  # Lock +2.5%
+                    dynamic_sl = curr_high * 0.985
+                    min_lock_sl = entry_price * (1.0 + TRAIL_LOCK_PCT)
+                    new_sl = max(dynamic_sl, min_lock_sl)
+                    if sl_price == 0 or new_sl > sl_price:
+                        sl_price = new_sl
                 # 4. Cek Sideways Timeout (4 Jam)
                 elif bars_held >= TIMEOUT_CANDLES:
                     exit_price = curr_close
@@ -255,26 +259,35 @@ def run_backtest():
             avg_vol_20 = np.mean(vols[i-20:i]) if i >= 20 else vols[i]
             rvol = curr_vol / avg_vol_20 if avg_vol_20 > 0 else 1.0
             
-            # Logika Top Gainer Momentum (sesuai crypto_engine.py v65.0)
-            # 1. Filter Dasar
-            if rvol < 1.5: continue
-            if rsi < 52 or rsi > 80: continue
-            if curr_close < ema84: continue  # Trend 1H harus Bullish
-            if curr_close < ema21: continue  # Trend 15m harus Bullish
+            # Bollinger Bands (20, 2.0)
+            bb_mean = np.mean(closes[max(0, i-19):i+1])
+            bb_std = np.std(closes[max(0, i-19):i+1])
+            bb_up = bb_mean + 2.0 * bb_std
+            bb_low = bb_mean - 2.0 * bb_std
             
-            # 2. Kondisi Sinyal
-            is_holy_grail = (rsi > 60 and rvol > 2.5)
+            # Wick ratio (SMC Demand Rejection proxy)
+            body_size = abs(curr_close - closes[i-1]) if i >= 1 else abs(curr_close - curr_low)
+            lower_wick = min(curr_close, closes[i-1]) - curr_low if i >= 1 else 0
+            wick_ratio = lower_wick / body_size if body_size > 0 else 1.0
             
-            # SMC / Structure Proksi (Breakout atas High 10 candle terakhir)
-            high_10 = max(highs[i-10:i])
-            is_breakout = curr_close > high_10
+            # 1. Filter Dasar Spot
+            if rsi < 30 or rsi > 82: continue
             
-            if is_holy_grail or (is_breakout and rsi > 55):
+            # CORE 1: Volatility Breakout (RVOL >= 2.0x, RSI 55-78, Harga di atas BB Atas atau EMA 84)
+            is_core1 = (rvol >= 2.0 and 55 <= rsi <= 78 and (curr_close >= bb_up * 0.995 or curr_close > ema84))
+            
+            # CORE 2: Dip Sniping & Mean Reversion (RSI <= 44 atau sentuh BB Low di tren EMA 84 naik, dengan wick rejection)
+            is_core2 = ((rsi <= 44 or curr_close <= bb_low * 1.01) and curr_close > ema84 * 0.98 and wick_ratio >= 1.2)
+            
+            # CORE 3: SMC Demand Rejection (Wick ratio >= 1.3 dengan volume masuk RVOL >= 1.5)
+            is_core3 = (wick_ratio >= 1.3 and rvol >= 1.5 and rsi <= 65)
+            
+            if is_core1 or is_core2 or is_core3:
                 in_trade = True
                 entry_price = curr_close
                 entry_idx = i
                 sl_price = entry_price * (1.0 + SL_PCT)  # -3.5%
-                tp_price = entry_price * (1.0 + TP_PCT)  # +6.0%
+                tp_price = entry_price * (1.0 + TP_PCT)  # +7.5%
                 trailing_active = False
 
         if sym_wins + sym_losses > 0:

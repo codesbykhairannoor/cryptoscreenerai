@@ -34,9 +34,9 @@ from bitget_executor import BitgetExecutor
 
 #  KONFIGURASI AGRESIF UNTUK PROFIT CEPAT
 #  KONFIGURASI SNIPER (v31.8)
-MAX_POSITIONS        = 1      # FOKUS: 1 trade terbaik sampai selesai
+MAX_POSITIONS        = 3      # Spot Mode: up to 3 posisi aktif bersamaan
 RISK_PER_TRADE_USDT  = 0.50   
-FIXED_MARGIN_USDT    = 50.0   # Spot mode: $50/trade dari $1000 saldo (5% risk)
+FIXED_MARGIN_USDT    = 150.0  # Spot mode: $150/trade dari $1000 saldo untuk Cuan Gede
 
 # PAPER MODE: lebih hemat CPU, lebih selektif masuk trade
 _IS_PAPER = os.getenv("TRADE_MODE", "live").lower() == "paper"
@@ -953,70 +953,69 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
 
 def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_sentiment: str, mark_price: float, pump_sc: float, dump_sc: float) -> tuple[str | None, str, int]:
     rvol = tech.get('rvol', 0)
-    atr = tech.get('atr', 0)
-    atr_pct = (atr / mark_price) * 100 if mark_price > 0 else 0
     trend_1h = tech.get('trend_1h', 'NEUTRAL')
     trend_4h = tech.get('trend_4h', 'NEUTRAL')
+    bb_up = tech.get('bb_up', mark_price * 1.05)
+    bb_low = tech.get('bb_low', mark_price * 0.95)
+    ema_84 = tech.get('ema_84', mark_price)
+    wick_ratio = tech.get('smc_lower_wick_ratio', 1.0)
+    in_demand = tech.get('in_demand', False) or tech.get('in_5m_demand', False)
+    pattern = tech.get('candle_pattern', '')
     
     # Di pasar Spot, kita adalah 100% LONG-ONLY (Hanya BUY)
-    # Kita mencari TOP GAINER MOMENTUM ("Masuk Cepat, Keluar Cepat")
+    # Tri-Core Hybrid Evaluator (Volatility Breakout + Dip Sniping + SMC Demand)
     
-    # 1. Filter Dasar Pasar Spot Top Gainer
-    if rvol < 1.5:  # Volume harus meledak (RVOL >= 1.5x)
-        return None, "VOL_BELOW_1.5X", 0
-        
-    if rsi < 52 or rsi > 80:  # RSI harus dalam momentum naik (52 - 80), bukan yang mati atau terlampau pucuk
-        return None, f"RSI_{rsi:.1f}_OUT_OF_MOMENTUM_RANGE", 0
-        
-    if trend_1h == "BEARISH":  # Jangan lawan tren 1 jam yang sedang turun
-        return None, "1H_TREND_BEARISH", 0
+    # 0. Filter Dasar Pasar Spot
+    if tech.get('still_falling', False) and rsi > 45: # Jangan tangkap pisau jatuh saat downtrend aktif kecuali deep dip
+        return None, "ACTIVE_DOWNTREND_FALLING", 0
+    if rsi > 82: # Terlalu pucuk overbought
+        return None, f"RSI_{rsi:.1f}_EXTREME_OVERBOUGHT", 0
 
-    # 2. THE HOLY GRAIL BREAKOUT (Top Gainer Superstar)
-    if rsi > 60 and rvol > 2.5 and trend_1h == "BULLISH":
-        print(f"[SPOT TOP GAINER] MOMENTUM BREAKOUT! {tech.get('symbol')} | RSI: {rsi:.1f} | RVOL: {rvol:.1f}x", flush=True)
-        return "buy", "TOP_GAINER_BREAKOUT", 100
+    # CORE 1: Volatility Squeeze Breakout (Top Gainer Superstar)
+    # Kondisi: Volume meledak >= 2.0x, RSI momentum kuat (55 - 78), Harga di atas atau dekat BB Atas / EMA 84 naik
+    if rvol >= 2.0 and 55 <= rsi <= 78 and trend_1h != "BEARISH":
+        if mark_price >= bb_up * 0.995 or mark_price > ema_84:
+            print(f"[SPOT TRI-CORE] CORE 1: VOLATILITY BREAKOUT! {tech.get('symbol')} | RSI: {rsi:.1f} | RVOL: {rvol:.1f}x", flush=True)
+            return "buy", "CORE1_VOL_BREAKOUT", 95
 
-    # 3. SMC & STRUCTURE CONFIRMATION (Breakout & Pullback)
-    score = 50
-    reasons = ["SPOT_MOMENTUM"]
+    # CORE 2: Dip Sniping & Mean Reversion (Serok Bawah saat Koreksi Sehat)
+    # Kondisi: RSI oversold/dip (< 44) ATAU harga menyentuh BB Low, di dalam tren 1H/4H yang Bullish/Neutral, dan ada konfirmasi reversal
+    if (rsi <= 44 or mark_price <= bb_low * 1.01) and trend_4h != "BEARISH":
+        if "BULLISH" in str(pattern).upper() or tech.get('bullish_momentum_exhausted', False) or wick_ratio >= 1.2:
+            print(f"[SPOT TRI-CORE] CORE 2: DIP SNIPING! {tech.get('symbol')} | RSI: {rsi:.1f} | WickRatio: {wick_ratio}", flush=True)
+            return "buy", "CORE2_DIP_SNIPING", 90
+
+    # CORE 3: SMC Demand Sniping (Institutional Order Block Hunter)
+    # Kondisi: Masuk zona Demand / Order Block dengan konfirmasi rejection wick > 1.3x body atau FVG Bullish
+    if in_demand or tech.get('fvg') == 'BULLISH' or tech.get('at_fib_support', False):
+        if wick_ratio >= 1.3 or rvol >= 1.5 or trend_1h == "BULLISH":
+            print(f"[SPOT TRI-CORE] CORE 3: SMC DEMAND SNIPE! {tech.get('symbol')} | WickRatio: {wick_ratio} | OB: {in_demand}", flush=True)
+            return "buy", "CORE3_SMC_DEMAND", 90
+
+    # Score berbasis momentum sekunder (Jika belum lolos 3 core di atas tapi skor kuantitatif tinggi)
+    score = 40
+    reasons = []
+    if trend_1h == "BULLISH" and trend_4h == "BULLISH": score += 20; reasons.append("HTF_BULL")
+    if rvol >= 1.5: score += 15; reasons.append(f"RVOL_{rvol:.1f}x")
+    if tech.get('mss_bullish'): score += 20; reasons.append("MSS^")
+    if tech.get('obi', 0) > 0.05: score += 15; reasons.append("OBI+")
     
-    if tech.get('mss_bullish'): 
-        score += 25
-        reasons.append("MSS^")
-    if tech.get('fvg') == 'BULLISH':
-        score += 20
-        reasons.append("FVG+")
-    if tech.get('in_demand') or tech.get('in_5m_demand'):
-        score += 25
-        reasons.append("OB+")
-    if trend_4h == "BULLISH":
-        score += 15
-        reasons.append("4H_BULL")
+    if score >= 75 and 48 <= rsi <= 72:
+        return "buy", f"SPOT_HYBRID_{'+'.join(reasons)}", score
         
-    # OBI (Order Book Imbalance) confirmation dari WebSocket
-    obi = tech.get('obi', 0)
-    if obi > 0.05:
-        score += 15
-        reasons.append(f"OBI+{obi:.2f}")
-    elif obi < -0.15:
-        return None, "SELLER_DOMINATED_OBI", 0
-        
-    if score >= 70:
-        return "buy", f"SPOT_{'+'.join(reasons)}", score
-        
-    return None, "WAITING_FOR_MOMENTUM", 0
+    return None, "WAITING_FOR_TRI_CORE_SETUP", 0
 
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    v65.0: SPOT TOP GAINER MOMENTUM TP/SL
+    v70.0: SPOT TRI-CORE HYBRID TP/SL
     SL: -3.5% Price (Spot Cut Loss Guard)
-    TP: +6.0% Price (Spot Momentum Target)
+    TP: +7.5% Price (Spot Alpha Target)
     """
     base_p = tech.get('limit_price', mark_price)
     
     # Di pasar Spot, hanya posisi BUY yang valid
-    take_profit_val = base_p * 1.060  # +6.0% Harga
+    take_profit_val = base_p * 1.075  # +7.5% Harga
     stop_loss_val = base_p * 0.965    # -3.5% Harga
         
     return round(take_profit_val, 6), round(stop_loss_val, 6)

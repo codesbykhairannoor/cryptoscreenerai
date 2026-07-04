@@ -323,10 +323,10 @@ class PaperExecutor:
                 if pnl > self._peak_pnl[symbol]: self._peak_pnl[symbol] = pnl
                 peak_pnl = self._peak_pnl[symbol]
 
-                # INITIAL GUARD: Set default SL (-3.5%) / TP (+6.0%) untuk Spot Top Gainer
+                # INITIAL GUARD: Set default SL (-3.5%) / TP (+7.5%) untuk Spot Top Gainer
                 if (sl == 0 or tp == 0) and now - self.startup_time > 5:
                     default_sl = ent * 0.965   # -3.5% harga
-                    default_tp = ent * 1.060   # +6.0% harga
+                    default_tp = ent * 1.075   # +7.5% harga
                     if sl == 0:
                         self.update_sl_price(symbol, side, pos['amount'], default_sl, is_tp=False)
                         sl = default_sl
@@ -381,13 +381,15 @@ class PaperExecutor:
                     continue
 
                 # TOP GAINER TRAILING STOP (Spot Scalper)
-                # Jika profit sempat menyentuh +4.0%, lock SL di +2.5%
-                # Jika profit menyentuh +2.5%, lock SL di +1.0% (Break Even + Profit)
+                # 1. Dynamic Trailing: Jika profit menyentuh >= 4.0%, lock SL minimal di +2.5% dan trail 1.5% di bawah Highest High
+                # 2. Break Even Lock: Jika profit menyentuh >= 2.5%, lock SL di +1.0% (Break Even + Profit)
                 if peak_pnl >= 4.0:
-                    new_sl = ent * 1.025
+                    dynamic_sl = mrk * 0.985
+                    min_lock_sl = ent * 1.025
+                    new_sl = max(dynamic_sl, min_lock_sl)
                     if sl == 0 or new_sl > sl:
                         self.update_sl_price(symbol, side, pos['amount'], new_sl)
-                        print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | Lock SL: {new_sl:.6f} (+2.5%)")
+                        print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | Dynamic SL: {new_sl:.6f}")
                 elif peak_pnl >= 2.5:
                     new_sl = ent * 1.010
                     if sl == 0 or new_sl > sl:

@@ -562,6 +562,19 @@ def get_technical_indicators(symbol, interval="15m"):
         ws_live_price = _ws_price(symbol)
         mark_price = ws_live_price if ws_live_price > 0 else candle_close
         ema_200_cur = df_cur['close'].ewm(span=200, adjust=False).mean()
+        ema_84_cur = df_cur['close'].ewm(span=84, adjust=False).mean()
+        
+        # Bollinger Bands (20, 2.0)
+        bb_mean = df_cur['close'].rolling(20).mean()
+        bb_std = df_cur['close'].rolling(20).std()
+        bb_up_val = (bb_mean + 2.0 * bb_std).iloc[-1] if len(df_cur) >= 20 else mark_price * 1.05
+        bb_low_val = (bb_mean - 2.0 * bb_std).iloc[-1] if len(df_cur) >= 20 else mark_price * 0.95
+        
+        # Sumbu Bawah vs Body (untuk SMC Demand Rejection)
+        body_size_last = abs(df_cur['close'].iloc[-1] - df_cur['open'].iloc[-1])
+        lower_wick_last = min(df_cur['close'].iloc[-1], df_cur['open'].iloc[-1]) - df_cur['low'].iloc[-1]
+        smc_lower_wick_ratio = round(lower_wick_last / body_size_last, 2) if body_size_last > 0 else 1.0
+
         trs = []
         for i in range(1, len(df_cur)):
             h, l, cp = df_cur['high'].iloc[i], df_cur['low'].iloc[i], df_cur['close'].iloc[i-1]
@@ -753,6 +766,10 @@ def get_technical_indicators(symbol, interval="15m"):
             "bear_stop_hunt":     hunt.get("bear_stop_hunt", False),
             "hunt_strength":      hunt.get("hunt_strength", 0),
             "ema_200": round(ema_200_cur.iloc[-1], 2) if len(ema_200_cur) > 0 else 0,
+            "ema_84": round(ema_84_cur.iloc[-1], 6) if len(ema_84_cur) > 0 else 0,
+            "bb_up": round(bb_up_val, 6),
+            "bb_low": round(bb_low_val, 6),
+            "smc_lower_wick_ratio": smc_lower_wick_ratio,
             "ema_200_htf": round(ema_200_htf_val, 2),
             "trend_1h": trend_1h,
             "trend_4h": trend_4h,
