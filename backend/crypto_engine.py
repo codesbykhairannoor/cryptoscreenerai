@@ -972,15 +972,19 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
         return None, f"RSI_{rsi:.1f}_EXTREME_OVERBOUGHT", 0
 
     # CORE 1: Volatility Squeeze Breakout (Top Gainer Superstar)
-    # Kondisi: Volume meledak >= 2.0x, RSI momentum kuat (55 - 78), Harga di atas atau dekat BB Atas / EMA 84 naik
+    # Kondisi: Volume meledak >= 2.0x, Squeeze BB width < 5%, RSI momentum kuat (55 - 78)
+    bb_mean = (bb_up + bb_low) / 2
+    bb_width_pct = (bb_up - bb_low) / bb_mean * 100 if bb_mean > 0 else 10.0
+    is_squeeze = bb_width_pct < 5.0
+
     if rvol >= 2.0 and 55 <= rsi <= 78 and trend_1h != "BEARISH":
-        if mark_price >= bb_up * 0.995 or mark_price > ema_84:
-            print(f"[SPOT TRI-CORE] CORE 1: VOLATILITY BREAKOUT! {tech.get('symbol')} | RSI: {rsi:.1f} | RVOL: {rvol:.1f}x", flush=True)
+        if mark_price >= bb_up * 0.995 or mark_price > ema_84 or is_squeeze:
+            print(f"[SPOT TRI-CORE] CORE 1: VOLATILITY BREAKOUT (Squeeze: {is_squeeze})! {tech.get('symbol')} | RSI: {rsi:.1f} | RVOL: {rvol:.1f}x", flush=True)
             return "buy", "CORE1_VOL_BREAKOUT", 95
 
     # CORE 2: Dip Sniping & Mean Reversion (Serok Bawah saat Koreksi Sehat)
-    # Kondisi: RSI oversold/dip (< 44) ATAU harga menyentuh BB Low, di dalam tren 1H/4H yang Bullish/Neutral, dan ada konfirmasi reversal
-    if (rsi <= 44 or mark_price <= bb_low * 1.01) and trend_4h != "BEARISH":
+    # NFI Rule: Dilarang serok bawah (sniping dip) jika tren 1H hancur. Wajib BULLISH.
+    if (rsi <= 44 or mark_price <= bb_low * 1.01) and trend_1h == "BULLISH" and trend_4h != "BEARISH":
         if "BULLISH" in str(pattern).upper() or tech.get('bullish_momentum_exhausted', False) or wick_ratio >= 1.2:
             print(f"[SPOT TRI-CORE] CORE 2: DIP SNIPING! {tech.get('symbol')} | RSI: {rsi:.1f} | WickRatio: {wick_ratio}", flush=True)
             return "buy", "CORE2_DIP_SNIPING", 90
@@ -1008,15 +1012,15 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    v70.0: SPOT TRI-CORE HYBRID TP/SL
-    SL: -3.5% Price (Spot Cut Loss Guard)
-    TP: +7.5% Price (Spot Alpha Target)
+    v80.0: SPOT TRI-CORE HYBRID TP/SL (Smart DCA & Dynamic Trailing)
+    SL Akhir: -7.0% Price (Jaring Pengaman untuk DCA)
+    TP: +20.0% Price (Pelindung jauh, karena profit sejati akan di-trail oleh Trailing Stop)
     """
     base_p = tech.get('limit_price', mark_price)
     
-    # Di pasar Spot, hanya posisi BUY yang valid
-    take_profit_val = base_p * 1.075  # +7.5% Harga
-    stop_loss_val = base_p * 0.965    # -3.5% Harga
+    # Di pasar Spot, kita menggunakan jaring pengaman luas untuk DCA
+    take_profit_val = base_p * 1.20  # +20.0% Harga
+    stop_loss_val = base_p * 0.93    # -7.0% Harga
         
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
@@ -1276,10 +1280,18 @@ def run_crypto_engine():
             current_min_tech     = MIN_TECH_SCORE
 
             print(f"[CRYPTO ENGINE] Scan {min(40, len(candidates))} koin | "
-                  f"Sentiment:{market_sentiment} BTC:{btc_ctx['trend']} "
+                  f"Sentiment:{market_sentiment} BTC:{btc_ctx.get('trend', 'UNKNOWN')} "
                   f"FRED:{fred_bias} DUNE:{dune_trend} | "
                   f"OI_Surge:{oi_surge_count} DEX:{dex_alert_count}",
                   flush=True)
+
+            # == NFI: BTC REGIME FILTER ==
+            # Blokir semua pembelian baru jika Bitcoin sedang BEARISH
+            if btc_ctx.get('trend') == 'BEARISH':
+                if int(now) % 60 < 15:
+                    print(f"[NFI REGIME FILTER] BTC is BEARISH. Blocking all new SPOT buy orders to protect capital.", flush=True)
+                time.sleep(SCAN_INTERVAL)
+                continue
 
             #  SUB-FUNCTION FOR PARALLEL EVALUATION
             def evaluate_coin(coin, off_hours=False):
@@ -1616,8 +1628,9 @@ def run_crypto_engine():
                 take_profit_val, stop_loss_val = 0.0, 0.0
                 take_profit_val, stop_loss_val = _calc_tp_sl(mark_price, side, tech, tp_m=tp_m, sl_m=sl_m)
 
-                # Hitung size (Strict 5 USDT v9.8)
-                amount = executor.get_max_available(symbol, leverage=LEVERAGE, risk_usdt=FIXED_MARGIN_USDT)
+                # Hitung size (DCA Mode: 30% dari FIXED_MARGIN_USDT untuk Base Order)
+                base_order_usd = FIXED_MARGIN_USDT * 0.30
+                amount = executor.get_max_available(symbol, leverage=LEVERAGE, risk_usdt=base_order_usd)
                 if amount > 0:
                     print(f"\n{'='*60}")
                     print(f"[SCALPER v5.1] {clean_base} {side.upper()} | Score: {combined_score}/100")

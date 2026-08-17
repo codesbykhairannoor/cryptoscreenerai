@@ -622,6 +622,21 @@ class BitgetExecutor:
                 # Threshold dinaikkan dari 5% ke 10% supaya tidak terlalu sensitif
                 is_sideways = (-10.0 < pnl < 10.0) and (price_move_pct < 2.0)
 
+                # == NFI DYNAMIC TIME-BASED ROI ==
+                # Jika trade sudah jalan > 3 jam dan ada sedikit profit (>0.5%), amankan profit (keluar cepat)
+                if duration_hours >= 3.0 and pnl >= 0.5:
+                    print(f"[NFI DYNAMIC ROI] {symbol} held for {round(duration_hours, 1)}h. Securing {pnl}% profit early.", flush=True)
+                    try:
+                        self.exchange.create_order(symbol, 'market', 'sell' if side in ['long','buy'] else 'buy', size)
+                    except Exception as e:
+                        print(f"[NFI ROI CLOSE FAIL] {e}")
+                    if symbol in state.pos_start_time: del state.pos_start_time[symbol]
+                    if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                    clean = self._clean_symbol(symbol)
+                    if not hasattr(state, 'recently_exited'): state.recently_exited = {}
+                    state.recently_exited[clean] = time.time()
+                    continue
+
                 if duration_hours >= MIN_HOLD_HOURS:
                     if duration_hours > SIDEWAYS_WARN_HOURS and is_sideways:
                         if duration_hours > SIDEWAYS_TIMEOUT_HOURS:
@@ -707,30 +722,42 @@ class BitgetExecutor:
                     if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
                     self._last_sl_set[symbol] = now
 
-                #    BLUE WHALE STEPPED TRAILING v89.0 (THE KING - 10% LADDER + 4% LOCK)
+                #    BLUE WHALE STEPPED TRAILING v89.0 & SPOT DYNAMIC TRAILING
                 # =====================================================
-                # 1. Start trailing after +10% PnL (Faster Lock!)
-                # 2. For every 10% gain, move SL up by 10% + 4% lock
-                # 3. Peak 10% -> SL 4% | Peak 20% -> SL 14% | Peak 30% -> SL 24%
-                # =====================================================
-                step_count = int(peak_pnl // 10)
-                if step_count >= 1:
-                    # Logic: 10% step intervals + 4% locked profit (guarantees +1% to +3% NET at 10x leverage)
-                    target_sl_pnl = ((step_count - 1) * 10.0) + 4.0
-                    
-                    # Convert PnL to Price
-                    if side in ['long', 'buy']:
-                        new_sl_price = entry * (1 + (target_sl_pnl / 100 / lev))
-                        if new_sl_price > sl_p: # Only move UP
-                            print(f"[WHALE-KING] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
-                            self.update_sl_price(symbol, side, size, new_sl_price)
-                            self._last_sl_set[symbol] = now
-                    else:
-                        new_sl_price = entry * (1 - (target_sl_pnl / 100 / lev))
-                        if sl_p == 0 or new_sl_price < sl_p: # Only move DOWN
-                            print(f"[WHALE-KING] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
-                            self.update_sl_price(symbol, side, size, new_sl_price)
-                            self._last_sl_set[symbol] = now
+                if lev <= 1.0:
+                    # SPOT MODE: Trailing lebih agresif karena pergerakan harga murni (bukan leverage)
+                    # Mulai trailing setelah profit 2%, kunci di 1% di bawah puncak.
+                    if peak_pnl >= 2.0:
+                        target_sl_pnl = peak_pnl - 1.0
+                        if side in ['long', 'buy']:
+                            new_sl_price = entry * (1 + (target_sl_pnl / 100))
+                            if new_sl_price > sl_p:
+                                print(f"[SPOT-TRAIL] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
+                                self.update_sl_price(symbol, side, size, new_sl_price)
+                                self._last_sl_set[symbol] = now
+                        else:
+                            new_sl_price = entry * (1 - (target_sl_pnl / 100))
+                            if sl_p == 0 or new_sl_price < sl_p:
+                                print(f"[SPOT-TRAIL] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
+                                self.update_sl_price(symbol, side, size, new_sl_price)
+                                self._last_sl_set[symbol] = now
+                else:
+                    # FUTURES MODE (LADDER 10%)
+                    step_count = int(peak_pnl // 10)
+                    if step_count >= 1:
+                        target_sl_pnl = ((step_count - 1) * 10.0) + 4.0
+                        if side in ['long', 'buy']:
+                            new_sl_price = entry * (1 + (target_sl_pnl / 100 / lev))
+                            if new_sl_price > sl_p:
+                                print(f"[WHALE-KING] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
+                                self.update_sl_price(symbol, side, size, new_sl_price)
+                                self._last_sl_set[symbol] = now
+                        else:
+                            new_sl_price = entry * (1 - (target_sl_pnl / 100 / lev))
+                            if sl_p == 0 or new_sl_price < sl_p:
+                                print(f"[WHALE-KING] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
+                                self.update_sl_price(symbol, side, size, new_sl_price)
+                                self._last_sl_set[symbol] = now
 
         except Exception as e:
             print(f"[POSITION MANAGER CRASH] {e}")

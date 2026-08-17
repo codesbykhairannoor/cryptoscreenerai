@@ -14,15 +14,15 @@ if hasattr(sys.stdout, 'reconfigure'):
     try: sys.stdout.reconfigure(encoding='utf-8')
     except Exception: pass
 
-# --- CONFIG ---
+# --- CONFIG NFI SPOT REAL ---
 INITIAL_BALANCE = 1000.0
-FIXED_MARGIN_USDT = 150.0 # $150 per trade (Spot mode Cuan Gede)
+FIXED_MARGIN_USDT = 45.0  # NFI: 30% dari $150 = $45 per trade
 LEVERAGE = 1              # 1x Spot murni
-TP_PCT = 0.075            # +7.5% Take Profit
-SL_PCT = -0.035           # -3.5% Stop Loss
-TRAIL_ACTIVATE_PCT = 0.040  # +4.0% aktifkan trailing
-TRAIL_LOCK_PCT = 0.025      # +2.5% lock profit
-TIMEOUT_CANDLES = 16        # 16 candle 15m = 4 jam sideways timeout
+TP_PCT = 0.20             # +20.0% Take Profit (Dynamic Trailing akan kunci profit)
+SL_PCT = -0.07            # -7.0% Stop Loss (Lebar untuk hindari noise)
+TRAIL_ACTIVATE_PCT = 0.02 # +2.0% aktifkan trailing (Spot mode)
+TRAIL_LOCK_PCT = 0.01     # +1.0% lock profit
+TIMEOUT_CANDLES = 12      # 12 candle 15m = 3 jam sideways timeout (NFI Dynamic ROI)
 
 USE_GATEIO = False
 
@@ -129,14 +129,14 @@ def calc_ema(closes, period=21):
 
 def run_backtest():
     print("\n" + "="*65)
-    print(" 🚀 SUPER DUPER BACKTEST ENGINE - BITGET/GATE SPOT TOP GAINER 🚀")
+    print(" 🚀 SUPER DUPER BACKTEST NFI ENGINE - SPOT TOP 300 GAINERS 🚀")
     print("="*65)
-    print(f"💰 Modal Awal : ${INITIAL_BALANCE:.2f} | Size / Trade: ${FIXED_MARGIN_USDT:.2f} (Spot 1x)")
-    print(f"🎯 Strategi   : Top Gainer Momentum (TP: +6.0% | SL: -3.5% | Trail: +2.5% at +4.0%)")
-    print(f"⏳ Sideways   : Timeout otomatis setelah {TIMEOUT_CANDLES} candle (4 Jam)")
+    print(f"💰 Modal Awal : ${INITIAL_BALANCE:.2f} | Size / Trade: ${FIXED_MARGIN_USDT:.2f} (Spot NFI DCA)")
+    print(f"🎯 Strategi   : NFI Tri-Core (TP: +20.0% | SL: -7.0% | Trail: +1.0% at +2.0%)")
+    print(f"⏳ Dynamic ROI: Amankan profit >0.5% jika ditahan >3 jam")
     print("="*65 + "\n")
 
-    symbols_info = fetch_top_spot_symbols(limit=25)
+    symbols_info = fetch_top_spot_symbols(limit=300)
     
     total_trades = 0
     wins = 0
@@ -207,10 +207,14 @@ def run_backtest():
                     new_sl = max(dynamic_sl, min_lock_sl)
                     if sl_price == 0 or new_sl > sl_price:
                         sl_price = new_sl
-                # 4. Cek Sideways Timeout (4 Jam)
+                # 4. Cek NFI Dynamic Sideways Timeout (3 Jam & Profit > 0.5%)
                 elif bars_held >= TIMEOUT_CANDLES:
-                    exit_price = curr_close
-                    exit_reason = f"Sideways Timeout ({pnl_pct*100:+.2f}%)"
+                    if pnl_pct >= 0.005:
+                        exit_price = curr_close
+                        exit_reason = f"NFI Dynamic ROI (+{pnl_pct*100:.2f}%)"
+                    elif pnl_pct < -0.05: # Kalau sideways tapi rugi gede, mending keluar
+                        exit_price = curr_close
+                        exit_reason = f"Sideways Cutloss ({pnl_pct*100:.2f}%)"
                     
                 if exit_reason:
                     trade_pnl_pct = (exit_price - entry_price) / entry_price
@@ -264,20 +268,24 @@ def run_backtest():
             bb_std = np.std(closes[max(0, i-19):i+1])
             bb_up = bb_mean + 2.0 * bb_std
             bb_low = bb_mean - 2.0 * bb_std
+            bb_width_pct = (bb_up - bb_low) / bb_mean * 100 if bb_mean > 0 else 10.0
+            is_squeeze = bb_width_pct < 5.0
             
             # Wick ratio (SMC Demand Rejection proxy)
             body_size = abs(curr_close - closes[i-1]) if i >= 1 else abs(curr_close - curr_low)
             lower_wick = min(curr_close, closes[i-1]) - curr_low if i >= 1 else 0
             wick_ratio = lower_wick / body_size if body_size > 0 else 1.0
             
-            # 1. Filter Dasar Spot
-            if rsi < 30 or rsi > 82: continue
+            # 1. Filter Dasar Spot (Jangan tangkap pisau jatuh berlebihan)
+            if rsi < 25 or rsi > 82: continue
             
-            # CORE 1: Volatility Breakout (RVOL >= 2.0x, RSI 55-78, Harga di atas BB Atas atau EMA 84)
-            is_core1 = (rvol >= 2.0 and 55 <= rsi <= 78 and (curr_close >= bb_up * 0.995 or curr_close > ema84))
+            # CORE 1: Volatility Breakout (RVOL >= 2.0x, Squeeze, Harga Breakout BB Up/EMA 84)
+            is_core1 = (rvol >= 2.0 and 55 <= rsi <= 78 and (curr_close >= bb_up * 0.995 or curr_close > ema84 or is_squeeze))
             
-            # CORE 2: Dip Sniping & Mean Reversion (RSI <= 44 atau sentuh BB Low di tren EMA 84 naik, dengan wick rejection)
-            is_core2 = ((rsi <= 44 or curr_close <= bb_low * 1.01) and curr_close > ema84 * 0.98 and wick_ratio >= 1.2)
+            # CORE 2: NFI Dip Sniping (Dilarang serok bawah jika tren 1H hancur - Proksi: EMA84 harus naik)
+            ema84_prev = calc_ema(closes[:i], period=84)
+            trend_1h_bullish = (ema84 > ema84_prev)
+            is_core2 = ((rsi <= 44 or curr_close <= bb_low * 1.01) and trend_1h_bullish and wick_ratio >= 1.2)
             
             # CORE 3: SMC Demand Rejection (Wick ratio >= 1.3 dengan volume masuk RVOL >= 1.5)
             is_core3 = (wick_ratio >= 1.3 and rvol >= 1.5 and rsi <= 65)
