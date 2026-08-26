@@ -963,38 +963,65 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
     pattern = tech.get('candle_pattern', '')
     
     # Di pasar Spot, kita adalah 100% LONG-ONLY (Hanya BUY)
-    # Tri-Core Hybrid Evaluator (Volatility Breakout + Dip Sniping + SMC Demand)
-    
+    # Tri-Core Hybrid Evaluator v2.0 (bangkit.md-compliant)
+    # KUNCI: Setiap CORE butuh MULTI-CONFIRMATION, bukan single-trigger.
+
     # 0. Filter Dasar Pasar Spot
     if tech.get('still_falling', False) and rsi > 45: # Jangan tangkap pisau jatuh saat downtrend aktif kecuali deep dip
         return None, "ACTIVE_DOWNTREND_FALLING", 0
     if rsi > 82: # Terlalu pucuk overbought
         return None, f"RSI_{rsi:.1f}_EXTREME_OVERBOUGHT", 0
 
-    # CORE 1: Volatility Squeeze Breakout (Top Gainer Superstar)
-    # Kondisi: Volume meledak >= 2.0x, Squeeze BB width < 5%, RSI momentum kuat (55 - 78)
+    # == ADX Regime Check (bangkit.md: Regime Filter) ==
+    adx = tech.get('adx', 25)  # Default 25 jika tidak tersedia
+    is_trending   = adx >= 22   # Pasar TRENDING: semua strategi boleh masuk
+    is_choppy     = adx < 16    # Pasar CHOPPY: hanya Breakout yang boleh masuk
+    # is_transisi = 16 <= adx < 22 → threshold lebih ketat di bawah
+
+    # == Order Flow Imbalance (bangkit.md) ==
+    obi = tech.get('obi', 0.0)
+
+    # Precompute BB metrics
     bb_mean = (bb_up + bb_low) / 2
     bb_width_pct = (bb_up - bb_low) / bb_mean * 100 if bb_mean > 0 else 10.0
     is_squeeze = bb_width_pct < 5.0
 
-    if rvol >= 2.0 and 55 <= rsi <= 78 and trend_1h != "BEARISH":
+    # CORE 1: Volatility Squeeze Breakout (Top Gainer Superstar)
+    # Berlaku di semua kondisi ADX — Breakout adalah konfirmasi sendiri
+    # TMXUSDT Fakeout Guard: Tidak boleh ada sell wall raksasa (obi harus >= -0.05)
+    if rvol >= 2.0 and 55 <= rsi <= 78 and trend_1h != "BEARISH" and obi >= -0.05:
         if mark_price >= bb_up * 0.995 or mark_price > ema_84 or is_squeeze:
-            print(f"[SPOT TRI-CORE] CORE 1: VOLATILITY BREAKOUT (Squeeze: {is_squeeze})! {tech.get('symbol')} | RSI: {rsi:.1f} | RVOL: {rvol:.1f}x", flush=True)
+            print(f"[SPOT TRI-CORE] CORE 1: VOLATILITY BREAKOUT (ADX:{adx:.0f} Squeeze:{is_squeeze})! {tech.get('symbol')} | RSI:{rsi:.1f} | RVOL:{rvol:.1f}x | OBI:{obi:.2f}", flush=True)
             return "buy", "CORE1_VOL_BREAKOUT", 95
 
-    # CORE 2: Dip Sniping & Mean Reversion (Serok Bawah saat Koreksi Sehat)
-    # NFI Rule: Dilarang serok bawah (sniping dip) jika tren 1H hancur. Wajib BULLISH.
-    if (rsi <= 44 or mark_price <= bb_low * 1.01) and trend_1h == "BULLISH" and trend_4h != "BEARISH":
-        if "BULLISH" in str(pattern).upper() or tech.get('bullish_momentum_exhausted', False) or wick_ratio >= 1.2:
-            print(f"[SPOT TRI-CORE] CORE 2: DIP SNIPING! {tech.get('symbol')} | RSI: {rsi:.1f} | WickRatio: {wick_ratio}", flush=True)
-            return "buy", "CORE2_DIP_SNIPING", 90
+    # Jika pasar CHOPPY, kita butuh dorongan mikrostruktur (OBI positif) untuk masuk Dip/SMC
+    if is_choppy and obi < 0.15:
+        return None, f"ADX_CHOPPY({adx:.0f})_LOW_OBI({obi:.2f})_SKIP", 0
 
-    # CORE 3: SMC Demand Sniping (Institutional Order Block Hunter)
-    # Kondisi: Masuk zona Demand / Order Block dengan konfirmasi rejection wick > 1.3x body atau FVG Bullish
-    if in_demand or tech.get('fvg') == 'BULLISH' or tech.get('at_fib_support', False):
-        if wick_ratio >= 1.3 or rvol >= 1.5 or trend_1h == "BULLISH":
-            print(f"[SPOT TRI-CORE] CORE 3: SMC DEMAND SNIPE! {tech.get('symbol')} | WickRatio: {wick_ratio} | OB: {in_demand}", flush=True)
-            return "buy", "CORE3_SMC_DEMAND", 90
+    # CORE 2: Dip Sniping & Mean Reversion (FIX v3.0 - OBI Edition)
+    # BUTUH: (1) Harga di bawah/menyentuh BB bawah ATAU RSI oversold
+    #         (2) Tren 1H & 4H TIDAK BEARISH (pasar secara struktural sehat)
+    #         (3) Ada sinyal reversal: bullish candle pattern ATAU lower wick besar
+    rsi_oversold  = rsi <= 42
+    near_bb_low   = mark_price <= bb_low * 1.015
+    has_reversal  = wick_ratio >= 1.3 or "BULLISH" in str(pattern).upper()
+    htf_ok        = trend_1h != "BEARISH" and trend_4h != "BEARISH"
+
+    if (rsi_oversold or near_bb_low) and htf_ok and has_reversal:
+        score_c2 = 80 if is_trending else 70  # Score lebih rendah di pasar transisi
+        print(f"[SPOT TRI-CORE] CORE 2: DIP SNIPING v2! {tech.get('symbol')} | RSI:{rsi:.1f} | Wick:{wick_ratio:.1f} | ADX:{adx:.0f}", flush=True)
+        return "buy", "CORE2_DIP_SNIPING_V2", score_c2
+
+    # CORE 3: SMC Demand Sniping (FIX v3.0 - OBI Edition)
+    # WAJIB ada zona demand/FVG + WAJIB ada rejection ATAU volume ATAU order flow (OBI)
+    has_demand_zone = in_demand or tech.get('fvg') == 'BULLISH'
+    has_rejection   = wick_ratio >= 1.2 or rvol >= 1.2 or obi >= 0.2
+    not_bearish     = trend_1h != "BEARISH"
+
+    if has_demand_zone and has_rejection and not_bearish:
+        score_c3 = 85 if is_trending else 72
+        print(f"[SPOT TRI-CORE] CORE 3: SMC DEMAND SNIPE v2! {tech.get('symbol')} | Wick:{wick_ratio:.1f} | RVOL:{rvol:.1f} | ADX:{adx:.0f}", flush=True)
+        return "buy", "CORE3_SMC_DEMAND_V2", score_c3
 
     # Score berbasis momentum sekunder (Jika belum lolos 3 core di atas tapi skor kuantitatif tinggi)
     score = 40
@@ -1028,8 +1055,8 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl
 # == PERFORMANCE TRACKING (v21.0) ================================
 # Menyimpan history PnL koin untuk Smart Circuit Breaker
 COIN_STATS = {} # {symbol: {'pnl': 0, 'consecutive_losses': 0, 'locked_until': 0}}
-PENALTY_THRESHOLD_USD = -0.50 # Bench koin jika rugi > $0.50
-PENALTY_DURATION_HOURS = 24
+PENALTY_THRESHOLD_USD = -2.50 # Banned sementara hanya jika rugi besar > $2.50
+PENALTY_DURATION_HOURS = 4    # Kurangi masa hukuman jadi 4 jam saja
 # ===============================================================
 def run_crypto_engine():
     """
@@ -1286,12 +1313,24 @@ def run_crypto_engine():
                   flush=True)
 
             # == NFI: BTC REGIME FILTER ==
-            # Blokir semua pembelian baru jika Bitcoin sedang BEARISH
+            # Jika BTC BEARISH, perketat syarat masuk, BUKAN diblokir 100%
             if btc_ctx.get('trend') == 'BEARISH':
                 if int(now) % 60 < 15:
-                    print(f"[NFI REGIME FILTER] BTC is BEARISH. Blocking all new SPOT buy orders to protect capital.", flush=True)
-                time.sleep(SCAN_INTERVAL)
-                continue
+                    print(f"[NFI REGIME FILTER] BTC is BEARISH. Requiring Score >= 80. Dip Sniping only.", flush=True)
+                current_min_momentum = max(current_min_momentum, 80)
+
+            # == VOLATILITY-AWARE POSITION SIZING (bangkit.md: Volatility Targeting) ==
+            # Saat pasar tidak trending (ADX rendah), posisi diperkecil untuk lindungi modal
+            # ADX diambil dari BTC sebagai proxy global market regime
+            btc_adx = btc_ctx.get('adx', 25)
+            if btc_adx < 16:    # Pasar global CHOPPY
+                _vt_multiplier = 0.5   # Posisi 50% dari normal
+            elif btc_adx < 22:  # Pasar global TRANSISI
+                _vt_multiplier = 0.75  # Posisi 75% dari normal
+            else:               # Pasar global TRENDING
+                _vt_multiplier = 1.0   # Posisi 100% dari normal
+            if int(now) % 120 < 15:
+                print(f"[VOL TARGET] BTC ADX: {btc_adx:.0f} → Position Multiplier: {_vt_multiplier:.0%}", flush=True)
 
             #  SUB-FUNCTION FOR PARALLEL EVALUATION
             def evaluate_coin(coin, off_hours=False):
@@ -1601,12 +1640,13 @@ def run_crypto_engine():
                 ema_9 = tech.get('ema_9', mark_price)
                 ema_21 = tech.get('ema_21', mark_price)
                 if side == "buy" and ema_9 < ema_21:
-                    if combined_score < 80: # Biarkan SMC kuat nembus EMA
-                        print(f"  [SKIP] {clean_base} EMA 9 < 21 (Confirmation Fail)", flush=True)
+                    # Di SPOT, kita sering melakukan Dip Sniping saat oversold (RSI < 40)
+                    if combined_score < 80 and rsi >= 40: 
+                        print(f"  [SKIP] {clean_base} EMA 9 < 21 (Confirmation Fail & Not Oversold)", flush=True)
                         continue
                 if side == "sell" and ema_9 > ema_21:
-                    if combined_score < 80:
-                        print(f"  [SKIP] {clean_base} EMA 9 > 21 (Confirmation Fail)", flush=True)
+                    if combined_score < 80 and rsi <= 60:
+                        print(f"  [SKIP] {clean_base} EMA 9 > 21 (Confirmation Fail & Not Overbought)", flush=True)
                         continue
 
                 # 2. JUNK FILTER: ATR > 5% Price (Volatility Guard)
@@ -1629,7 +1669,9 @@ def run_crypto_engine():
                 take_profit_val, stop_loss_val = _calc_tp_sl(mark_price, side, tech, tp_m=tp_m, sl_m=sl_m)
 
                 # Hitung size (DCA Mode: 30% dari FIXED_MARGIN_USDT untuk Base Order)
-                base_order_usd = FIXED_MARGIN_USDT * 0.30
+                # Volatility Targeting: Kurangi ukuran posisi saat pasar choppy (bangkit.md)
+                _vt = _vt_multiplier if '_vt_multiplier' in dir() else 1.0
+                base_order_usd = FIXED_MARGIN_USDT * 0.30 * _vt
                 amount = executor.get_max_available(symbol, leverage=LEVERAGE, risk_usdt=base_order_usd)
                 if amount > 0:
                     print(f"\n{'='*60}")

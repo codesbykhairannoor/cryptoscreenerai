@@ -136,7 +136,7 @@ def run_backtest():
     print(f"⏳ Dynamic ROI: Amankan profit >0.5% jika ditahan >3 jam")
     print("="*65 + "\n")
 
-    symbols_info = fetch_top_spot_symbols(limit=300)
+    symbols_info = fetch_top_spot_symbols(limit=30)
     
     total_trades = 0
     wins = 0
@@ -194,11 +194,11 @@ def run_backtest():
                 # 1. Cek Stop Loss
                 if curr_low <= sl_price:
                     exit_price = sl_price
-                    exit_reason = "Hit SL (-3.5%)" if not trailing_active else "Hit Trailing SL (Locked)"
+                    exit_reason = "Hit SL (-7.0%)" if not trailing_active else "Hit Trailing SL (Locked)"
                 # 2. Cek Take Profit
                 elif curr_high >= tp_price:
                     exit_price = tp_price
-                    exit_reason = "Hit Take Profit (+7.5%)"
+                    exit_reason = "Hit Take Profit (+20.0%)"
                 # 3. Cek aktivasi Trailing Stop (Dynamic Trailing berbasis Highest High)
                 elif max_high_pct >= TRAIL_ACTIVATE_PCT:
                     trailing_active = True
@@ -215,6 +215,10 @@ def run_backtest():
                     elif pnl_pct < -0.05: # Kalau sideways tapi rugi gede, mending keluar
                         exit_price = curr_close
                         exit_reason = f"Sideways Cutloss ({pnl_pct*100:.2f}%)"
+                    # 5. Force Exit Timeout (24h)
+                    elif bars_held >= 96:
+                        exit_price = curr_close
+                        exit_reason = "24h Sideways Timeout"
                     
                 if exit_reason:
                     trade_pnl_pct = (exit_price - entry_price) / entry_price
@@ -285,7 +289,7 @@ def run_backtest():
             # CORE 2: NFI Dip Sniping (Dilarang serok bawah jika tren 1H hancur - Proksi: EMA84 harus naik)
             ema84_prev = calc_ema(closes[:i], period=84)
             trend_1h_bullish = (ema84 > ema84_prev)
-            is_core2 = ((rsi <= 44 or curr_close <= bb_low * 1.01) and trend_1h_bullish and wick_ratio >= 1.2)
+            is_core2 = ((rsi <= 44 or curr_close <= bb_low * 1.01) and (trend_1h_bullish or rsi <= 35) and wick_ratio >= 1.2)
             
             # CORE 3: SMC Demand Rejection (Wick ratio >= 1.3 dengan volume masuk RVOL >= 1.5)
             is_core3 = (wick_ratio >= 1.3 and rvol >= 1.5 and rsi <= 65)

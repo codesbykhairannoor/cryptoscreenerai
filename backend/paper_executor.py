@@ -323,10 +323,10 @@ class PaperExecutor:
                 if pnl > self._peak_pnl[symbol]: self._peak_pnl[symbol] = pnl
                 peak_pnl = self._peak_pnl[symbol]
 
-                # INITIAL GUARD: Set default SL (-3.5%) / TP (+7.5%) untuk Spot Top Gainer
+                # INITIAL GUARD: Set default SL (-7.0%) / TP (+20.0%) untuk Spot Top Gainer
                 if (sl == 0 or tp == 0) and now - self.startup_time > 5:
-                    default_sl = ent * 0.965   # -3.5% harga
-                    default_tp = ent * 1.075   # +7.5% harga
+                    default_sl = ent * 0.930   # -7.0% harga
+                    default_tp = ent * 1.200   # +20.0% harga
                     if sl == 0:
                         self.update_sl_price(symbol, side, pos['amount'], default_sl, is_tp=False)
                         sl = default_sl
@@ -357,8 +357,8 @@ class PaperExecutor:
                     price_move_pct = abs((mrk - ent) / ent * 100) if ent > 0 else 0
 
                     MIN_HOLD_HOURS         = 0.5
-                    SIDEWAYS_WARN_HOURS    = 3.0
-                    SIDEWAYS_TIMEOUT_HOURS = 4.0  # Di Spot kita ingin cepat berganti koin jika stagnan
+                    SIDEWAYS_WARN_HOURS    = 12.0
+                    SIDEWAYS_TIMEOUT_HOURS = 24.0 # Di Spot aman ditahan lama karena tidak ada funding rate
                     is_sideways = (-3.0 < pnl < 3.0) and (price_move_pct < 1.5)
 
                     if duration_hours >= MIN_HOLD_HOURS:

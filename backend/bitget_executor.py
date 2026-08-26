@@ -614,9 +614,9 @@ class BitgetExecutor:
                 # MINIMUM HOLD TIME: 30 menit sebelum sideways detection aktif
                 # Naik dari 5 menit - trade butuh waktu untuk berkembang
                 # Ini juga mencegah false close saat bot restart (timer reset ke 0)
-                MIN_HOLD_HOURS     = 0.5    # 30 menit minimum hold
-                SIDEWAYS_WARN_HOURS    = 3.0   # Warning setelah 3 jam
-                SIDEWAYS_TIMEOUT_HOURS = 4.0   # Force close setelah 4 jam
+                MIN_HOLD_HOURS         = 0.5    # 30 menit minimum hold
+                SIDEWAYS_WARN_HOURS    = 12.0   # Warning setelah 12 jam
+                SIDEWAYS_TIMEOUT_HOURS = 24.0   # Force close setelah 24 jam
 
                 # Sideways: PnL stuck di -10% to +10% DAN harga tidak bergerak
                 # Threshold dinaikkan dari 5% ke 10% supaya tidak terlalu sensitif
