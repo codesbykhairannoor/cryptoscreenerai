@@ -146,16 +146,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[SYSTEM] Gagal memulai WebSocket: {e}", flush=True)
 
-    # 4. Forex Engine
-    try:
-        fx = get_forex_executor()
-        fx_thread = threading.Thread(
-            target=fx.monitor_forex_market, daemon=True, name="ForexEngine"
-        )
-        fx_thread.start()
-        print("[SYSTEM] Forex Engine AKTIF!", flush=True)
-    except Exception as e:
-        print(f"[SYSTEM] Gagal memulai Forex Engine: {e}", flush=True)
+    # 4. Forex Engine (DISABLED BY USER REQUEST)
+    # try:
+    #     fx = get_forex_executor()
+    #     fx_thread = threading.Thread(
+    #         target=fx.monitor_forex_market, daemon=True, name="ForexEngine"
+    #     )
+    #     fx_thread.start()
+    #     print("[SYSTEM] Forex Engine AKTIF!", flush=True)
+    # except Exception as e:
+    #     print(f"[SYSTEM] Gagal memulai Forex Engine: {e}", flush=True)
 
     # 5. News Sniper
     try:
