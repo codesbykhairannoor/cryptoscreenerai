@@ -109,9 +109,9 @@ def analyze_and_sort(raw_data):
         return False
 
     df = df[~df['symbol'].apply(is_blacklisted)]
-    df = df[df['quoteVolume'] > 500_000]       # Min $500k volume untuk Top Gainer Spot
-    df = df[df['priceChangePercent'] <= 25.0]  # Belum pump terlalu jauh
-    df = df[df['priceChangePercent'] >= 2.0]   # Top Gainer Spot (Hanya koin yang sedang naik >= 2%)
+    df = df[df['quoteVolume'] > 30_000_000]    # Min $30M volume HANYA KOIN LIKUID (Blokir Shitcoin)
+    df = df[df['priceChangePercent'] <= -2.0]  # Dip Sniper: Hanya koin yang sedang merah (koreksi)
+    df = df[df['priceChangePercent'] >= -20.0] # Jangan tangkap pisau yang jatuh terlalu dalam
 
     # Range 24h
     df['range_pct'] = ((df['high24h'] - df['low24h']) / df['low24h'].replace(0, 1)) * 100
@@ -152,21 +152,10 @@ def analyze_and_sort(raw_data):
         if high > low and price > 0:
             pos = (price - low) / (high - low) * 100
             
-            # Jika Volume Rendah: Cari koin di bawah (Mean Reversion)
-            # Jika Volume MELEDAK: Hajar koin di atas (Breakout Momentum)
-            rvol_val = 1.0
-            try:
-                from shared_state import state
-                rvol_val = getattr(state, 'rt_rvol', {}).get(str(row.get('symbol', '')), 1.0)
-            except Exception: pass
-
-            if rvol_val >= 2.0: # MOMENTUM / BREAKOUT MODE!
-                if pos >= 75:     score += 25   # BREAKOUT! Hajar terus!
-                elif 50 <= pos < 75: score += 18
-            else: # DIP SNIPING MODE (Cari serokan bawah saat koreksi)
-                if 10 <= pos <= 42:   score += 25   # Dekat bottom / oversold dip, ideal long
-                elif 42 < pos <= 55:  score += 18   
-                elif pos > 85:        score -= 10   # Terlalu pucuk untuk volume normal
+            # MEAN REVERSION: Beli di bawah saat oversold
+            if 0 <= pos <= 25:    score += 25   # Sangat oversold (Golden Dip)
+            elif 25 < pos <= 45:  score += 18   # Koreksi sehat
+            elif pos > 75:        score -= 20   # Terlalu pucuk, bahaya dump!
 
         # -- 4. MOMENTUM & VELOCITY (max 40 poin) --
         # Koin yang volumenya meledak (RVOL) adalah prioritas utama (The Gainer Hunter)
@@ -180,10 +169,11 @@ def analyze_and_sort(raw_data):
         except Exception:
             pass
 
-        if 3.0 <= pct <= 15.0:    score += 25   # Sweet spot Top Gainer!
-        elif 2.0 <= pct < 3.0:    score += 15   # Mulai breakout
-        elif 15.0 < pct <= 25.0:  score += 10   # Strong gainer
-        elif pct < 2.0:           score += 0    # Bukan gainer
+        # -- MOMENTUM & VELOCITY (DIP SNIPER) --
+        if -15.0 <= pct <= -5.0:  score += 25   # Sweet spot untuk Mean Reversion!
+        elif -5.0 < pct <= -2.0:  score += 15   # Mulai koreksi
+        elif -20.0 <= pct < -15.0:score += 10   # Oversold parah, potensi mantul
+        elif pct > 0:             score -= 10   # Koin hijau dilarang dibeli (Bukan dip)
 
         # -- BONUS: Whale + OBI dari WebSocket --
         try:
@@ -351,5 +341,59 @@ def analyze_market_data(data_json):
             return f"Gagal analisis: {e}"
             
     return "AI analysis tidak tersedia (kredit habis atau key tidak ada). Bot tetap berjalan normal."
+
+
+def evaluate_meta_label(symbol: str, side: str, primary_score: float, tech: dict) -> float:
+    """
+    META-LABELING RISK BOARD (Lapisan 4)
+    Sesuai bangkit.md: Evaluasi probabilitas keberhasilan sinyal primer berdasarkan
+    regime pasar, volatilitas, dan market microstructure.
+    Return: Probabilitas Keyakinan (0.0 - 1.0)
+    """
+    regime = tech.get('market_regime', 'UNKNOWN')
+    prob = 0.5 # Baseline coin toss
+    
+    # 1. Regime Alignment (Sangat Penting)
+    if side == 'buy':
+        if regime == 'TRENDING_BULL':
+            prob += 0.3
+        elif regime == 'TRENDING_BEAR':
+            prob -= 0.4 # Lawan arus, probabilitas hancur
+        elif regime == 'CHOPPY':
+            prob -= 0.2
+        elif regime == 'SIDEWAYS':
+            prob += 0.1 # Mean reversion
+            
+    elif side == 'sell':
+        if regime == 'TRENDING_BEAR':
+            prob += 0.3
+        elif regime == 'TRENDING_BULL':
+            prob -= 0.4
+        elif regime == 'CHOPPY':
+            prob -= 0.2
+        elif regime == 'SIDEWAYS':
+            prob += 0.1
+            
+    # 2. Volatility (ATR) Penalty
+    # Jika ATR sangat tinggi, kemungkinan slippage transien (Almgren-Chriss) membunuh profit
+    mark_price = tech.get('mark_price', 1)
+    if mark_price == 0: mark_price = 1
+    atr_pct = tech.get('atr', 0) / mark_price
+    if atr_pct > 0.05:
+        prob -= 0.2
+        
+    # 3. Microstructure (OFI) Alignment
+    obi = tech.get('obi', 0)
+    if side == 'buy' and obi > 0.1:
+        prob += 0.15
+    elif side == 'sell' and obi < -0.1:
+        prob += 0.15
+    elif side == 'buy' and obi < -0.2:
+        prob -= 0.2 # Jangan tangkap pisau jatuh
+        
+    # 4. Pengaruh Sinyal Primer
+    prob += (primary_score - 50) / 200.0
+    
+    return max(0.0, min(1.0, prob))
 
 

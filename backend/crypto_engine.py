@@ -1039,15 +1039,30 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    v80.0: SPOT TRI-CORE HYBRID TP/SL (Smart DCA & Dynamic Trailing)
-    SL Akhir: -7.0% Price (Jaring Pengaman untuk DCA)
-    TP: +20.0% Price (Pelindung jauh, karena profit sejati akan di-trail oleh Trailing Stop)
+    v81.0: SPOT TRI-CORE HYBRID TP/SL (Smart DCA & Dynamic Trailing)
+    Menggunakan Penargetan Volatilitas (ATR) sesuai panduan bangkit.md.
+    Mencegah kerugian -7% yang statis dan kaku.
     """
     base_p = tech.get('limit_price', mark_price)
+    atr = tech.get('atr', 0)
     
-    # Di pasar Spot, kita menggunakan jaring pengaman luas untuk DCA
-    take_profit_val = base_p * 1.20  # +20.0% Harga
-    stop_loss_val = base_p * 0.93    # -7.0% Harga
+    if atr and atr > 0:
+        # Dinamika Penargetan Volatilitas (ATR multiplier)
+        # SL = 2.0x ATR, TP = 4.0x ATR
+        stop_loss_val = base_p - (atr * 2.0) if side == 'buy' else base_p + (atr * 2.0)
+        take_profit_val = base_p + (atr * 4.0) if side == 'buy' else base_p - (atr * 4.0)
+        
+        # Fallback guard rails untuk menghindari SL yang absurdly tight atau wide
+        sl_pct = abs(base_p - stop_loss_val) / base_p
+        if sl_pct > 0.10:
+            stop_loss_val = base_p * 0.90 if side == 'buy' else base_p * 1.10 # Max 10% SL
+        elif sl_pct < 0.015:
+            stop_loss_val = base_p * 0.985 if side == 'buy' else base_p * 1.015 # Min 1.5% SL
+            
+    else:
+        # Fallback default jika ATR tidak terbaca
+        take_profit_val = base_p * 1.06  # +6.0% Harga
+        stop_loss_val = base_p * 0.96    # -4.0% Harga
         
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
@@ -1660,6 +1675,17 @@ def run_crypto_engine():
                 if rvol < 0.4: 
                     print(f"  [SKIP] {clean_base} RVOL {rvol} < 0.4 (Secondary Check)", flush=True)
                     continue
+                    
+                # --- 4. META-LABELING RISK BOARD (Lapisan 4) ---
+                try:
+                    from ai_model import evaluate_meta_label
+                    meta_prob = evaluate_meta_label(symbol, side, combined_score, tech)
+                    if meta_prob < 0.40:
+                        print(f"  [SKIP] {clean_base} Ditolak oleh Meta-Label Risk Board (Keyakinan: {meta_prob:.2f} < 0.40)", flush=True)
+                        continue
+                    print(f"  [META-LABEL] {clean_base} disetujui (Keyakinan: {meta_prob:.2f})", flush=True)
+                except Exception as e:
+                    print(f"  [META-LABELER ERROR] {e}")
 
                 sl_m = 1.5
                 tp_m = 5.0
