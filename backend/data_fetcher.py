@@ -294,22 +294,50 @@ def detect_whale_activity(symbol):
 
 def get_open_interest(symbol):
     """
-    WS-FIRST: pakai shared_state.rt_oi kalau ada, fallback REST.
-    Bitget ticker field OI = holdingAmount (bukan openInterest).
-    REST endpoint return field 'size' (jumlah kontrak).
+    Cross-Venue Price Discovery: Mengambil Open Interest (OI) dari pasar Futures (Perpetual)
+    Binance sebagai indikator dominan untuk pasar Spot.
     """
     # 1. WS Cache (dari BitgetMarketWS ticker stream, field holdingAmount)
     ws_oi = _ws_oi(symbol)
     if ws_oi is not None and ws_oi > 0:
         return ws_oi
 
-    # Di pasar Spot, tidak ada Open Interest (OI)
+    # 2. REST Fallback (Binance Futures FAPI)
+    try:
+        clean_symbol = symbol.replace("USDT_UMCBL", "USDT").replace("_UMCBL", "")
+        if not clean_symbol.endswith("USDT"):
+            clean_symbol = clean_symbol.split("_")[0] + "USDT"
+            
+        url = f"https://fapi.binance.com/fapi/v1/openInterest?symbol={clean_symbol}"
+        r = requests.get(url, timeout=3, verify=False)
+        if r.status_code == 200:
+            data = r.json()
+            return float(data.get('openInterest', 0))
+    except Exception:
+        pass
     return 0
 
 def get_funding_rate(symbol):
     """
-    Di pasar Spot, tidak ada Funding Rate.
+    Cross-Venue Price Discovery: Mengambil Funding Rate dari pasar Futures (Perpetual)
+    Binance sebagai prediktor pergerakan pasar Spot.
     """
+    ws_funding = _ws_funding(symbol)
+    if ws_funding is not None and ws_funding != 0:
+        return ws_funding
+        
+    try:
+        clean_symbol = symbol.replace("USDT_UMCBL", "USDT").replace("_UMCBL", "")
+        if not clean_symbol.endswith("USDT"):
+            clean_symbol = clean_symbol.split("_")[0] + "USDT"
+            
+        url = f"https://fapi.binance.com/fapi/v1/premiumIndex?symbol={clean_symbol}"
+        r = requests.get(url, timeout=3, verify=False)
+        if r.status_code == 200:
+            data = r.json()
+            return float(data.get('lastFundingRate', 0))
+    except Exception:
+        pass
     return 0
 
 def get_binance_ls_ratio(symbol):
@@ -720,6 +748,13 @@ def get_technical_indicators(symbol, interval="15m"):
             rsi_avg_loss = (rsi_avg_loss * (rsi_period - 1) + rsi_losses[i]) / rsi_period
         rsi_val = round(100 - (100 / (1 + rsi_avg_gain / rsi_avg_loss)), 2) if rsi_avg_loss > 0 else 100.0
 
+        # 9. Regime Detection
+        try:
+            from quant_utils import detect_market_regime
+            market_regime = detect_market_regime(df_cur)
+        except Exception:
+            market_regime = "UNKNOWN"
+
         return {
             "mark_price": mark_price,
             "rsi": rsi_val,
@@ -781,6 +816,7 @@ def get_technical_indicators(symbol, interval="15m"):
             "funding_rate": get_funding_rate(symbol),
             "ls_ratio": get_binance_ls_ratio(symbol),
             "htf": "1h",
+            "market_regime": market_regime,
             "falling_knife": falling_knife,
             "flying_rocket": flying_rocket,
             # Momentum exhaustion signals
@@ -832,7 +868,7 @@ def fetch_all_tickers():
             # Update WS symbol list dengan top 60 by volume
             try:
                 from websocket_sniper import get_market_ws
-                sorted_data = sorted(data, key=lambda x: float(x.get('baseVolume', 0) or 0), reverse=True)
+                sorted_data = sorted(data, key=lambda x: float(x.get('usdtVolume', x.get('quoteVolume', 0)) or 0), reverse=True)
                 top_syms = [t['symbol'] for t in sorted_data if t.get('symbol')]
                 get_market_ws().update_symbols(top_syms)
             except Exception:

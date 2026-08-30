@@ -116,6 +116,7 @@ def analyze_and_sort(raw_data):
     # Range 24h
     df['range_pct'] = ((df['high24h'] - df['low24h']) / df['low24h'].replace(0, 1)) * 100
     df = df[df['range_pct'] > 3.0]
+    df = df[df['range_pct'] <= 25.0]  # BLACKLIST COIN GILA: Koin raksasa jarang bergerak >25% sehari. Lebih dari ini = Shitcoin.
 
     if len(df) == 0:
         return []
