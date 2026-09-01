@@ -855,17 +855,34 @@ def get_technical_indicators(symbol, interval="15m"):
         }
     except Exception as e:
         print(f"Error indicators for {symbol}: {e}")
+# THE FREQTRADE APPROACH: STRICT STATIC PAIRLIST
+# Hanya koin fundamental terbaik dan paling liquid (Top 50). Anti-synthetic, anti-shitcoin.
+GOLDEN_PAIRLIST = {
+    "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "ADAUSDT",
+    "DOGEUSDT", "TRXUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT", "MATICUSDT",
+    "LTCUSDT", "BCHUSDT", "SHIBUSDT", "UNIUSDT", "ATOMUSDT", "XLMUSDT",
+    "NEARUSDT", "APTUSDT", "OPUSDT", "INJUSDT", "RNDRUSDT", "FETUSDT",
+    "FILUSDT", "STXUSDT", "IMXUSDT", "ARBUSDT", "MNTUSDT", "KASUSDT",
+    "SUIUSDT", "RUNEUSDT", "PEPEUSDT", "WIFUSDT", "FTMUSDT", "SEIUSDT",
+    "TIAUSDT", "ORDIUSDT", "JUPUSDT", "PYTHUSDT", "ONDOUSDT", "FLOKIUSDT",
+    "BONKUSDT", "GALAUSDT", "SANDUSDT", "MANAUSDT", "AXSUSDT", "AAVEUSDT",
+    "MKRUSDT", "SNXUSDT"
+}
+
 def fetch_all_tickers():
     """
     Fetches all Spot tickers from Bitget.
-    Setelah fetch, update BitgetMarketWS symbol list supaya WS coverage selalu fresh.
+    Setelah fetch, filter dengan GOLDEN_PAIRLIST dan update WS symbol list.
     """
     try:
         url = "https://api.bitget.com/api/v2/spot/market/tickers"
         r = requests.get(url, timeout=10, verify=False)
         if r.status_code == 200:
-            data = r.json().get('data', [])
-            # Update WS symbol list dengan top 60 by volume
+            raw_data = r.json().get('data', [])
+            # Terapkan Golden Pairlist
+            data = [t for t in raw_data if t.get('symbol') in GOLDEN_PAIRLIST]
+            
+            # Update WS symbol list
             try:
                 from websocket_sniper import get_market_ws
                 sorted_data = sorted(data, key=lambda x: float(x.get('usdtVolume', x.get('quoteVolume', 0)) or 0), reverse=True)
