@@ -323,10 +323,10 @@ class PaperExecutor:
                 if pnl > self._peak_pnl[symbol]: self._peak_pnl[symbol] = pnl
                 peak_pnl = self._peak_pnl[symbol]
 
-                # INITIAL GUARD: Set default SL (-7.0%) / TP (+20.0%) untuk Spot Top Gainer
+                # INITIAL GUARD: Set default SL (-3.5%) / TP (+20.0%) untuk Spot Top Gainer
                 if (sl == 0 or tp == 0) and now - self.startup_time > 5:
-                    default_sl = ent * 0.930   # -7.0% harga
-                    default_tp = ent * 1.200   # +20.0% harga
+                    default_sl = ent * 0.965   # -3.5% harga (Ketat)
+                    default_tp = ent * 1.200   # +20.0% harga (Biarkan profit mengalir)
                     if sl == 0:
                         self.update_sl_price(symbol, side, pos['amount'], default_sl, is_tp=False)
                         sl = default_sl
@@ -348,7 +348,7 @@ class PaperExecutor:
                     if symbol in self._peak_pnl: del self._peak_pnl[symbol]
                     continue
 
-                # SIDEWAYS DETECTION (4 jam timeout)
+                # SIDEWAYS DETECTION (4 jam timeout) & NFI DYNAMIC ROI
                 try:
                     from shared_state import state
                     if symbol not in state.pos_start_time:
@@ -357,9 +357,17 @@ class PaperExecutor:
                     price_move_pct = abs((mrk - ent) / ent * 100) if ent > 0 else 0
 
                     MIN_HOLD_HOURS         = 0.5
+                    NFI_DYNAMIC_ROI_HOURS  = 3.0  # NFI: Amankan profit jika sudah ditahan 3 jam
                     SIDEWAYS_WARN_HOURS    = 12.0
                     SIDEWAYS_TIMEOUT_HOURS = 24.0 # Di Spot aman ditahan lama karena tidak ada funding rate
                     is_sideways = (-3.0 < pnl < 3.0) and (price_move_pct < 1.5)
+
+                    # NFI DYNAMIC ROI: Jika sudah > 3 jam dan profit >= 1.5%, bungkus!
+                    if duration_hours >= NFI_DYNAMIC_ROI_HOURS and pnl >= 1.5:
+                        self._close_paper_position(pos, mrk, reason=f"NFI Dynamic ROI (+{pnl:.2f}%)")
+                        if symbol in state.pos_start_time: del state.pos_start_time[symbol]
+                        if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                        continue
 
                     if duration_hours >= MIN_HOLD_HOURS:
                         if duration_hours > SIDEWAYS_WARN_HOURS and is_sideways:
@@ -381,20 +389,20 @@ class PaperExecutor:
                     continue
 
                 # TOP GAINER TRAILING STOP (Spot Scalper)
-                # 1. Dynamic Trailing: Jika profit menyentuh >= 4.0%, lock SL minimal di +2.5% dan trail 1.5% di bawah Highest High
-                # 2. Break Even Lock: Jika profit menyentuh >= 2.5%, lock SL di +1.0% (Break Even + Profit)
-                if peak_pnl >= 4.0:
-                    dynamic_sl = mrk * 0.985
-                    min_lock_sl = ent * 1.025
+                # 1. Dynamic Trailing: Jika profit menyentuh >= 2.5%, lock SL minimal di Break Even + 1.5% dan trail 1.0% di bawah Highest High
+                # 2. Break Even Lock: Jika profit menyentuh >= 1.5%, lock SL di +0.5% (Break Even + Profit)
+                if peak_pnl >= 2.5:
+                    dynamic_sl = mrk * 0.990
+                    min_lock_sl = ent * 1.015
                     new_sl = max(dynamic_sl, min_lock_sl)
                     if sl == 0 or new_sl > sl:
                         self.update_sl_price(symbol, side, pos['amount'], new_sl)
                         print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | Dynamic SL: {new_sl:.6f}")
-                elif peak_pnl >= 2.5:
-                    new_sl = ent * 1.010
+                elif peak_pnl >= 1.5:
+                    new_sl = ent * 1.005
                     if sl == 0 or new_sl > sl:
                         self.update_sl_price(symbol, side, pos['amount'], new_sl)
-                        print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | Lock SL: {new_sl:.6f} (+1.0%)")
+                        print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | Lock SL: {new_sl:.6f} (+0.5%)")
 
 
 

@@ -18,62 +18,35 @@ if hasattr(sys.stdout, 'reconfigure'):
 INITIAL_BALANCE = 1000.0
 FIXED_MARGIN_USDT = 45.0  # NFI: 30% dari $150 = $45 per trade
 LEVERAGE = 1              # 1x Spot murni
-TP_PCT = 0.20             # +20.0% Take Profit (Dynamic Trailing akan kunci profit)
-SL_PCT = -0.07            # -7.0% Stop Loss (Lebar untuk hindari noise)
-TRAIL_ACTIVATE_PCT = 0.02 # +2.0% aktifkan trailing (Spot mode)
-TRAIL_LOCK_PCT = 0.01     # +1.0% lock profit
+TP_PCT = 0.20             # +20.0% Take Profit
+SL_PCT = -0.035           # -3.5% Stop Loss (Ketat untuk Top 50)
+TRAIL_ACTIVATE_PCT = 0.025 # +2.5% aktifkan trailing
+TRAIL_LOCK_PCT = 0.015     # +1.5% lock profit
 TIMEOUT_CANDLES = 12      # 12 candle 15m = 3 jam sideways timeout (NFI Dynamic ROI)
 
 USE_GATEIO = False
 
-def fetch_top_spot_symbols(limit=25):
+def fetch_top_spot_symbols(limit=50):
     global USE_GATEIO
-    print(f"[*] Mengambil Top {limit} koin volume terbesar untuk Backtest...", flush=True)
-    # Coba Bitget dulu
-    try:
-        url = "https://api.bitget.com/api/v2/spot/market/tickers"
-        r = requests.get(url, timeout=2)
-        if r.status_code == 200:
-            data = r.json().get("data", [])
-            valid = []
-            for t in data:
-                sym = t.get("symbol", "")
-                vol = float(t.get("quoteVolume", 0) or 0)
-                if sym.endswith("USDT") and not any(x in sym for x in ("USDC", "DAI", "BUSD", "EUR", "GBP")):
-                    if vol > 500000:
-                        valid.append((sym, sym, vol))
-            valid.sort(key=lambda x: x[2], reverse=True)
-            symbols = valid[:limit]
-            print(f"[+] Berhasil memilih {len(symbols)} simbol dari Bitget: {', '.join([x[0] for x in symbols[:10]])}...", flush=True)
-            return symbols
-    except Exception:
-        pass
-        
-    # Fallback Gate.io (Sangat cepat dan bebas blokir DNS di Indonesia)
     USE_GATEIO = True
-    print("[*] Menggunakan Gate.io Spot Data Feed (Fallback tercepat & bebas blokir DNS)...", flush=True)
-    try:
-        url = "https://api.gateio.ws/api/v4/spot/tickers"
-        r = requests.get(url, timeout=10)
-        if r.status_code == 200:
-            data = r.json()
-            valid = []
-            for t in data:
-                pair = t.get("currency_pair", "")
-                vol = float(t.get("quote_volume", 0) or 0)
-                if pair.endswith("_USDT") and not any(x in pair for x in ("USDC", "DAI", "BUSD", "EUR", "GBP", "BEAR", "BULL")):
-                    if vol > 500000:
-                        sym = pair.replace("_", "")
-                        valid.append((sym, pair, vol))
-            valid.sort(key=lambda x: x[2], reverse=True)
-            symbols_info = valid[:limit]
-            print(f"[+] Berhasil memilih {len(symbols_info)} simbol Top Gainer / Volume: {', '.join([x[0] for x in symbols_info[:10]])}...", flush=True)
-            return symbols_info
-    except Exception as e:
-        print(f"[!] Gagal fetch Gate.io tickers: {e}", flush=True)
-        
-    default_syms = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "PEPEUSDT", "DOGEUSDT", "WLDUSDT", "SUIUSDT", "RENDERUSDT", "NEARUSDT", "AVAXUSDT"]
-    return [(s, s.replace("USDT", "_USDT"), 1000000) for s in default_syms]
+    print(f"[*] Menggunakan The Golden Pairlist (Top {limit} Fundamental Crypto) untuk Super Backtest...", flush=True)
+    
+    # GOLDEN PAIRLIST (Top 50 Fundamental Crypto)
+    golden_pairlist = [
+        "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "ADAUSDT",
+        "DOGEUSDT", "TRXUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT", "MATICUSDT",
+        "LTCUSDT", "BCHUSDT", "SHIBUSDT", "UNIUSDT", "ATOMUSDT", "XLMUSDT",
+        "NEARUSDT", "APTUSDT", "OPUSDT", "INJUSDT", "RNDRUSDT", "FETUSDT",
+        "FILUSDT", "STXUSDT", "IMXUSDT", "ARBUSDT", "MNTUSDT", "KASUSDT",
+        "SUIUSDT", "RUNEUSDT", "PEPEUSDT", "WIFUSDT", "FTMUSDT", "SEIUSDT",
+        "TIAUSDT", "ORDIUSDT", "JUPUSDT", "PYTHUSDT", "ONDOUSDT", "FLOKIUSDT",
+        "BONKUSDT", "GALAUSDT", "SANDUSDT", "MANAUSDT", "AXSUSDT", "AAVEUSDT",
+        "MKRUSDT", "SNXUSDT"
+    ]
+    
+    # Format untuk fungsi backtest: (Bitget_Symbol, Gateio_Symbol, Dummy_Volume)
+    symbols_info = [(s, s.replace("USDT", "_USDT"), 1000000) for s in golden_pairlist[:limit]]
+    return symbols_info
 
 def fetch_historical_candles(sym_info, granularity="15m", limit=800):
     sym_clean, gate_pair, _ = sym_info
@@ -207,9 +180,9 @@ def run_backtest():
                     new_sl = max(dynamic_sl, min_lock_sl)
                     if sl_price == 0 or new_sl > sl_price:
                         sl_price = new_sl
-                # 4. Cek NFI Dynamic Sideways Timeout (3 Jam & Profit > 0.5%)
+                # 4. Cek NFI Dynamic Sideways Timeout (3 Jam & Profit > 1.5%)
                 elif bars_held >= TIMEOUT_CANDLES:
-                    if pnl_pct >= 0.005:
+                    if pnl_pct >= 0.015:
                         exit_price = curr_close
                         exit_reason = f"NFI Dynamic ROI (+{pnl_pct*100:.2f}%)"
                     elif pnl_pct < -0.05: # Kalau sideways tapi rugi gede, mending keluar

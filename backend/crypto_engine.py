@@ -999,10 +999,10 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
         return None, f"ADX_CHOPPY({adx:.0f})_LOW_OBI({obi:.2f})_SKIP", 0
 
     # CORE 2: Dip Sniping & Mean Reversion (FIX v3.0 - OBI Edition)
-    # BUTUH: (1) Harga di bawah/menyentuh BB bawah ATAU RSI oversold
+    # BUTUH: (1) Harga di bawah/menyentuh BB bawah ATAU RSI oversold (<35)
     #         (2) Tren 1H & 4H TIDAK BEARISH (pasar secara struktural sehat)
     #         (3) Ada sinyal reversal: bullish candle pattern ATAU lower wick besar
-    rsi_oversold  = rsi <= 42
+    rsi_oversold  = rsi <= 35  # Lebih ketat (sebelumnya 42) untuk hindari pisau jatuh
     near_bb_low   = mark_price <= bb_low * 1.015
     has_reversal  = wick_ratio >= 1.3 or "BULLISH" in str(pattern).upper()
     htf_ok        = trend_1h != "BEARISH" and trend_4h != "BEARISH"
@@ -1054,15 +1054,15 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl
         
         # Fallback guard rails untuk menghindari SL yang absurdly tight atau wide
         sl_pct = abs(base_p - stop_loss_val) / base_p
-        if sl_pct > 0.10:
-            stop_loss_val = base_p * 0.90 if side == 'buy' else base_p * 1.10 # Max 10% SL
+        if sl_pct > 0.035:
+            stop_loss_val = base_p * 0.965 if side == 'buy' else base_p * 1.035 # Max 3.5% SL (Top 50 Crypto Guard)
         elif sl_pct < 0.015:
             stop_loss_val = base_p * 0.985 if side == 'buy' else base_p * 1.015 # Min 1.5% SL
             
     else:
         # Fallback default jika ATR tidak terbaca
-        take_profit_val = base_p * 1.06  # +6.0% Harga
-        stop_loss_val = base_p * 0.96    # -4.0% Harga
+        take_profit_val = base_p * 1.20  # +20.0% Harga (Biarkan profit mengalir)
+        stop_loss_val = base_p * 0.965   # -3.5% Harga (Ketat)
         
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
