@@ -1023,6 +1023,12 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
         print(f"[SPOT TRI-CORE] CORE 3: SMC DEMAND SNIPE v2! {tech.get('symbol')} | Wick:{wick_ratio:.1f} | RVOL:{rvol:.1f} | ADX:{adx:.0f}", flush=True)
         return "buy", "CORE3_SMC_DEMAND_V2", score_c3
 
+    # CORE 4: Pre-Pump Accumulation (Hasil Deep Research: Koin Liar Top 300)
+    # BUTUH: Lonjakan Volume Ekstrem (RVOL >= 2.5x) + Sedang Konsolidasi Sempit (Squeeze)
+    if rvol >= 2.5 and is_squeeze and trend_1h != "BEARISH":
+        print(f"[SPOT PUMP CATCHER] CORE 4: PRE-PUMP ANOMALY DETECTED! {tech.get('symbol')} | RVOL:{rvol:.1f}x | Squeeze:{is_squeeze}", flush=True)
+        return "buy", "CORE4_PRE_PUMP", 95
+
     # Score berbasis momentum sekunder (Jika belum lolos 3 core di atas tapi skor kuantitatif tinggi)
     score = 40
     reasons = []
@@ -1054,15 +1060,15 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl
         
         # Fallback guard rails untuk menghindari SL yang absurdly tight atau wide
         sl_pct = abs(base_p - stop_loss_val) / base_p
-        if sl_pct > 0.035:
-            stop_loss_val = base_p * 0.965 if side == 'buy' else base_p * 1.035 # Max 3.5% SL (Top 50 Crypto Guard)
+        if sl_pct > 0.050:
+            stop_loss_val = base_p * 0.95 if side == 'buy' else base_p * 1.05 # Max 5.0% SL (Pump Catcher Guard)
         elif sl_pct < 0.015:
             stop_loss_val = base_p * 0.985 if side == 'buy' else base_p * 1.015 # Min 1.5% SL
             
     else:
         # Fallback default jika ATR tidak terbaca
-        take_profit_val = base_p * 1.20  # +20.0% Harga (Biarkan profit mengalir)
-        stop_loss_val = base_p * 0.965   # -3.5% Harga (Ketat)
+        take_profit_val = base_p * 1.30  # +30.0% Harga (Biarkan profit mengalir)
+        stop_loss_val = base_p * 0.95    # -5.0% Harga (Ketat tapi tidak gampang tersenggol noise liar)
         
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 

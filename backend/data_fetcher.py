@@ -879,14 +879,34 @@ def fetch_all_tickers():
         r = requests.get(url, timeout=10, verify=False)
         if r.status_code == 200:
             raw_data = r.json().get('data', [])
-            # Terapkan Golden Pairlist
-            data = [t for t in raw_data if t.get('symbol') in GOLDEN_PAIRLIST]
+            
+            # Filter Token Sintetis (Saham/ETF yang di-tokenize), Stablecoin, Bull/Bear token
+            forbidden_suffixes = ("USDC", "DAI", "BUSD", "EUR", "GBP", "BEAR", "BULL", "UP", "DOWN")
+            # Koin berawalan R yang sering muncul sebagai synthetic saham (RWDAY, RSOXS, dsb)
+            forbidden_prefixes = ("RWDAY", "RSOXS", "RMSTU", "RSEDG", "RPURR", "RHPQ", "RBG", "RBB", "RDJT", "RASST", "RSMTC")
+            
+            valid_data = []
+            for t in raw_data:
+                sym = t.get('symbol', '')
+                vol = float(t.get('usdtVolume', t.get('quoteVolume', 0)) or 0)
+                if not sym.endswith("USDT"): continue
+                
+                # Check forbidden
+                if any(x in sym for x in forbidden_suffixes): continue
+                if any(sym.startswith(x) for x in forbidden_prefixes): continue
+                
+                # Minimum $1,000,000 daily volume to avoid zero liquidity scams
+                if vol >= 1000000:
+                    valid_data.append(t)
+                    
+            # Ambil Top 300 berdasarkan volume
+            sorted_data = sorted(valid_data, key=lambda x: float(x.get('usdtVolume', x.get('quoteVolume', 0)) or 0), reverse=True)
+            data = sorted_data[:300]
             
             # Update WS symbol list
             try:
                 from websocket_sniper import get_market_ws
-                sorted_data = sorted(data, key=lambda x: float(x.get('usdtVolume', x.get('quoteVolume', 0)) or 0), reverse=True)
-                top_syms = [t['symbol'] for t in sorted_data if t.get('symbol')]
+                top_syms = [t['symbol'] for t in data if t.get('symbol')]
                 get_market_ws().update_symbols(top_syms)
             except Exception:
                 pass

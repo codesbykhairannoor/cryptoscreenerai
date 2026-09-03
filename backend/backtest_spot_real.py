@@ -26,27 +26,42 @@ TIMEOUT_CANDLES = 12      # 12 candle 15m = 3 jam sideways timeout (NFI Dynamic 
 
 USE_GATEIO = False
 
-def fetch_top_spot_symbols(limit=50):
+def fetch_top_spot_symbols(limit=300):
     global USE_GATEIO
     USE_GATEIO = True
-    print(f"[*] Menggunakan The Golden Pairlist (Top {limit} Fundamental Crypto) untuk Super Backtest...", flush=True)
+    print(f"[*] Mengambil Top {limit} koin volume terbesar dari Gate.io untuk Super Backtest...", flush=True)
     
-    # GOLDEN PAIRLIST (Top 50 Fundamental Crypto)
-    golden_pairlist = [
-        "BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "BNBUSDT", "ADAUSDT",
-        "DOGEUSDT", "TRXUSDT", "AVAXUSDT", "LINKUSDT", "DOTUSDT", "MATICUSDT",
-        "LTCUSDT", "BCHUSDT", "SHIBUSDT", "UNIUSDT", "ATOMUSDT", "XLMUSDT",
-        "NEARUSDT", "APTUSDT", "OPUSDT", "INJUSDT", "RNDRUSDT", "FETUSDT",
-        "FILUSDT", "STXUSDT", "IMXUSDT", "ARBUSDT", "MNTUSDT", "KASUSDT",
-        "SUIUSDT", "RUNEUSDT", "PEPEUSDT", "WIFUSDT", "FTMUSDT", "SEIUSDT",
-        "TIAUSDT", "ORDIUSDT", "JUPUSDT", "PYTHUSDT", "ONDOUSDT", "FLOKIUSDT",
-        "BONKUSDT", "GALAUSDT", "SANDUSDT", "MANAUSDT", "AXSUSDT", "AAVEUSDT",
-        "MKRUSDT", "SNXUSDT"
-    ]
-    
-    # Format untuk fungsi backtest: (Bitget_Symbol, Gateio_Symbol, Dummy_Volume)
-    symbols_info = [(s, s.replace("USDT", "_USDT"), 1000000) for s in golden_pairlist[:limit]]
-    return symbols_info
+    try:
+        url = "https://api.gateio.ws/api/v4/spot/tickers"
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            data = r.json()
+            
+            forbidden_suffixes = ("USDC", "DAI", "BUSD", "EUR", "GBP", "BEAR", "BULL", "UP", "DOWN")
+            forbidden_prefixes = ("RWDAY", "RSOXS", "RMSTU", "RSEDG", "RPURR", "RHPQ", "RBG", "RBB", "RDJT", "RASST", "RSMTC")
+            
+            valid = []
+            for t in data:
+                pair = t.get("currency_pair", "")
+                vol = float(t.get("quote_volume", 0) or 0)
+                if not pair.endswith("_USDT"): continue
+                
+                sym_clean = pair.replace("_USDT", "USDT")
+                if any(x in sym_clean for x in forbidden_suffixes): continue
+                if any(sym_clean.startswith(x) for x in forbidden_prefixes): continue
+                
+                if vol > 1000000:
+                    valid.append((sym_clean, pair, vol))
+            
+            valid.sort(key=lambda x: x[2], reverse=True)
+            symbols_info = valid[:limit]
+            print(f"[+] Berhasil memilih {len(symbols_info)} simbol Top Gainer / Volume: {', '.join([x[0] for x in symbols_info[:10]])}...", flush=True)
+            return symbols_info
+    except Exception as e:
+        print(f"[!] Gagal fetch Gate.io tickers: {e}", flush=True)
+        
+    default_syms = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "PEPEUSDT", "DOGEUSDT"]
+    return [(s, s.replace("USDT", "_USDT"), 1000000) for s in default_syms]
 
 def fetch_historical_candles(sym_info, granularity="15m", limit=800):
     sym_clean, gate_pair, _ = sym_info
@@ -167,17 +182,27 @@ def run_backtest():
                 # 1. Cek Stop Loss
                 if curr_low <= sl_price:
                     exit_price = sl_price
-                    exit_reason = "Hit SL (-7.0%)" if not trailing_active else "Hit Trailing SL (Locked)"
+                    exit_reason = f"Hit SL ({SL_PCT*100:.1f}%)" if not trailing_active else "Hit Trailing SL (Locked)"
                 # 2. Cek Take Profit
                 elif curr_high >= tp_price:
                     exit_price = tp_price
-                    exit_reason = "Hit Take Profit (+20.0%)"
+                    exit_reason = f"Hit Take Profit (+{TP_PCT*100:.1f}%)"
                 # 3. Cek aktivasi Trailing Stop (Dynamic Trailing berbasis Highest High)
-                elif max_high_pct >= TRAIL_ACTIVATE_PCT:
+                elif max_high_pct >= 0.10:
                     trailing_active = True
-                    dynamic_sl = curr_high * 0.985
-                    min_lock_sl = entry_price * (1.0 + TRAIL_LOCK_PCT)
+                    dynamic_sl = curr_high * 0.970
+                    min_lock_sl = entry_price * 1.050
                     new_sl = max(dynamic_sl, min_lock_sl)
+                    if sl_price == 0 or new_sl > sl_price:
+                        sl_price = new_sl
+                elif max_high_pct >= 0.05:
+                    trailing_active = True
+                    new_sl = entry_price * 1.020
+                    if sl_price == 0 or new_sl > sl_price:
+                        sl_price = new_sl
+                elif max_high_pct >= 0.03:
+                    trailing_active = True
+                    new_sl = entry_price * 1.005
                     if sl_price == 0 or new_sl > sl_price:
                         sl_price = new_sl
                 # 4. Cek NFI Dynamic Sideways Timeout (3 Jam & Profit > 1.5%)

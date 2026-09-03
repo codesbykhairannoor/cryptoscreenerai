@@ -388,21 +388,25 @@ class PaperExecutor:
                     if symbol in self._peak_pnl: del self._peak_pnl[symbol]
                     continue
 
-                # TOP GAINER TRAILING STOP (Spot Scalper)
-                # 1. Dynamic Trailing: Jika profit menyentuh >= 2.5%, lock SL minimal di Break Even + 1.5% dan trail 1.0% di bawah Highest High
-                # 2. Break Even Lock: Jika profit menyentuh >= 1.5%, lock SL di +0.5% (Break Even + Profit)
-                if peak_pnl >= 2.5:
-                    dynamic_sl = mrk * 0.990
-                    min_lock_sl = ent * 1.015
+                # PUMP CATCHER TRAILING STOP (Spot Lapis Dua)
+                # Biarkan koin terbang (puluhan persen), tapi amankan Break Even agar tidak rugi jika gagal pump.
+                if peak_pnl >= 10.0:
+                    dynamic_sl = mrk * 0.970 # Trail 3.0% di bawah puncak
+                    min_lock_sl = ent * 1.050 # Minimal kunci profit +5.0%
                     new_sl = max(dynamic_sl, min_lock_sl)
                     if sl == 0 or new_sl > sl:
                         self.update_sl_price(symbol, side, pos['amount'], new_sl)
                         print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | Dynamic SL: {new_sl:.6f}")
-                elif peak_pnl >= 1.5:
-                    new_sl = ent * 1.005
+                elif peak_pnl >= 5.0:
+                    new_sl = ent * 1.020 # Kunci profit +2.0%
                     if sl == 0 or new_sl > sl:
                         self.update_sl_price(symbol, side, pos['amount'], new_sl)
-                        print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | Lock SL: {new_sl:.6f} (+0.5%)")
+                        print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | Lock SL: {new_sl:.6f} (+2.0%)")
+                elif peak_pnl >= 3.0:
+                    new_sl = ent * 1.005 # Break Even +0.5%
+                    if sl == 0 or new_sl > sl:
+                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
+                        print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | Lock BE: {new_sl:.6f} (+0.5%)")
 
 
 
