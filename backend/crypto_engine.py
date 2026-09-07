@@ -1045,30 +1045,26 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    v81.0: SPOT TRI-CORE HYBRID TP/SL (Smart DCA & Dynamic Trailing)
-    Menggunakan Penargetan Volatilitas (ATR) sesuai panduan bangkit.md.
-    Mencegah kerugian -7% yang statis dan kaku.
+    v85.0: UNLEASHED PUMP RUNNER TP/SL
+    SL awal ketat (-3.5% / 2.0x ATR) untuk membatasi risiko.
+    TP diset ke moonshot (+50.0%) agar posisi tidak dicekik dini.
+    Pengawalan laba dilakukan secara dinamis oleh Multi-Stage Unleashed Trailing Stop.
     """
     base_p = tech.get('limit_price', mark_price)
     atr = tech.get('atr', 0)
     
     if atr and atr > 0:
-        # Dinamika Penargetan Volatilitas (ATR multiplier)
-        # SL = 2.0x ATR, TP = 4.0x ATR
         stop_loss_val = base_p - (atr * 2.0) if side == 'buy' else base_p + (atr * 2.0)
-        take_profit_val = base_p + (atr * 4.0) if side == 'buy' else base_p - (atr * 4.0)
-        
-        # Fallback guard rails untuk menghindari SL yang absurdly tight atau wide
         sl_pct = abs(base_p - stop_loss_val) / base_p
-        if sl_pct > 0.050:
-            stop_loss_val = base_p * 0.95 if side == 'buy' else base_p * 1.05 # Max 5.0% SL (Pump Catcher Guard)
+        if sl_pct > 0.040:
+            stop_loss_val = base_p * 0.965 if side == 'buy' else base_p * 1.035 # Max 3.5% SL
         elif sl_pct < 0.015:
             stop_loss_val = base_p * 0.985 if side == 'buy' else base_p * 1.015 # Min 1.5% SL
-            
     else:
-        # Fallback default jika ATR tidak terbaca
-        take_profit_val = base_p * 1.30  # +30.0% Harga (Biarkan profit mengalir)
-        stop_loss_val = base_p * 0.95    # -5.0% Harga (Ketat tapi tidak gampang tersenggol noise liar)
+        stop_loss_val = base_p * 0.965 if side == 'buy' else base_p * 1.035
+        
+    # Uncapped Moonshot TP (+50.0%): Biarkan Trailing Stop yang mengunci profit di puncak (+20% s/d +80%)!
+    take_profit_val = base_p * 1.50 if side == 'buy' else base_p * 0.50
         
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
@@ -1703,7 +1699,7 @@ def run_crypto_engine():
                 # Hitung size (DCA Mode: 30% dari FIXED_MARGIN_USDT untuk Base Order)
                 # Volatility Targeting: Kurangi ukuran posisi saat pasar choppy (bangkit.md)
                 _vt = _vt_multiplier if '_vt_multiplier' in dir() else 1.0
-                base_order_usd = FIXED_MARGIN_USDT * 0.30 * _vt
+                base_order_usd = FIXED_MARGIN_USDT * _vt
                 amount = executor.get_max_available(symbol, leverage=LEVERAGE, risk_usdt=base_order_usd)
                 if amount > 0:
                     print(f"\n{'='*60}")

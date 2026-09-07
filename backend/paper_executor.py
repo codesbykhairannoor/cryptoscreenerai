@@ -48,7 +48,7 @@ class PaperExecutor:
         except:
             open_count = 0
         # Total = free + estimasi margin yang dipakai (open_count * margin_per_trade)
-        margin_per_trade = float(os.getenv("VIRTUAL_MARGIN_PER_TRADE", "50"))
+        margin_per_trade = float(os.getenv("VIRTUAL_MARGIN_PER_TRADE", "150"))
         total_bal = free_bal + (open_count * margin_per_trade)
         return {'total': total_bal, 'free': free_bal}
 
@@ -57,7 +57,7 @@ class PaperExecutor:
         s = s.upper().replace('/USDT:USDT', '').replace('USDT', '').replace('/', '').replace(':', '').replace('_', '')
         return s.strip()
 
-    def get_max_available(self, symbol, leverage=1, risk_usdt=50.0):
+    def get_max_available(self, symbol, leverage=1, risk_usdt=150.0):
         """Simulasi kalkulasi size position berdasarkan virtual balance untuk pasar Spot."""
         balance = self.get_balance()
         free_usdt = balance['free']
@@ -323,10 +323,10 @@ class PaperExecutor:
                 if pnl > self._peak_pnl[symbol]: self._peak_pnl[symbol] = pnl
                 peak_pnl = self._peak_pnl[symbol]
 
-                # INITIAL GUARD: Set default SL (-3.5%) / TP (+20.0%) untuk Spot Top Gainer
+                # INITIAL GUARD: Set default SL (-3.5%) / Moonshot TP (+50.0%) untuk Spot Top Gainer
                 if (sl == 0 or tp == 0) and now - self.startup_time > 5:
                     default_sl = ent * 0.965   # -3.5% harga (Ketat)
-                    default_tp = ent * 1.200   # +20.0% harga (Biarkan profit mengalir)
+                    default_tp = ent * 1.500   # +50.0% harga (Biarkan profit mengalir puluhan persen)
                     if sl == 0:
                         self.update_sl_price(symbol, side, pos['amount'], default_sl, is_tp=False)
                         sl = default_sl
@@ -334,21 +334,56 @@ class PaperExecutor:
                         self.update_sl_price(symbol, side, pos['amount'], default_tp, is_tp=True)
                         tp = default_tp
 
-                # Cek Hit SL/TP Statis (Long-Only Spot)
-                hit_sl = (sl > 0 and mrk <= sl)
-                hit_tp = (tp > 0 and mrk >= tp)
+                # == UNLEASHED PUMP RUNNER: MULTI-STAGE TRAILING STOP ENGINE ==
+                # Kunci profit puluhan persen: gerakkan SL ke atas SEBELUM evaluasi hit exit!
+                if peak_pnl >= 25.0:
+                    # STAGE 4: Super Parabolic Runner (Trail 4.5% dari puncak, min lock +20%)
+                    dynamic_sl = mrk * 0.955
+                    min_lock = ent * 1.200
+                    new_sl = max(dynamic_sl, min_lock)
+                    if sl == 0 or new_sl > sl:
+                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
+                        sl = new_sl
+                        print(f"[UNLEASHED TRAILING] {symbol} | STAGE 4 (Peak:{peak_pnl:.1f}%) | Lock SL: {new_sl:.6f} (+{((new_sl-ent)/ent)*100:.1f}%)")
+                elif peak_pnl >= 12.0:
+                    # STAGE 3: Sky Runner Trailing (Trail 3.5% dari puncak, min lock +8%)
+                    dynamic_sl = mrk * 0.965
+                    min_lock = ent * 1.080
+                    new_sl = max(dynamic_sl, min_lock)
+                    if sl == 0 or new_sl > sl:
+                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
+                        sl = new_sl
+                        print(f"[UNLEASHED TRAILING] {symbol} | STAGE 3 (Peak:{peak_pnl:.1f}%) | Dynamic SL: {new_sl:.6f} (+{((new_sl-ent)/ent)*100:.1f}%)")
+                elif peak_pnl >= 6.0:
+                    # STAGE 2: Profit Lock (Kunci minimal +3.0% di kantong)
+                    new_sl = ent * 1.030
+                    if sl == 0 or new_sl > sl:
+                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
+                        sl = new_sl
+                        print(f"[UNLEASHED TRAILING] {symbol} | STAGE 2 (Peak:{peak_pnl:.1f}%) | Profit Lock SL: {new_sl:.6f} (+3.0%)")
+                elif peak_pnl >= 2.5:
+                    # STAGE 1: Breakeven Lock (+0.3% agar trade 100% Risk-Free dari fakeout)
+                    new_sl = ent * 1.003
+                    if sl == 0 or new_sl > sl:
+                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
+                        sl = new_sl
+                        print(f"[UNLEASHED TRAILING] {symbol} | STAGE 1 (Peak:{peak_pnl:.1f}%) | Breakeven Lock SL: {new_sl:.6f} (+0.3% Risk-Free)")
 
-                if hit_sl:
-                    self._close_paper_position(pos, mrk, reason="Hit SL")
+                # CEK HIT SL / TRAILING STOP EXIT
+                if sl > 0 and mrk <= sl:
+                    exit_reason = f"Trailing Stop (+{pnl:.2f}%)" if pnl > 0 else "Hit SL"
+                    self._close_paper_position(pos, mrk, reason=exit_reason)
                     if symbol in self._peak_pnl: del self._peak_pnl[symbol]
                     continue
 
-                if hit_tp:
-                    self._close_paper_position(pos, mrk, reason="Hit TP")
+                # CEK MOONSHOT TP (+50%+)
+                if tp > 0 and mrk >= tp:
+                    self._close_paper_position(pos, mrk, reason=f"Moonshot TP (+{pnl:.2f}%)")
                     if symbol in self._peak_pnl: del self._peak_pnl[symbol]
                     continue
 
-                # SIDEWAYS DETECTION (4 jam timeout) & NFI DYNAMIC ROI
+                # SIDEWAYS DETECTION (24 jam timeout)
+                # Catatan: HAPUS NFI Dynamic ROI 1.5% agar profit puluhan persen TIDAK DICEKIK!
                 try:
                     from shared_state import state
                     if symbol not in state.pos_start_time:
@@ -356,57 +391,25 @@ class PaperExecutor:
                     duration_hours = (now - state.pos_start_time[symbol]) / 3600
                     price_move_pct = abs((mrk - ent) / ent * 100) if ent > 0 else 0
 
-                    MIN_HOLD_HOURS         = 0.5
-                    NFI_DYNAMIC_ROI_HOURS  = 3.0  # NFI: Amankan profit jika sudah ditahan 3 jam
-                    SIDEWAYS_WARN_HOURS    = 12.0
-                    SIDEWAYS_TIMEOUT_HOURS = 24.0 # Di Spot aman ditahan lama karena tidak ada funding rate
-                    is_sideways = (-3.0 < pnl < 3.0) and (price_move_pct < 1.5)
+                    SIDEWAYS_TIMEOUT_HOURS = 24.0 # Koin hanya ditutup jika benar-benar beku 24 jam
+                    is_sideways = (-2.5 < pnl < 2.5) and (price_move_pct < 2.0)
 
-                    # NFI DYNAMIC ROI: Jika sudah > 3 jam dan profit >= 1.5%, bungkus!
-                    if duration_hours >= NFI_DYNAMIC_ROI_HOURS and pnl >= 1.5:
-                        self._close_paper_position(pos, mrk, reason=f"NFI Dynamic ROI (+{pnl:.2f}%)")
+                    if duration_hours >= SIDEWAYS_TIMEOUT_HOURS and is_sideways:
+                        self._close_paper_position(pos, mrk, reason="Sideways Timeout")
                         if symbol in state.pos_start_time: del state.pos_start_time[symbol]
                         if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                        clean = self._clean_symbol(symbol)
+                        if not hasattr(state, 'recently_exited'): state.recently_exited = {}
+                        state.recently_exited[clean] = time.time()
                         continue
-
-                    if duration_hours >= MIN_HOLD_HOURS:
-                        if duration_hours > SIDEWAYS_WARN_HOURS and is_sideways:
-                            if duration_hours > SIDEWAYS_TIMEOUT_HOURS:
-                                self._close_paper_position(pos, mrk, reason="Sideways Timeout")
-                                if symbol in state.pos_start_time: del state.pos_start_time[symbol]
-                                if symbol in self._peak_pnl: del self._peak_pnl[symbol]
-                                clean = self._clean_symbol(symbol)
-                                if not hasattr(state, 'recently_exited'): state.recently_exited = {}
-                                state.recently_exited[clean] = time.time()
-                                continue
                 except Exception as e:
                     print(f"[PAPER SIDEWAYS ERROR] {e}")
 
-                # HARD EXIT -10% (Spot Cut Loss Guard)
-                if pnl <= -10:
+                # HARD EXIT -10% (Spot Cut Loss Extreme Emergency Guard)
+                if pnl <= -10.0:
                     self._close_paper_position(pos, mrk, reason="Hard Exit PnL -10%")
                     if symbol in self._peak_pnl: del self._peak_pnl[symbol]
                     continue
-
-                # PUMP CATCHER TRAILING STOP (Spot Lapis Dua)
-                # Biarkan koin terbang (puluhan persen), tapi amankan Break Even agar tidak rugi jika gagal pump.
-                if peak_pnl >= 10.0:
-                    dynamic_sl = mrk * 0.970 # Trail 3.0% di bawah puncak
-                    min_lock_sl = ent * 1.050 # Minimal kunci profit +5.0%
-                    new_sl = max(dynamic_sl, min_lock_sl)
-                    if sl == 0 or new_sl > sl:
-                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
-                        print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | Dynamic SL: {new_sl:.6f}")
-                elif peak_pnl >= 5.0:
-                    new_sl = ent * 1.020 # Kunci profit +2.0%
-                    if sl == 0 or new_sl > sl:
-                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
-                        print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | Lock SL: {new_sl:.6f} (+2.0%)")
-                elif peak_pnl >= 3.0:
-                    new_sl = ent * 1.005 # Break Even +0.5%
-                    if sl == 0 or new_sl > sl:
-                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
-                        print(f"[PAPER TRAILING] {symbol} | Peak:{peak_pnl:.1f}% | Lock BE: {new_sl:.6f} (+0.5%)")
 
 
 
