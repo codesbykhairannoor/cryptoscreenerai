@@ -44,24 +44,31 @@ threading.excepthook = _global_thread_exception_handler
 #  Membunuh proses lama yang masih pakai port 8000 sebelum bind
 # ============================================================================-
 def _kill_stale_port(port: int = 8000):
-    """Kill proses lain yang masih pakai port ini. Windows-safe."""
+    """Kill proses lain yang masih pakai port ini. Cross-platform safe (Windows & Linux)."""
     try:
-        result = subprocess.run(
-            ["netstat", "-ano"],
-            capture_output=True, text=True, timeout=5
-        )
-        my_pid = str(_os.getpid())
-        for line in result.stdout.splitlines():
-            if f":{port}" in line and "LISTENING" in line:
-                parts = line.strip().split()
-                pid = parts[-1]
-                if pid.isdigit() and pid != "0" and pid != my_pid:
-                    subprocess.run(
-                        ["taskkill", "/PID", pid, "/F"],
-                        capture_output=True, timeout=5
-                    )
-                    print(f"[STARTUP] Killed stale PID {pid} on port {port}", flush=True)
-                    time.sleep(1)
+        if sys.platform == "win32":
+            result = subprocess.run(
+                ["netstat", "-ano"],
+                capture_output=True, text=True, timeout=5
+            )
+            my_pid = str(_os.getpid())
+            for line in result.stdout.splitlines():
+                if f":{port}" in line and "LISTENING" in line:
+                    parts = line.strip().split()
+                    pid = parts[-1]
+                    if pid.isdigit() and pid != "0" and pid != my_pid:
+                        subprocess.run(
+                            ["taskkill", "/PID", pid, "/F"],
+                            capture_output=True, timeout=5
+                        )
+                        print(f"[STARTUP] Killed stale PID {pid} on port {port}", flush=True)
+                        time.sleep(1)
+        else:
+            # Linux: Cek fuser jika ada
+            try:
+                subprocess.run(["fuser", "-k", f"{port}/tcp"], capture_output=True, timeout=5)
+            except Exception:
+                pass
     except Exception as e:
         print(f"[STARTUP] Port cleanup: {e}", flush=True)
 

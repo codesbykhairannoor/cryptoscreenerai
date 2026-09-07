@@ -106,17 +106,20 @@ def analyze_and_sort(raw_data):
             return True
         if any(base.endswith(x) for x in ['UP', 'DOWN', 'BULL', 'BEAR', '3L', '3S']):
             return True
+        # Filter Saham Sintetis Bitget (semua berawalan R yang bukan koin kripto asli)
+        if base.startswith("R"):
+            valid_r_coins = {"RNDR", "ROSE", "RUNE", "RAY", "RENDER", "RONIN", "RDNT", "RARE", "REEF", "REN", "RSR", "RLC", "RAD", "RIF", "REQ", "RACA", "RVN"}
+            if base not in valid_r_coins:
+                return True
         return False
 
     df = df[~df['symbol'].apply(is_blacklisted)]
-    df = df[df['quoteVolume'] > 30_000_000]    # Min $30M volume HANYA KOIN LIKUID (Blokir Shitcoin)
-    df = df[df['priceChangePercent'] <= -2.0]  # Dip Sniper: Hanya koin yang sedang merah (koreksi)
-    df = df[df['priceChangePercent'] >= -20.0] # Jangan tangkap pisau yang jatuh terlalu dalam
+    df = df[df['quoteVolume'] >= 500_000]      # Min $500k volume (Koin likuid riil kripto, bukan $30M koin sintetis)
+    df = df[(df['priceChangePercent'] >= -18.0) & (df['priceChangePercent'] <= 50.0)] # Buka untuk Breakout & Healthy Dip
 
     # Range 24h
     df['range_pct'] = ((df['high24h'] - df['low24h']) / df['low24h'].replace(0, 1)) * 100
-    df = df[df['range_pct'] > 3.0]
-    df = df[df['range_pct'] <= 25.0]  # BLACKLIST COIN GILA: Koin raksasa jarang bergerak >25% sehari. Lebih dari ini = Shitcoin.
+    df = df[df['range_pct'] >= 2.5]            # Pastikan ada volatilitas, jangan batasi koin pump >25%!
 
     if len(df) == 0:
         return []
@@ -132,8 +135,8 @@ def analyze_and_sort(raw_data):
         rng   = float(row.get('range_pct', 0))
 
         # -- 1. VOLATILITAS RANGE (max 30 poin) --
-        # Range besar = koin bisa bergerak 8% untuk hit TP
-        if rng >= 20:    score += 30
+        # Range besar = koin bisa bergerak puluhan persen untuk hit TP
+        if rng >= 25:    score += 30
         elif rng >= 15:  score += 25
         elif rng >= 10:  score += 20
         elif rng >= 7:   score += 15
@@ -142,21 +145,22 @@ def analyze_and_sort(raw_data):
 
         # -- 2. VOLUME ABSOLUT (max 25 poin) --
         # Volume besar = likuiditas, slippage kecil
-        if vol >= 100_000_000:   score += 25   # $100M+
-        elif vol >= 50_000_000:  score += 20   # $50M+
-        elif vol >= 20_000_000:  score += 15   # $20M+
-        elif vol >= 10_000_000:  score += 10   # $10M+
-        elif vol >= 5_000_000:   score += 7    # $5M+
-        elif vol >= 2_000_000:   score += 4    # $2M+
+        if vol >= 50_000_000:   score += 25   # $50M+
+        elif vol >= 20_000_000:  score += 20   # $20M+
+        elif vol >= 10_000_000:  score += 15   # $10M+
+        elif vol >= 5_000_000:   score += 12   # $5M+
+        elif vol >= 2_000_000:   score += 8    # $2M+
+        elif vol >= 500_000:     score += 5    # $500k+
 
         # -- 3. POSISI HARGA DI RANGE (max 25 poin) --
         if high > low and price > 0:
             pos = (price - low) / (high - low) * 100
             
-            # MEAN REVERSION: Beli di bawah saat oversold
-            if 0 <= pos <= 25:    score += 25   # Sangat oversold (Golden Dip)
-            elif 25 < pos <= 45:  score += 18   # Koreksi sehat
-            elif pos > 75:        score -= 20   # Terlalu pucuk, bahaya dump!
+            # Momentum Breakout atau Golden Dip
+            if 0 <= pos <= 30:    score += 25   # Golden Dip (Sangat oversold)
+            elif 30 < pos <= 60:  score += 18   # Tengah akumulasi
+            elif 60 < pos <= 85:  score += 20   # Breakout High Runner!
+            elif pos > 95:        score -= 15   # Terlalu pucuk overbought
 
         # -- 4. MOMENTUM & VELOCITY (max 40 poin) --
         # Koin yang volumenya meledak (RVOL) adalah prioritas utama (The Gainer Hunter)
@@ -170,11 +174,12 @@ def analyze_and_sort(raw_data):
         except Exception:
             pass
 
-        # -- MOMENTUM & VELOCITY (DIP SNIPER) --
-        if -15.0 <= pct <= -5.0:  score += 25   # Sweet spot untuk Mean Reversion!
-        elif -5.0 < pct <= -2.0:  score += 15   # Mulai koreksi
-        elif -20.0 <= pct < -15.0:score += 10   # Oversold parah, potensi mantul
-        elif pct > 0:             score -= 10   # Koin hijau dilarang dibeli (Bukan dip)
+        # -- MOMENTUM & VELOCITY (Breakout vs Dip Sniper) --
+        if 3.0 <= pct <= 25.0:    score += 25   # Super Breakout Momentum!
+        elif 0.5 <= pct < 3.0:    score += 15   # Fresh Green Start
+        elif -10.0 <= pct <= -2.0:score += 20   # Healthy Dip Sniping
+        elif -18.0 <= pct < -10.0:score += 10   # Deep Reversal Dip
+        elif pct > 35.0:          score -= 10   # Overextended Extreme Pump
 
         # -- BONUS: Whale + OBI dari WebSocket --
         try:

@@ -1164,7 +1164,10 @@ def run_crypto_engine():
             # DATA: Jam 13:00-22:00 UTC (Sesi US) adalah Win Rate tertinggi.
             # Di luar jam itu, kita naikkan standar agar tidak kena "Fakeout" Asia.
             import datetime as _dt
-            utc_hour = _dt.datetime.utcnow().hour
+            try:
+                utc_hour = _dt.datetime.now(_dt.timezone.utc).hour
+            except Exception:
+                utc_hour = _dt.datetime.utcnow().hour
             is_golden_session = (CRYPTO_SESSION_START_UTC <= utc_hour < CRYPTO_SESSION_END_UTC)
             
             # Jika di luar jam emas, naikkan threshold skor
