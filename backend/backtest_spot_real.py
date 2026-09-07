@@ -38,7 +38,6 @@ def fetch_top_spot_symbols(limit=300):
             data = r.json()
             
             forbidden_suffixes = ("USDC", "DAI", "BUSD", "EUR", "GBP", "BEAR", "BULL", "UP", "DOWN")
-            forbidden_prefixes = ("RWDAY", "RSOXS", "RMSTU", "RSEDG", "RPURR", "RHPQ", "RBG", "RBB", "RDJT", "RASST", "RSMTC")
             
             valid = []
             for t in data:
@@ -48,8 +47,14 @@ def fetch_top_spot_symbols(limit=300):
                 
                 sym_clean = pair.replace("_USDT", "USDT")
                 if any(x in sym_clean for x in forbidden_suffixes): continue
-                if any(sym_clean.startswith(x) for x in forbidden_prefixes): continue
                 
+                # Saring Saham Sintetis Bitget/Gate (semua berawalan R, misal RMARA, RUSO, RSPOT)
+                sym_base = sym_clean.replace("USDT", "")
+                if sym_base.startswith("R"):
+                    valid_r_coins = {"RNDR", "ROSE", "RUNE", "RAY", "RENDER", "RONIN", "RDNT", "RARE", "REEF", "REN", "RSR", "RLC", "RAD", "RIF", "REQ", "RACA", "RVN"}
+                    if sym_base not in valid_r_coins:
+                        continue
+                        
                 if vol > 1000000:
                     valid.append((sym_clean, pair, vol))
             

@@ -81,13 +81,19 @@ def check_paper():
     except Exception as e:
         pass
 
-    # 4. Cek History Terbaru (Last 5)
+    # 4. Cek History Terbaru (Bisa semua jika ada argumen --all)
     try:
-        cursor.execute("SELECT symbol, side, status, pnl_usd, pnl_pct, reason FROM trades WHERE status IN ('WIN', 'LOSS') AND is_paper = 1 ORDER BY id DESC LIMIT 5")
+        limit_query = "LIMIT 50"
+        if len(sys.argv) > 1 and sys.argv[1] == '--all':
+            limit_query = ""
+            print(f"\n📜 Riwayat SEMUA Trade:")
+        else:
+            print(f"\n📜 Riwayat 50 Trade Terakhir (Gunakan 'python check_paper.py --all' untuk melihat semua):")
+            
+        cursor.execute(f"SELECT symbol, side, status, pnl_usd, pnl_pct, reason, closed_at FROM trades WHERE status IN ('WIN', 'LOSS') AND is_paper = 1 ORDER BY id DESC {limit_query}")
         history = cursor.fetchall()
         
         if history:
-            print(f"\n📜 Riwayat 5 Trade Terakhir:")
             for r in history:
                 icon = "✅" if r['status'] == "WIN" else "❌"
                 print(f"   {icon} {r['side'].upper()} {r['symbol']} | {r['status']} | PnL: {r['pnl_pct']:.2f}% (${r['pnl_usd']:.2f}) | {r['reason']}")

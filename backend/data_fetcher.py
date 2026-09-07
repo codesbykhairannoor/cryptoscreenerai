@@ -882,8 +882,6 @@ def fetch_all_tickers():
             
             # Filter Token Sintetis (Saham/ETF yang di-tokenize), Stablecoin, Bull/Bear token
             forbidden_suffixes = ("USDC", "DAI", "BUSD", "EUR", "GBP", "BEAR", "BULL", "UP", "DOWN")
-            # Koin berawalan R yang sering muncul sebagai synthetic saham (RWDAY, RSOXS, dsb)
-            forbidden_prefixes = ("RWDAY", "RSOXS", "RMSTU", "RSEDG", "RPURR", "RHPQ", "RBG", "RBB", "RDJT", "RASST", "RSMTC")
             
             valid_data = []
             for t in raw_data:
@@ -893,8 +891,14 @@ def fetch_all_tickers():
                 
                 # Check forbidden
                 if any(x in sym for x in forbidden_suffixes): continue
-                if any(sym.startswith(x) for x in forbidden_prefixes): continue
                 
+                # Saring Saham Sintetis Bitget (semua berawalan R, misal RMARA, RUSO, RSPOT)
+                sym_base = sym.replace("USDT", "")
+                if sym_base.startswith("R"):
+                    valid_r_coins = {"RNDR", "ROSE", "RUNE", "RAY", "RENDER", "RONIN", "RDNT", "RARE", "REEF", "REN", "RSR", "RLC", "RAD", "RIF", "REQ", "RACA", "RVN"}
+                    if sym_base not in valid_r_coins:
+                        continue
+                        
                 # Minimum $1,000,000 daily volume to avoid zero liquidity scams
                 if vol >= 1000000:
                     valid_data.append(t)
