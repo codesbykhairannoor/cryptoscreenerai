@@ -462,6 +462,8 @@ class WhaleObserver:
         now = time.time()
         entry = (now, combined_score, tech_score, side, tech, adx, ev, vol_regime)
         self._watchlist[clean_base].append(entry)
+        if len(self._watchlist[clean_base]) > 30:
+            self._watchlist[clean_base].pop(0)
 
         # OI baseline: simpan pertama kali, update setiap 5 menit
         # Ini mencegah baseline jadi stale setelah observasi panjang

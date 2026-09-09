@@ -164,23 +164,24 @@ async def lifespan(app: FastAPI):
     # except Exception as e:
     #     print(f"[SYSTEM] Gagal memulai Forex Engine: {e}", flush=True)
 
-    # 5. News Sniper
-    try:
-        news_sniper = get_sniper_instance()
-        news_sniper.start()
-        print("[SYSTEM] News Sniper Engine AKTIF (Sub-millisecond Ready)!", flush=True)
-    except Exception as e:
-        print(f"[SYSTEM] Gagal memulai News Sniper: {e}", flush=True)
+    # 5. News Sniper (FOREX XAUUSD - Nonaktifkan untuk Crypto Spot agar hemat RAM & Socket)
+    # News sniper me-request RSS tiap 300ms untuk Gold/Forex. Dinonaktifkan untuk menjaga VPS tetap ringan.
+    # try:
+    #     news_sniper = get_sniper_instance()
+    #     news_sniper.start()
+    #     print("[SYSTEM] News Sniper Engine AKTIF (Sub-millisecond Ready)!", flush=True)
+    # except Exception as e:
+    #     print(f"[SYSTEM] Gagal memulai News Sniper: {e}", flush=True)
 
     print("[SYSTEM] All engines started. Bot is LIVE.", flush=True)
 
-    # 6. Early Signal Engine (OI Tracker + DexScreener)
-    try:
-        from early_signal import start_early_signal_engine
-        start_early_signal_engine()
-        print("[SYSTEM] Early Signal Engine AKTIF! (OI Tracker + DexScreener)", flush=True)
-    except Exception as e:
-        print(f"[SYSTEM] Gagal memulai Early Signal Engine: {e}", flush=True)
+    # 6. Early Signal Engine (OI Spot & DexScreener dummy - Dinonaktifkan untuk hemat CPU/Jaringan)
+    # try:
+    #     from early_signal import start_early_signal_engine
+    #     start_early_signal_engine()
+    #     print("[SYSTEM] Early Signal Engine AKTIF! (OI Tracker + DexScreener)", flush=True)
+    # except Exception as e:
+    #     print(f"[SYSTEM] Gagal memulai Early Signal Engine: {e}", flush=True)
 
     yield  # <- aplikasi berjalan di sini
 

@@ -289,6 +289,10 @@ class FinnhubWS:
     async def listen(self):
         from shared_state import state
 
+        if not self.api_key or self.api_key in ("YOUR_FINNHUB_API_KEY", "None", ""):
+            print("[FINNHUB WS] No valid FINNHUB_API_KEY found. Finnhub stream inactive (saves VPS sockets).", flush=True)
+            return
+
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
@@ -800,20 +804,22 @@ async def _safe_run(coro, name: str):
 
 async def main():
     private_ws  = BitgetPrivateWS()
-    public_ws   = BitgetPublicWS()
-    finnhub_ws  = FinnhubWS()
     market_ws   = get_market_ws()
     binance_ws  = BinanceWS()
 
-    # Jalankan semua WS dengan isolation - satu crash tidak membunuh yang lain
-    await asyncio.gather(
-        _safe_run(private_ws.listen,  "PrivateWS"),
-        _safe_run(public_ws.listen,   "PublicWS"),
-        _safe_run(finnhub_ws.listen,  "FinnhubWS"),
-        _safe_run(market_ws.listen,   "MarketWS"),
-        _safe_run(binance_ws.listen,  "BinanceWS"),
-        return_exceptions=True,   # Jangan propagate exception ke gather
-    )
+    # Jalankan WS penting dengan isolasi - PublicWS dieliminasi karena sudah di-cover penuh oleh MarketWS (Top 60)
+    tasks = [
+        _safe_run(private_ws.listen, "PrivateWS"),
+        _safe_run(market_ws.listen,  "MarketWS"),
+        _safe_run(binance_ws.listen, "BinanceWS"),
+    ]
+
+    finnhub_key = os.getenv("FINNHUB_API_KEY")
+    if finnhub_key and finnhub_key not in ("YOUR_FINNHUB_API_KEY", "None", ""):
+        finnhub_ws = FinnhubWS()
+        tasks.append(_safe_run(finnhub_ws.listen, "FinnhubWS"))
+
+    await asyncio.gather(*tasks, return_exceptions=True)
 
 if __name__ == "__main__":
     asyncio.run(main())
