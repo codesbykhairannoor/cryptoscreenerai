@@ -899,8 +899,8 @@ def fetch_all_tickers():
                     if sym_base not in valid_r_coins:
                         continue
                         
-                # Minimum $1,000,000 daily volume to avoid zero liquidity scams
-                if vol >= 1000000:
+                # Minimum $2,000,000 daily volume to avoid zero liquidity scams & slippage traps
+                if vol >= 2000000:
                     valid_data.append(t)
                     
             # Ambil Top 300 berdasarkan volume

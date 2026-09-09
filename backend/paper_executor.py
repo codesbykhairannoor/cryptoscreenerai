@@ -323,9 +323,9 @@ class PaperExecutor:
                 if pnl > self._peak_pnl[symbol]: self._peak_pnl[symbol] = pnl
                 peak_pnl = self._peak_pnl[symbol]
 
-                # INITIAL GUARD: Set default SL (-3.5%) / Moonshot TP (+50.0%) untuk Spot Top Gainer
+                # INITIAL GUARD: Set default SL (-2.0% ketat) / Moonshot TP (+50.0%) untuk Spot Top Gainer
                 if (sl == 0 or tp == 0) and now - self.startup_time > 5:
-                    default_sl = ent * 0.965   # -3.5% harga (Ketat)
+                    default_sl = ent * 0.980   # -2.0% harga (Ketat: potong kerugian cepat jika fakeout)
                     default_tp = ent * 1.500   # +50.0% harga (Biarkan profit mengalir puluhan persen)
                     if sl == 0:
                         self.update_sl_price(symbol, side, pos['amount'], default_sl, is_tp=False)
@@ -334,17 +334,17 @@ class PaperExecutor:
                         self.update_sl_price(symbol, side, pos['amount'], default_tp, is_tp=True)
                         tp = default_tp
 
-                # == UNLEASHED PUMP RUNNER: MULTI-STAGE TRAILING STOP ENGINE ==
-                # Kunci profit puluhan persen: gerakkan SL ke atas SEBELUM evaluasi hit exit!
+                # == UNDERGROUND ALPHA HUNTER: MULTI-STAGE TRAILING STOP ENGINE ==
+                # Kunci profit puluhan persen dengan Chandelier Breathing Buffer (Anti-Whipsaw)
                 if peak_pnl >= 25.0:
-                    # STAGE 4: Super Parabolic Runner (Trail 4.5% dari puncak, min lock +20%)
+                    # STAGE 4: Super Parabolic Runner (Trail 4.5% dari puncak, min lock +18%)
                     dynamic_sl = mrk * 0.955
-                    min_lock = ent * 1.200
+                    min_lock = ent * 1.180
                     new_sl = max(dynamic_sl, min_lock)
                     if sl == 0 or new_sl > sl:
                         self.update_sl_price(symbol, side, pos['amount'], new_sl)
                         sl = new_sl
-                        print(f"[UNLEASHED TRAILING] {symbol} | STAGE 4 (Peak:{peak_pnl:.1f}%) | Lock SL: {new_sl:.6f} (+{((new_sl-ent)/ent)*100:.1f}%)")
+                        print(f"[ALPHA TRAILING] {symbol} | STAGE 4 (Peak:{peak_pnl:.1f}%) | Lock SL: {new_sl:.6f} (+{((new_sl-ent)/ent)*100:.1f}%)")
                 elif peak_pnl >= 12.0:
                     # STAGE 3: Sky Runner Trailing (Trail 3.5% dari puncak, min lock +8%)
                     dynamic_sl = mrk * 0.965
@@ -353,21 +353,21 @@ class PaperExecutor:
                     if sl == 0 or new_sl > sl:
                         self.update_sl_price(symbol, side, pos['amount'], new_sl)
                         sl = new_sl
-                        print(f"[UNLEASHED TRAILING] {symbol} | STAGE 3 (Peak:{peak_pnl:.1f}%) | Dynamic SL: {new_sl:.6f} (+{((new_sl-ent)/ent)*100:.1f}%)")
-                elif peak_pnl >= 6.0:
-                    # STAGE 2: Profit Lock (Kunci minimal +3.0% di kantong)
-                    new_sl = ent * 1.030
+                        print(f"[ALPHA TRAILING] {symbol} | STAGE 3 (Peak:{peak_pnl:.1f}%) | Dynamic SL: {new_sl:.6f} (+{((new_sl-ent)/ent)*100:.1f}%)")
+                elif peak_pnl >= 7.0:
+                    # STAGE 2: Strong Profit Lock (Kunci minimal +4.0% terjamin di kantong = $6 pada margin $150)
+                    new_sl = ent * 1.040
                     if sl == 0 or new_sl > sl:
                         self.update_sl_price(symbol, side, pos['amount'], new_sl)
                         sl = new_sl
-                        print(f"[UNLEASHED TRAILING] {symbol} | STAGE 2 (Peak:{peak_pnl:.1f}%) | Profit Lock SL: {new_sl:.6f} (+3.0%)")
-                elif peak_pnl >= 2.5:
-                    # STAGE 1: Breakeven Lock (+0.3% agar trade 100% Risk-Free dari fakeout)
-                    new_sl = ent * 1.003
+                        print(f"[ALPHA TRAILING] {symbol} | STAGE 2 (Peak:{peak_pnl:.1f}%) | Profit Lock SL: {new_sl:.6f} (+4.0% Guaranteed)")
+                elif peak_pnl >= 4.0:
+                    # STAGE 1: Chandelier Breathing Buffer (Kunci +1.2%, beri jarak napas 2.8% agar tidak tersenggol wick!)
+                    new_sl = ent * 1.012
                     if sl == 0 or new_sl > sl:
                         self.update_sl_price(symbol, side, pos['amount'], new_sl)
                         sl = new_sl
-                        print(f"[UNLEASHED TRAILING] {symbol} | STAGE 1 (Peak:{peak_pnl:.1f}%) | Breakeven Lock SL: {new_sl:.6f} (+0.3% Risk-Free)")
+                        print(f"[ALPHA TRAILING] {symbol} | STAGE 1 (Peak:{peak_pnl:.1f}%) | Chandelier Buffer SL: {new_sl:.6f} (+1.2% with Room to Breathe)")
 
                 # CEK HIT SL / TRAILING STOP EXIT
                 if sl > 0 and mrk <= sl:

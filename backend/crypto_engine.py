@@ -1029,6 +1029,13 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
         print(f"[SPOT PUMP CATCHER] CORE 4: PRE-PUMP ANOMALY DETECTED! {tech.get('symbol')} | RVOL:{rvol:.1f}x | Squeeze:{is_squeeze}", flush=True)
         return "buy", "CORE4_PRE_PUMP", 95
 
+    # CORE 5: Short Squeeze Explosive Fuel (Underground MM Secret)
+    # Shorters terjebak saat Funding Rate sangat negatif + Volume mulai meledak
+    fr = tech.get('funding_rate', 0)
+    if fr <= -0.00015 and rvol >= 1.8 and obi >= -0.05 and trend_1h != "BEARISH":
+        print(f"[SPOT PUMP] CORE 5: SHORT SQUEEZE FUEL! {tech.get('symbol')} | FR:{fr:.5f} | RVOL:{rvol:.1f}x", flush=True)
+        return "buy", "CORE5_SHORT_SQUEEZE", 98
+
     # Score berbasis momentum sekunder (Jika belum lolos 3 core di atas tapi skor kuantitatif tinggi)
     score = 40
     reasons = []
@@ -1045,23 +1052,23 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    v85.0: UNLEASHED PUMP RUNNER TP/SL
-    SL awal ketat (-3.5% / 2.0x ATR) untuk membatasi risiko.
+    v86.0: UNDERGROUND ALPHA HUNTER TP/SL
+    SL awal diperketat (-2.0% / 1.5x ATR) untuk membatasi kerugian maksimal ~$3.00 pada margin $150.
     TP diset ke moonshot (+50.0%) agar posisi tidak dicekik dini.
-    Pengawalan laba dilakukan secara dinamis oleh Multi-Stage Unleashed Trailing Stop.
+    Pengawalan laba dilakukan secara dinamis oleh Multi-Stage Alpha Trailing Stop.
     """
     base_p = tech.get('limit_price', mark_price)
     atr = tech.get('atr', 0)
     
     if atr and atr > 0:
-        stop_loss_val = base_p - (atr * 2.0) if side == 'buy' else base_p + (atr * 2.0)
+        stop_loss_val = base_p - (atr * 1.5) if side == 'buy' else base_p + (atr * 1.5)
         sl_pct = abs(base_p - stop_loss_val) / base_p
-        if sl_pct > 0.040:
-            stop_loss_val = base_p * 0.965 if side == 'buy' else base_p * 1.035 # Max 3.5% SL
-        elif sl_pct < 0.015:
-            stop_loss_val = base_p * 0.985 if side == 'buy' else base_p * 1.015 # Min 1.5% SL
+        if sl_pct > 0.022:
+            stop_loss_val = base_p * 0.978 if side == 'buy' else base_p * 1.022 # Max 2.2% SL
+        elif sl_pct < 0.012:
+            stop_loss_val = base_p * 0.988 if side == 'buy' else base_p * 1.012 # Min 1.2% SL
     else:
-        stop_loss_val = base_p * 0.965 if side == 'buy' else base_p * 1.035
+        stop_loss_val = base_p * 0.980 if side == 'buy' else base_p * 1.020
         
     # Uncapped Moonshot TP (+50.0%): Biarkan Trailing Stop yang mengunci profit di puncak (+20% s/d +80%)!
     take_profit_val = base_p * 1.50 if side == 'buy' else base_p * 0.50
@@ -1374,6 +1381,15 @@ def run_crypto_engine():
                 if clean_base in _recently_exited:                                    return None
                 if clean_base in _repeat_losers:                                      return None
 
+                # DINOSAUR MEGA-CAPS FILTER: Koin raksasa lambat yang menyerap modal tanpa bisa pump puluhan persen
+                DINOSAUR_MEGA_CAPS = {
+                    'BTC', 'ETH', 'SOL', 'XRP', 'BNB', 'ADA', 'DOGE', 'AVAX', 'LINK', 'DOT',
+                    'NEAR', 'UNI', 'LTC', 'BCH', 'ZEC', 'ETC', 'TRX', 'MATIC', 'SHIB', 'DAI',
+                    'WBTC', 'WETH', 'USDC', 'USDT', 'FDUSD', 'TUSD'
+                }
+                if clean_base in DINOSAUR_MEGA_CAPS:
+                    return None
+
                 # == SMART CIRCUIT BREAKER CHECK (v12.1) ============-
                 stats = COIN_STATS.get(symbol, {'pnl': 0, 'consecutive_losses': 0, 'locked_until': 0})
                 if time.time() < stats['locked_until']:
@@ -1425,6 +1441,21 @@ def run_crypto_engine():
                     if early_boost > 0:
                         # SYMMETRIC BOOST: Mau Buy atau Sell tetap dapat tenaga dari OI Surge!
                         global_boost += min(early_boost, 25)
+
+                    # UNDERGROUND SECRET: Short Squeeze Fuel & Volume Velocity
+                    fr = tech.get('funding_rate', 0)
+                    if fr <= -0.00015 and side == "buy":
+                        global_boost += 15
+                    elif fr <= -0.00030 and side == "buy":
+                        global_boost += 25
+                    
+                    rvol_val = tech.get('rvol', 1.0)
+                    if rvol_val >= 2.5 and side == "buy":
+                        global_boost += 12
+                    elif rvol_val < 1.0 and side == "buy":
+                        return None # Volume di bawah normal, jangan beli koin lesu
+                except Exception:
+                    pass
                 except Exception:
                     pass
 
