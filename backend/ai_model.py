@@ -114,12 +114,14 @@ def analyze_and_sort(raw_data):
         return False
 
     df = df[~df['symbol'].apply(is_blacklisted)]
-    df = df[df['quoteVolume'] >= 500_000]      # Min $500k volume (Koin likuid riil kripto, bukan $30M koin sintetis)
-    df = df[(df['priceChangePercent'] >= -18.0) & (df['priceChangePercent'] <= 50.0)] # Buka untuk Breakout & Healthy Dip
+    # FREQTRADE SHIELD: Min $3,000,000 volume harian untuk membunuh koin ilikuid berspread lebar (BTW, FLOCK, KII)
+    df = df[df['quoteVolume'] >= 3_000_000]
+    # ANTI-FOMO CAP: Jangan beli koin yang sudah naik >18% hari ini (sudah fase distribusi/dump)
+    df = df[(df['priceChangePercent'] >= -12.0) & (df['priceChangePercent'] <= 18.0)]
 
     # Range 24h
     df['range_pct'] = ((df['high24h'] - df['low24h']) / df['low24h'].replace(0, 1)) * 100
-    df = df[df['range_pct'] >= 2.5]            # Pastikan ada volatilitas, jangan batasi koin pump >25%!
+    df = df[df['range_pct'] >= 2.5]            # Pastikan ada volatilitas sehat
 
     if len(df) == 0:
         return []

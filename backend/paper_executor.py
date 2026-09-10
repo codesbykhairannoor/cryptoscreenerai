@@ -298,8 +298,10 @@ class PaperExecutor:
                 for clean in closed_symbols:
                     last_pnl = self._tracked_positions[clean]
                     if not hasattr(state, 'recently_exited'): state.recently_exited = {}
+                    if not hasattr(state, 'exit_pnl'): state.exit_pnl = {}
                     state.recently_exited[clean] = now
-                    print(f"[PAPER TRACKER] Trade Closed: {clean} | PnL: {last_pnl}%")
+                    state.exit_pnl[clean] = last_pnl
+                    print(f"[PAPER TRACKER] Trade Closed: {clean} | PnL: {last_pnl:.2f}%")
                 self._tracked_positions = current_symbols
             except: pass
 

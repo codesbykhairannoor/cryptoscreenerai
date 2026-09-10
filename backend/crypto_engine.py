@@ -1235,32 +1235,34 @@ def run_crypto_engine():
                 time.sleep(SCAN_INTERVAL)
                 continue
 
-            #  7. BERSIHKAN recently_exited + TRACK LOSSES
-            # Paper mode: 5 menit cooldown per koin. Live mode: 30 menit.
-            _exit_cooldown = 300 if os.getenv("TRADE_MODE", "live").lower() == "paper" else 1800
+            #  7. BERSIHKAN recently_exited + TRACK LOSSES (FREQTRADE SHIELDS)
+            # Normal exit cooldown: 30 menit
+            _exit_cooldown = 1800
             _recently_exited = {k: v for k, v in _recently_exited.items() if now - v < _exit_cooldown}
             try:
                 from shared_state import state as _state
                 if hasattr(_state, 'recently_exited'):
                     for k, v in list(_state.recently_exited.items()):
-                        if now - v < 1800:
+                        if now - v < 14400: # Jaga riwayat 4 jam
                             if k not in _recently_exited:
-                                last_pnl = getattr(_state, 'exit_pnl', {}).get(k, -1.0)
+                                last_pnl = getattr(_state, 'exit_pnl', {}).get(k, 0.0)
                                 if last_pnl < 0:
-                                    if k not in _loss_tracker:
-                                        _loss_tracker[k] = []
-                                    _loss_tracker[k].append(v)
-                                    
-                                    # LOGIKA PER-KOIN: Cek berapa kali loss beruntun DI KOIN INI
-                                    coin_losses = len(_loss_tracker[k])
-                                    print(f"[COIN LOSS] {k} loss ke-{coin_losses} | PnL: {last_pnl}%")
-                                    
-                                    if coin_losses >= REPEAT_LOSS_MAX_COUNT:
-                                        penalty_until = now + (COIN_PENALTY_HOURS * 3600)
-                                        COIN_STATS[k] = {'locked_until': penalty_until}
-                                        print(f"[PENALTY BOX] {k} rugi {coin_losses}x! Dibuang selama {COIN_PENALTY_HOURS} jam.")
+                                    # SHIELD 1: REVENGE COOLDOWN GUARD (NFI Principle)
+                                    # Jika koin rugi, LANGSUNG lempar ke Penalty Box selama 4 JAM (14400s)!
+                                    # Jangan pernah biarkan koin yang sedang dump dimasuki lagi 5 menit kemudian!
+                                    penalty_until = now + (COIN_PENALTY_HOURS * 3600)
+                                    COIN_STATS[k] = {'locked_until': penalty_until}
+                                    _consec_losses += 1
+                                    print(f"[PENALTY BOX] {k} rugi {last_pnl:.2f}%! Dibuang selama {COIN_PENALTY_HOURS} jam.", flush=True)
+
+                                    # SHIELD 2: CONSECUTIVE LOSS CIRCUIT BREAKER (Freqtrade StoplossGuard)
+                                    # Jika 2 trade berturut-turut rugi, pasar sedang badai/dumping. Bekukan bot 45 menit!
+                                    if _consec_losses >= 2:
+                                        _consec_pause_until = now + 2700
+                                        print(f"[CIRCUIT BREAKER] 2 Losses berturut-turut terdeteksi! Membekukan bot selama 45 menit untuk melindungi modal.", flush=True)
                                 else:
-                                    print(f"[WIN TRACKER] {k} take profit ({last_pnl}%)! Reset data koin.")
+                                    print(f"[WIN TRACKER] {k} profit (+{last_pnl:.2f}%)! Reset consecutive loss counter.", flush=True)
+                                    _consec_losses = 0
                                     if k in _loss_tracker: del _loss_tracker[k]
                             _recently_exited[k] = v
                         else:
@@ -1341,12 +1343,14 @@ def run_crypto_engine():
                   f"OI_Surge:{oi_surge_count} DEX:{dex_alert_count}",
                   flush=True)
 
-            # == NFI: BTC REGIME FILTER ==
-            # Jika BTC BEARISH, perketat syarat masuk, BUKAN diblokir 100%
+            # == NFI: BTC REGIME HARD GATE ==
+            # Jika BTC BEARISH, 95% altcoin spot dump dan gagal breakout.
+            # Bekukan pembelian altcoin baru sampai BTC stabil!
             if btc_ctx.get('trend') == 'BEARISH':
                 if int(now) % 60 < 15:
-                    print(f"[NFI REGIME FILTER] BTC is BEARISH. Requiring Score >= 80. Dip Sniping only.", flush=True)
-                current_min_momentum = max(current_min_momentum, 80)
+                    print(f"[BTC REGIME GATE] BTC is BEARISH! Membekukan pembelian Altcoin Spot untuk melindungi modal.", flush=True)
+                time.sleep(SCAN_INTERVAL)
+                continue
 
             # == VOLATILITY-AWARE POSITION SIZING (bangkit.md: Volatility Targeting) ==
             # Saat pasar tidak trending (ADX rendah), posisi diperkecil untuk lindungi modal
