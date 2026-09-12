@@ -86,6 +86,8 @@ def init_db():
         ("session", "TEXT DEFAULT ''"),
         ("closed_at", "BIGINT DEFAULT 0"),
         ("is_paper", "BOOLEAN DEFAULT FALSE"),
+        ("so_count", "INTEGER DEFAULT 0"),
+        ("total_cost", "DOUBLE PRECISION DEFAULT 0"),
     ]
     for col_name, col_def in new_columns:
         try:
@@ -106,6 +108,23 @@ def init_db():
     conn.commit()
     cursor.close()
     conn.close()
+
+def update_trade_dca(trade_id, new_entry, new_lot, new_cost, new_tp, new_sl, so_count):
+    """Update rata-rata harga entry dan ukuran posisi saat Safety Order (DCA) dieksekusi."""
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        p = "%s" if not is_sqlite(conn) else "?"
+        cursor.execute(f"""
+            UPDATE trades 
+            SET entry_price = {p}, lot_size = {p}, total_cost = {p}, tp_price = {p}, sl_price = {p}, so_count = {p}
+            WHERE id = {p}
+        """, (new_entry, new_lot, new_cost, new_tp, new_sl, so_count, trade_id))
+        conn.commit()
+        cursor.close()
+        conn.close()
+    except Exception as e:
+        print(f"[DB ERROR] update_trade_dca: {e}", flush=True)
 
 def log_trade(symbol, entry, tp, sl, market='crypto', side='buy', lot_size=0, score=0, reason='', session=None, 
               rsi=50.0, vwap=0.0, rvol=1.0, sentiment='NEUTRAL'):
@@ -128,16 +147,17 @@ def log_trade(symbol, entry, tp, sl, market='crypto', side='buy', lot_size=0, sc
         cursor = conn.cursor()
         placeholder = "%s" if not is_sqlite(conn) else "?"
         
+        initial_cost = round(float(entry) * float(lot_size), 4) if (entry and lot_size) else 0.0
         cursor.execute(f'''
             INSERT INTO trades
                 (symbol, entry_price, tp_price, sl_price, status, market, side,
                  lot_size, score, reason, session, timestamp, 
-                 entry_rsi, entry_vwap, entry_rvol, entry_sentiment, is_paper)
+                 entry_rsi, entry_vwap, entry_rvol, entry_sentiment, is_paper, so_count, total_cost)
             VALUES ({placeholder}, {placeholder}, {placeholder}, {placeholder}, 'PENDING', {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 
-                    {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder})
+                    {placeholder}, {placeholder}, {placeholder}, {placeholder}, {placeholder}, 0, {placeholder})
         ''', (symbol, entry, tp, sl, market, side,
               float(lot_size), int(score), str(reason)[:200], session,
-              int(time.time() * 1000), float(rsi), float(vwap), float(rvol), str(sentiment), os.getenv("TRADE_MODE", "live").lower() == "paper"))
+              int(time.time() * 1000), float(rsi), float(vwap), float(rvol), str(sentiment), os.getenv("TRADE_MODE", "live").lower() == "paper", initial_cost))
         conn.commit()
         cursor.close()
         conn.close()

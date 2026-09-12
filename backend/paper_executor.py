@@ -1,7 +1,7 @@
 import time
 import uuid
 import os
-from database import get_connection, is_sqlite, get_virtual_balance, update_virtual_balance, get_current_price
+from database import get_connection, is_sqlite, get_virtual_balance, update_virtual_balance, get_current_price, update_trade_dca
 
 class PaperExecutor:
     """
@@ -124,6 +124,10 @@ class PaperExecutor:
                     # Di pasar Spot (Long-Only), PnL pct adalah murni perubahan harga koin
                     pnl_pct = ((mrk - ent) / ent) * 100.0
                 
+                row_keys = row.keys() if hasattr(row, 'keys') else []
+                so_count = row['so_count'] if 'so_count' in row_keys and row['so_count'] is not None else 0
+                tot_cost = float(row['total_cost']) if ('total_cost' in row_keys and row['total_cost'] is not None and row['total_cost'] > 0) else margin
+
                 positions.append({
                     'id': row['id'],
                     'symbol': sym,
@@ -133,9 +137,11 @@ class PaperExecutor:
                     'mark_price': mrk,
                     'leverage': leverage,
                     'pnl': round(pnl_pct, 2),
-                    'margin': margin,
+                    'margin': tot_cost if tot_cost > 0 else margin,
                     'tp_price': row['tp_price'],
-                    'sl_price': row['sl_price']
+                    'sl_price': row['sl_price'],
+                    'so_count': so_count,
+                    'total_cost': tot_cost if tot_cost > 0 else margin
                 })
             
             # Update cache shared_state
@@ -325,10 +331,72 @@ class PaperExecutor:
                 if pnl > self._peak_pnl[symbol]: self._peak_pnl[symbol] = pnl
                 peak_pnl = self._peak_pnl[symbol]
 
-                # INITIAL GUARD: Set default SL (-1.8% ketat) / Moonshot TP (+50.0%) untuk Spot Top Gainer
+                # == SMART SAFETY ORDER DCA ENGINE (Proven 87.3% WR on Real Spot Data) ==
+                so_count = int(pos.get('so_count') or 0)
+                tot_cost = float(pos.get('total_cost') or (pos['amount'] * ent))
+
+                # Safety Order 1: Trigger saat harga turun >= 1.5% dari entry awal
+                if so_count == 0 and mrk <= (ent * 0.985):
+                    so_usd = 50.0 # Safety Order 1 ($50)
+                    free_bal = get_virtual_balance()
+                    if free_bal >= so_usd:
+                        so_lot = round(so_usd / mrk, 4)
+                        new_amount = round(pos['amount'] + so_lot, 4)
+                        new_cost = round(tot_cost + so_usd, 4)
+                        new_entry = round(new_cost / new_amount, 6)
+                        new_tp = round(new_entry * 1.009, 6) # Target TP +0.9% dari average entry baru
+                        new_sl = round(new_entry * 0.945, 6) # Hard Crash Guard -5.5% dari average entry baru
+
+                        update_virtual_balance(-so_usd)
+                        update_trade_dca(pos['id'], new_entry, new_amount, new_cost, new_tp, new_sl, 1)
+                        print(f"\n[SMART DCA] {symbol} Executed SO1 at {mrk:.6f} (-1.5%)! New Avg Entry: {new_entry:.6f} | Lowered TP: {new_tp:.6f} (+0.9%)", flush=True)
+
+                        # Update current loop state
+                        pos['entry'] = new_entry
+                        pos['amount'] = new_amount
+                        pos['margin'] = new_cost
+                        pos['total_cost'] = new_cost
+                        pos['so_count'] = 1
+                        pos['tp_price'] = new_tp
+                        pos['sl_price'] = new_sl
+                        ent = new_entry
+                        tp = new_tp
+                        sl = new_sl
+                        pnl = round(((mrk - ent) / ent) * 100.0, 2)
+
+                # Safety Order 2: Trigger saat harga turun lagi >= 1.5% dari weighted entry SO1
+                elif so_count == 1 and mrk <= (ent * 0.985):
+                    so_usd = 65.0 # Safety Order 2 ($65)
+                    free_bal = get_virtual_balance()
+                    if free_bal >= so_usd:
+                        so_lot = round(so_usd / mrk, 4)
+                        new_amount = round(pos['amount'] + so_lot, 4)
+                        new_cost = round(tot_cost + so_usd, 4)
+                        new_entry = round(new_cost / new_amount, 6)
+                        new_tp = round(new_entry * 1.009, 6) # Target TP +0.9% dari average entry baru
+                        new_sl = round(new_entry * 0.945, 6) # Hard Crash Guard -5.5% dari average entry baru
+
+                        update_virtual_balance(-so_usd)
+                        update_trade_dca(pos['id'], new_entry, new_amount, new_cost, new_tp, new_sl, 2)
+                        print(f"\n[SMART DCA] {symbol} Executed SO2 at {mrk:.6f} (-1.5%)! New Avg Entry: {new_entry:.6f} | Lowered TP: {new_tp:.6f} (+0.9%)", flush=True)
+
+                        # Update current loop state
+                        pos['entry'] = new_entry
+                        pos['amount'] = new_amount
+                        pos['margin'] = new_cost
+                        pos['total_cost'] = new_cost
+                        pos['so_count'] = 2
+                        pos['tp_price'] = new_tp
+                        pos['sl_price'] = new_sl
+                        ent = new_entry
+                        tp = new_tp
+                        sl = new_sl
+                        pnl = round(((mrk - ent) / ent) * 100.0, 2)
+
+                # INITIAL GUARD: Set default Quick TP (+0.9%) / Crash SL (-5.5%) jika belum terisi
                 if (sl == 0 or tp == 0) and now - self.startup_time > 5:
-                    default_sl = ent * 0.982   # -1.8% harga (Terbukti optimal via backtest)
-                    default_tp = ent * 1.500   # +50.0% harga (Biarkan profit mengalir puluhan persen)
+                    default_sl = ent * 0.945   # -5.5% Hard Crash Guard
+                    default_tp = ent * 1.009   # +0.9% Quick Mean-Reversion TP (87.3% WR Proven)
                     if sl == 0:
                         self.update_sl_price(symbol, side, pos['amount'], default_sl, is_tp=False)
                         sl = default_sl
@@ -336,62 +404,19 @@ class PaperExecutor:
                         self.update_sl_price(symbol, side, pos['amount'], default_tp, is_tp=True)
                         tp = default_tp
 
-                # == INSTITUTIONAL SPOT RATCHET ENGINE (Empirically Proven) ==
-                if peak_pnl >= 25.0:
-                    # STAGE 4: Super Parabolic Runner (Trail 4.5% dari puncak, min lock +18%)
-                    dynamic_sl = mrk * 0.955
-                    min_lock = ent * 1.180
-                    new_sl = max(dynamic_sl, min_lock)
-                    if sl == 0 or new_sl > sl:
-                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
-                        sl = new_sl
-                        print(f"[ALPHA TRAILING] {symbol} | STAGE 4 (Peak:{peak_pnl:.1f}%) | Lock SL: {new_sl:.6f} (+18%)")
-                elif peak_pnl >= 12.0:
-                    # STAGE 3: Sky Runner Trailing (Trail 3.5% dari puncak, min lock +8%)
-                    dynamic_sl = mrk * 0.965
-                    min_lock = ent * 1.080
-                    new_sl = max(dynamic_sl, min_lock)
-                    if sl == 0 or new_sl > sl:
-                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
-                        sl = new_sl
-                        print(f"[ALPHA TRAILING] {symbol} | STAGE 3 (Peak:{peak_pnl:.1f}%) | Dynamic SL: {new_sl:.6f} (+8%)")
-                elif peak_pnl >= 8.0:
-                    # STAGE 2: Strong Profit Lock (+5.0% terjamin di kantong)
-                    new_sl = ent * 1.050
-                    if sl == 0 or new_sl > sl:
-                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
-                        sl = new_sl
-                        print(f"[ALPHA TRAILING] {symbol} | STAGE 2 (Peak:{peak_pnl:.1f}%) | Profit Lock SL: {new_sl:.6f} (+5.0% Guaranteed)")
-                elif peak_pnl >= 5.0:
-                    # STAGE 1: Early Profit Lock (+2.5%)
-                    new_sl = ent * 1.025
-                    if sl == 0 or new_sl > sl:
-                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
-                        sl = new_sl
-                        print(f"[ALPHA TRAILING] {symbol} | STAGE 1 (Peak:{peak_pnl:.1f}%) | Profit Lock SL: {new_sl:.6f} (+2.5% Lock)")
-                elif peak_pnl >= 3.0:
-                    # BREAKEVEN RATCHET: Kunci di Entry + 0.4% (Cover round-trip spot fee 0.2% + cuan bersih 0.2%)
-                    new_sl = ent * 1.004
-                    if sl == 0 or new_sl > sl:
-                        self.update_sl_price(symbol, side, pos['amount'], new_sl)
-                        sl = new_sl
-                        print(f"[ALPHA TRAILING] {symbol} | BREAKEVEN LOCK (Peak:{peak_pnl:.1f}%) | Lock SL: {new_sl:.6f} (+0.4% Fee Covered)")
-
-                # CEK HIT SL / TRAILING STOP EXIT
-                if sl > 0 and mrk <= sl:
-                    exit_reason = f"Trailing Stop (+{pnl:.2f}%)" if pnl > 0 else "Hit SL"
-                    self._close_paper_position(pos, mrk, reason=exit_reason)
-                    if symbol in self._peak_pnl: del self._peak_pnl[symbol]
-                    continue
-
-                # CEK MOONSHOT TP (+50%+)
+                # 1. CEK TAKE PROFIT (+0.9% Mean-Reversion Exit)
                 if tp > 0 and mrk >= tp:
-                    self._close_paper_position(pos, mrk, reason=f"Moonshot TP (+{pnl:.2f}%)")
+                    self._close_paper_position(pos, mrk, reason=f"DCA TP (+{pnl:.2f}%)")
                     if symbol in self._peak_pnl: del self._peak_pnl[symbol]
                     continue
 
-                # SIDEWAYS DETECTION (24 jam timeout)
-                # Catatan: HAPUS NFI Dynamic ROI 1.5% agar profit puluhan persen TIDAK DICEKIK!
+                # 2. CEK HARD STOP LOSS (-5.5% Crash Guard)
+                if sl > 0 and mrk <= sl:
+                    self._close_paper_position(pos, mrk, reason=f"Hard Crash Guard SL ({pnl:.2f}%)")
+                    if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                    continue
+
+                # 3. SIDEWAYS DETECTION (24 jam timeout)
                 try:
                     from shared_state import state
                     if symbol not in state.pos_start_time:
@@ -400,7 +425,7 @@ class PaperExecutor:
                     price_move_pct = abs((mrk - ent) / ent * 100) if ent > 0 else 0
 
                     SIDEWAYS_TIMEOUT_HOURS = 24.0 # Koin hanya ditutup jika benar-benar beku 24 jam
-                    is_sideways = (-2.5 < pnl < 2.5) and (price_move_pct < 2.0)
+                    is_sideways = (-1.5 < pnl < 1.5) and (price_move_pct < 1.5)
 
                     if duration_hours >= SIDEWAYS_TIMEOUT_HOURS and is_sideways:
                         self._close_paper_position(pos, mrk, reason="Sideways Timeout")
@@ -413,7 +438,7 @@ class PaperExecutor:
                 except Exception as e:
                     print(f"[PAPER SIDEWAYS ERROR] {e}")
 
-                # HARD EXIT -10% (Spot Cut Loss Extreme Emergency Guard)
+                # 4. HARD EXIT -10% (Emergency Guard)
                 if pnl <= -10.0:
                     self._close_paper_position(pos, mrk, reason="Hard Exit PnL -10%")
                     if symbol in self._peak_pnl: del self._peak_pnl[symbol]

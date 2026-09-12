@@ -66,7 +66,7 @@ def check_paper():
 
     # 3. Cek Posisi Berjalan (RUNNING)
     try:
-        cursor.execute("SELECT symbol, side, entry_price, sl_price, tp_price, pnl_pct, pnl_usd FROM trades WHERE status IN ('PENDING', 'RUNNING') AND is_paper = 1")
+        cursor.execute("SELECT symbol, side, entry_price, sl_price, tp_price, pnl_pct, pnl_usd, so_count, total_cost, lot_size FROM trades WHERE status IN ('PENDING', 'RUNNING') AND is_paper = 1")
         running = cursor.fetchall()
         
         print(f"\n🟢 Posisi Aktif Berjalan: {len(running)}")
@@ -75,9 +75,13 @@ def check_paper():
             side = r['side'].upper()
             ent = r['entry_price']
             pnl_pct = r['pnl_pct'] or 0
-            pnl_usd = r['pnl_usd'] or 0
             sl = r['sl_price']
-            print(f"   => {side} {sym} | Entry: {ent} | SL Trailing: {sl} | PnL: {pnl_pct:.2f}%")
+            tp = r['tp_price']
+            keys = r.keys() if hasattr(r, 'keys') else []
+            so = r['so_count'] if 'so_count' in keys and r['so_count'] is not None else 0
+            lot = r['lot_size'] or 0
+            cost = r['total_cost'] if ('total_cost' in keys and r['total_cost'] is not None and r['total_cost'] > 0) else (lot * ent if ent else 0)
+            print(f"   => {side} {sym:<10} | Avg Entry: {ent:.6f} | TP: {tp:.6f} | SL: {sl:.6f} | SO: {so}/2 | Margin: ${cost:.2f} | PnL: {pnl_pct:+.2f}%")
     except Exception as e:
         pass
 
