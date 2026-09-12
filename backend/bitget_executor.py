@@ -420,99 +420,75 @@ class BitgetExecutor:
                 if pnl > self._peak_pnl[symbol]: self._peak_pnl[symbol] = pnl
                 peak_pnl = self._peak_pnl[symbol]
 
-                # == SMART SAFETY ORDER DCA ENGINE (Proven 87.3% WR on Real Spot Data) ==
-                from database import update_trade_dca, close_trade
-                so_count = int(pos.get('so_count') or 0)
-                tot_cost = float(pos.get('total_cost') or (amount * ent))
+                # == DYNAMIC MOONSHOT ESCALATOR TRAILING STOP ENGINE ==
+                # Initial Guard: SL -2.5% strictly enforced ($2.37 risk on $95)
+                if sl == 0 and now - self.startup_time > 5:
+                    default_sl = round(ent * 0.975, 6) # -2.5% strict Stop Loss
+                    self.update_sl_price(symbol, side, amount, default_sl, is_tp=False)
+                    pos['sl_price'] = default_sl
+                    sl = default_sl
 
-                # Safety Order 1: Trigger saat harga turun >= 1.8% dari entry awal
-                if so_count == 0 and mrk <= (ent * 0.982):
-                    so_usd = 35.0 # Safety Order 1 ($35 pada modal $100)
-                    bal = self.get_balance()
-                    if bal.get('free', 0) >= so_usd:
-                        so_lot = round(so_usd / mrk, 4)
-                        clean_sym = self._clean_symbol(symbol)
-                        pair_ccxt = f"{clean_sym}/USDT"
-                        try:
-                            order = self.exchange.create_order(pair_ccxt, 'market', 'buy', so_lot)
-                            fill_price = float(order.get('average') or order.get('price') or mrk)
-                            actual_cost = round(so_lot * fill_price, 4)
-                            new_amount = round(amount + so_lot, 4)
-                            new_cost = round(tot_cost + actual_cost, 4)
-                            new_entry = round(new_cost / new_amount, 6)
-                            new_tp = round(new_entry * 1.009, 6) # Target TP +0.9% dari average entry baru
-                            new_sl = round(new_entry * 0.945, 6) # Hard Crash Guard -5.5% dari average entry baru
+                # Milestone 5: Super Nova (Peak >= +50.0%) -> Dynamic 8% trail from peak
+                if peak_pnl >= 50.0:
+                    trail_price = round(mrk * 0.92, 6)
+                    if trail_price > sl:
+                        self.update_sl_price(symbol, side, amount, trail_price, is_tp=False)
+                        pos['sl_price'] = trail_price
+                        sl = trail_price
+                        print(f"[MOONSHOT ESCALATOR] {symbol} 🔥 SUPER NOVA (+{peak_pnl:.1f}%)! Trailing SL: {trail_price:.6f} (-8% from peak)", flush=True)
 
-                            update_trade_dca(pos['id'], new_entry, new_amount, new_cost, new_tp, new_sl, 1)
-                            print(f"\n[BITGET SPOT DCA] {symbol} Executed SO1 ($35) at {fill_price:.6f} (-1.8%)! New Avg Entry: {new_entry:.6f} | Lowered TP: {new_tp:.6f} (+0.9%)", flush=True)
+                # Milestone 4: Moonshot Lock (Peak >= +35.0%) -> Lock +25.0% profit
+                elif peak_pnl >= 35.0:
+                    target_sl = round(ent * 1.25, 6)
+                    if target_sl > sl:
+                        self.update_sl_price(symbol, side, amount, target_sl, is_tp=False)
+                        pos['sl_price'] = target_sl
+                        sl = target_sl
+                        print(f"[MOONSHOT ESCALATOR] {symbol} 🚀 TIER 4 MOONSHOT (+{peak_pnl:.1f}%)! Locked +25.0% at {target_sl:.6f}", flush=True)
 
-                            # Update current loop state
-                            pos['entry'] = new_entry
-                            pos['amount'] = new_amount
-                            pos['margin'] = new_cost
-                            pos['total_cost'] = new_cost
-                            pos['so_count'] = 1
-                            pos['tp_price'] = new_tp
-                            pos['sl_price'] = new_sl
-                            ent = new_entry
-                            tp = new_tp
-                            sl = new_sl
-                            pnl = round(((mrk - ent) / ent) * 100.0, 2)
-                        except Exception as dca_err:
-                            print(f"[BITGET DCA ERROR] SO1 {symbol} failed: {dca_err}", flush=True)
+                # Milestone 3: Super Runner Lock (Peak >= +18.0%) -> Lock +12.0% profit
+                elif peak_pnl >= 18.0:
+                    target_sl = round(ent * 1.12, 6)
+                    if target_sl > sl:
+                        self.update_sl_price(symbol, side, amount, target_sl, is_tp=False)
+                        pos['sl_price'] = target_sl
+                        sl = target_sl
+                        print(f"[MOONSHOT ESCALATOR] {symbol} 💎 TIER 3 SUPER RUNNER (+{peak_pnl:.1f}%)! Locked +12.0% at {target_sl:.6f}", flush=True)
 
-                # Safety Order 2: Trigger saat harga turun lagi >= 1.8% dari weighted entry SO1
-                elif so_count == 1 and mrk <= (ent * 0.982):
-                    so_usd = 40.0 # Safety Order 2 ($40 pada modal $100)
-                    bal = self.get_balance()
-                    if bal.get('free', 0) >= so_usd:
-                        so_lot = round(so_usd / mrk, 4)
-                        clean_sym = self._clean_symbol(symbol)
-                        pair_ccxt = f"{clean_sym}/USDT"
-                        try:
-                            order = self.exchange.create_order(pair_ccxt, 'market', 'buy', so_lot)
-                            fill_price = float(order.get('average') or order.get('price') or mrk)
-                            actual_cost = round(so_lot * fill_price, 4)
-                            new_amount = round(amount + so_lot, 4)
-                            new_cost = round(tot_cost + actual_cost, 4)
-                            new_entry = round(new_cost / new_amount, 6)
-                            new_tp = round(new_entry * 1.009, 6) # Target TP +0.9% dari average entry baru
-                            new_sl = round(new_entry * 0.945, 6) # Hard Crash Guard -5.5% dari average entry baru
+                # Milestone 2: Expansion Lock (Peak >= +10.0%) -> Lock +7.0% profit
+                elif peak_pnl >= 10.0:
+                    target_sl = round(ent * 1.07, 6)
+                    if target_sl > sl:
+                        self.update_sl_price(symbol, side, amount, target_sl, is_tp=False)
+                        pos['sl_price'] = target_sl
+                        sl = target_sl
+                        print(f"[MOONSHOT ESCALATOR] {symbol} 🎯 TIER 2 EXPANSION (+{peak_pnl:.1f}%)! Locked +7.0% at {target_sl:.6f}", flush=True)
 
-                            update_trade_dca(pos['id'], new_entry, new_amount, new_cost, new_tp, new_sl, 2)
-                            print(f"\n[BITGET SPOT DCA] {symbol} Executed SO2 ($40) at {fill_price:.6f} (-1.8%)! New Avg Entry: {new_entry:.6f} | Lowered TP: {new_tp:.6f} (+0.9%)", flush=True)
+                # Milestone 1: Momentum Lock (Peak >= +5.5%) -> Lock +3.2% profit
+                elif peak_pnl >= 5.5:
+                    target_sl = round(ent * 1.032, 6)
+                    if target_sl > sl:
+                        self.update_sl_price(symbol, side, amount, target_sl, is_tp=False)
+                        pos['sl_price'] = target_sl
+                        sl = target_sl
+                        print(f"[MOONSHOT ESCALATOR] {symbol} ✨ TIER 1 MOMENTUM (+{peak_pnl:.1f}%)! Locked +3.2% at {target_sl:.6f}", flush=True)
 
-                            # Update current loop state
-                            pos['entry'] = new_entry
-                            pos['amount'] = new_amount
-                            pos['margin'] = new_cost
-                            pos['total_cost'] = new_cost
-                            pos['so_count'] = 2
-                            pos['tp_price'] = new_tp
-                            pos['sl_price'] = new_sl
-                            ent = new_entry
-                            tp = new_tp
-                            sl = new_sl
-                            pnl = round(((mrk - ent) / ent) * 100.0, 2)
-                        except Exception as dca_err:
-                            print(f"[BITGET DCA ERROR] SO2 {symbol} failed: {dca_err}", flush=True)
+                # Milestone 0: Breakeven Risk-Free Lock (Peak >= +2.5%) -> Lock +0.5% profit
+                elif peak_pnl >= 2.5:
+                    target_sl = round(ent * 1.005, 6)
+                    if target_sl > sl:
+                        self.update_sl_price(symbol, side, amount, target_sl, is_tp=False)
+                        pos['sl_price'] = target_sl
+                        sl = target_sl
+                        print(f"[MOONSHOT ESCALATOR] {symbol} 🛡️ BREAKEVEN LOCKED (+{peak_pnl:.1f}%)! Locked +0.5% at {target_sl:.6f} [RISK-FREE]", flush=True)
 
-                # INITIAL GUARD: Set default Quick TP (+0.9%) / Crash SL (-5.5%) jika belum terisi
-                if (sl == 0 or tp == 0) and now - self.startup_time > 5:
-                    default_sl = ent * 0.945   # -5.5% Crash Guard
-                    default_tp = ent * 1.009   # +0.9% Quick Mean-Reversion TP (87.3% WR Proven)
-                    if sl == 0:
-                        self.update_sl_price(symbol, side, amount, default_sl, is_tp=False)
-                        sl = default_sl
-                    if tp == 0:
-                        self.update_sl_price(symbol, side, amount, default_tp, is_tp=True)
-                        tp = default_tp
-
-                # 1. CEK TAKE PROFIT (+0.9% Mean-Reversion Exit)
-                if tp > 0 and mrk >= tp:
-                    print(f"\n[SPOT TP TRIGGER] {symbol} menyentuh DCA TP (+{pnl:.2f}%)! Menjual Spot ke USDT...", flush=True)
+                # 1. CEK STOP LOSS / TRAILING SL TRIGGER
+                if sl > 0 and mrk <= sl:
+                    exit_type = "Moonshot Escalator Profit" if sl > ent else "Strict Stop Loss"
+                    print(f"\n[SPOT EXIT TRIGGER] {symbol} menyentuh {exit_type} ({pnl:.2f}%). Menjual Spot ke USDT...", flush=True)
                     sold = self._execute_spot_sell(symbol, amount)
                     if sold:
+                        from database import close_trade
                         close_trade(symbol, exit_price=mrk, pnl_usd=(amount * ent * (pnl / 100)))
                         if symbol in self._peak_pnl: del self._peak_pnl[symbol]
                         clean = self._clean_symbol(symbol)
@@ -520,11 +496,12 @@ class BitgetExecutor:
                         state.exit_pnl[clean] = pnl
                     continue
 
-                # 2. CEK HARD STOP LOSS (-5.5% Crash Guard Exit)
-                if sl > 0 and mrk <= sl:
-                    print(f"\n[SPOT SL TRIGGER] {symbol} menyentuh Crash Guard SL ({pnl:.2f}%). Menjual Spot ke USDT...", flush=True)
+                # 2. CEK TAKE PROFIT (Jika diset manual)
+                if tp > 0 and mrk >= tp:
+                    print(f"\n[SPOT TP TRIGGER] {symbol} menyentuh Manual TP (+{pnl:.2f}%)! Menjual Spot ke USDT...", flush=True)
                     sold = self._execute_spot_sell(symbol, amount)
                     if sold:
+                        from database import close_trade
                         close_trade(symbol, exit_price=mrk, pnl_usd=(amount * ent * (pnl / 100)))
                         if symbol in self._peak_pnl: del self._peak_pnl[symbol]
                         clean = self._clean_symbol(symbol)

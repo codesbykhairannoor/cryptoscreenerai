@@ -33,10 +33,9 @@ from notifier import send_telegram_message, format_trade_message
 from bitget_executor import BitgetExecutor
 
 #  KONFIGURASI AGRESIF UNTUK PROFIT CEPAT
-#  KONFIGURASI SNIPER (v31.8)
-MAX_POSITIONS        = 1      # Modal $100 Spot: 1 posisi fokus all-in (Base $25 + SO1 $35 + SO2 $40 = $100)
-RISK_PER_TRADE_USDT  = 0.50   
-FIXED_MARGIN_USDT    = 25.0   # Base Order $25 untuk akun modal $100
+MAX_POSITIONS        = 1      # Modal $100 Spot: 1 posisi tunggal fokus (Predator Moonshot)
+RISK_PER_TRADE_USDT  = 2.50   # Maksimal risiko $2.50 (2.5% dari modal $100)
+FIXED_MARGIN_USDT    = 95.0   # $95 deployment per trade (full firepower untuk koin pump terpilih)
 
 # PAPER MODE: lebih hemat CPU, lebih selektif masuk trade
 _IS_PAPER = os.getenv("TRADE_MODE", "live").lower() == "paper"
@@ -954,7 +953,10 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
 
 
 def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_sentiment: str, mark_price: float, pump_sc: float, dump_sc: float) -> tuple[str | None, str, int]:
-    rvol = tech.get('rvol', 0)
+    rvol = tech.get('rvol', 1.0)
+    vol_velocity = tech.get('vol_velocity', 0.0)
+    cmo = tech.get('cmo', 0.0)
+    funding_rate = tech.get('funding_rate', 0.0)
     trend_1h = tech.get('trend_1h', 'NEUTRAL')
     trend_4h = tech.get('trend_4h', 'NEUTRAL')
     bb_up = tech.get('bb_up', mark_price * 1.05)
@@ -964,77 +966,73 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
     in_demand = tech.get('in_demand', False) or tech.get('in_5m_demand', False)
     pattern = tech.get('candle_pattern', '')
     chg_24h = float(tech.get('change_24h', 0.0) or 0.0)
-    
-    # Di pasar Spot, kita adalah 100% LONG-ONLY (Hanya BUY)
-    # Tri-Core Quantitative Evaluator (Hasil Backtest Empiris Bitget/Gate.io Spot)
+    obi = tech.get('obi', 0.0)
+    is_ttm_squeeze = tech.get('is_ttm_squeeze', False)
+    squeeze_fired = tech.get('squeeze_fired', False)
 
-    # 0. Filter Dasar Pasar Spot
+    # 0. Filter Dasar Pasar Spot (100% Long-Only)
     if tech.get('still_falling', False) and rsi > 40:
         return None, "ACTIVE_DOWNTREND_FALLING", 0
-    if rsi > 78:
+    if rsi > 80:
         return None, f"RSI_{rsi:.1f}_OVERBOUGHT", 0
     if chg_24h > 18.0:
         return None, f"ANTI_FOMO_PUMP_{chg_24h:.1f}%", 0
     if chg_24h < -10.0:
         return None, f"DEATH_SPIRAL_DUMP_{chg_24h:.1f}%", 0
 
-    # == ADX & Regime Check ==
-    adx = tech.get('adx', 25)
-    is_trending   = adx >= 20
-    is_choppy     = adx < 15
-
-    # Order Flow Imbalance
-    obi = tech.get('obi', 0.0)
-
-    # Precompute BB metrics
-    bb_mean = (bb_up + bb_low) / 2
-    bb_width_pct = (bb_up - bb_low) / bb_mean * 100 if bb_mean > 0 else 10.0
-    is_squeeze = bb_width_pct < 4.5
     is_bullish_base = (trend_1h != "BEARISH") and (mark_price >= ema_84 * 0.992 or trend_1h == "BULLISH")
-    chg_healthy = 0.5 <= chg_24h <= 16.0
+    chg_healthy = 0.5 <= chg_24h <= 18.0
 
-    # CORE 1: Volatility Squeeze Breakout (Volume Expansion)
-    # Berlaku saat tren Bullish kuat + lonjakan volume pembeli nyata
-    if rvol >= 1.8 and 52 <= rsi <= 68 and trend_1h == "BULLISH" and obi >= 0.02 and chg_healthy:
-        if mark_price >= bb_up * 0.995 or is_squeeze:
+    # =========================================================================
+    # 👑 PREDATOR 1: VOLUME VELOCITY & CMO MOONSHOT BREAKOUT (Top Alpha Quant)
+    # 1-Hour volume spike (>10% of 24h) + CMO momentum (>30) + Bullish trend
+    # Menangkap peluncuran koin pump sebelum FOMO retail tiba
+    # =========================================================================
+    if (vol_velocity >= 0.10 or rvol >= 1.8) and cmo >= 30 and is_bullish_base and chg_healthy:
+        if mark_price >= bb_up * 0.990 or squeeze_fired or is_ttm_squeeze:
+            print(f"[PREDATOR QUANT] 🔥 VOLUME VELOCITY MOONSHOT! {tech.get('symbol')} | V-Vel:{vol_velocity:.1%} | CMO:{cmo:.1f} | RVOL:{rvol:.1f}x | 24h:{chg_24h:.1f}%", flush=True)
+            return "buy", "PREDATOR_VOL_VELOCITY_BREAKOUT", 98
+
+    # =========================================================================
+    # ⚡ PREDATOR 2: SHORT SQUEEZE FUEL IGNITION (Derivatives Forced Liquidation)
+    # Funding rate sangat negatif (< -0.015%) + Order Book Imbalance tebal (OBI > 0.05)
+    # =========================================================================
+    if funding_rate <= -0.00015 and is_bullish_base and (obi >= 0.05 or rvol >= 1.3) and chg_healthy:
+        print(f"[PREDATOR QUANT] ⚡ SHORT SQUEEZE DETECTED! {tech.get('symbol')} | FR:{funding_rate*100:.3f}% | OBI:{obi:.2f} | RVOL:{rvol:.1f}x", flush=True)
+        return "buy", "PREDATOR_SHORT_SQUEEZE", 96
+
+    # =========================================================================
+    # 🎯 CORE 1: Volatility Squeeze Breakout (Classic Momentum)
+    # =========================================================================
+    if rvol >= 1.8 and 50 <= rsi <= 72 and trend_1h == "BULLISH" and obi >= 0.02 and chg_healthy:
+        if mark_price >= bb_up * 0.995:
             print(f"[SPOT QUANT] CORE 1: VOLATILITY BREAKOUT! {tech.get('symbol')} | RSI:{rsi:.1f} | RVOL:{rvol:.1f}x | OBI:{obi:.2f}", flush=True)
-            return "buy", "CORE1_VOL_BREAKOUT", 95
+            return "buy", "CORE1_VOL_BREAKOUT", 94
 
-    if is_choppy and obi < 0.10:
-        return None, f"ADX_CHOPPY({adx:.0f})_SKIP", 0
-
-    # CORE 2: NFI Bullish Dip Absorption (FREQTRADE NFI PROVEN - 87.3% Win Rate)
-    # Menangkap pantulan oversold pada koin liquid saat menyentuh Lower BB / RSI rendah
+    # =========================================================================
+    # 🛡️ CORE 2: NFI Bullish Dip Absorption (Freqtrade Dip Reversal)
+    # =========================================================================
     rsi_oversold  = rsi <= 38
     near_bb_low   = mark_price <= bb_low * 1.010
     has_reversal  = wick_ratio >= 1.1 or "BULLISH" in str(pattern).upper()
     chg_dip_ok    = -6.0 <= chg_24h <= 16.0
 
     if (rsi_oversold or near_bb_low) and is_bullish_base and has_reversal and rvol >= 1.1 and chg_dip_ok:
-        score_c2 = 94 if is_trending else 86
-        print(f"[SPOT QUANT] CORE 2: NFI DIP ABSORPTION! {tech.get('symbol')} | RSI:{rsi:.1f} | Wick:{wick_ratio:.1f} | RVOL:{rvol:.1f}x | 24h:{chg_24h:.1f}%", flush=True)
-        return "buy", "CORE2_NFI_DIP_ABSORPTION", score_c2
-
-    # CORE 3: SMC Demand Zone Sniping (Smart Money Order Block)
-    has_demand_zone = in_demand or tech.get('fvg') == 'BULLISH'
-    has_rejection   = wick_ratio >= 1.1 and rvol >= 1.2 and obi >= 0.03
-
-    if has_demand_zone and has_rejection and is_bullish_base and chg_dip_ok:
-        print(f"[SPOT QUANT] CORE 3: SMC DEMAND SNIPE! {tech.get('symbol')} | Wick:{wick_ratio:.1f} | RVOL:{rvol:.1f}", flush=True)
-        return "buy", "CORE3_SMC_DEMAND", 88
+        print(f"[SPOT QUANT] CORE 2: NFI DIP ABSORPTION! {tech.get('symbol')} | RSI:{rsi:.1f} | Wick:{wick_ratio:.1f} | RVOL:{rvol:.1f}x", flush=True)
+        return "buy", "CORE2_NFI_DIP_ABSORPTION", 88
 
     return None, "WAITING_FOR_CLEAN_SPOT_SETUP", 0
 
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    v88.0: REDDIT & GITHUB QUANT SPOT SMART DCA TP/SL (Proven 87.3% Win Rate)
-    - Take Profit: +0.9% to +1.0% quick statistical mean-reversion exit
-    - Hard Crash Guard SL: -5.5% (protects against black swan crashes)
+    v90.0: DYNAMIC MOONSHOT ESCALATOR TP/SL
+    - Initial Hard SL: -2.5% ($2.37 risk on $95 capital)
+    - Take Profit: 0.0 (Managed dynamically by the Moonshot Escalator: Breakeven at +2.5%, locking profit at +3.5%, +8%, +14%, +25%, trailing up to +50%+)
     """
     base_p = tech.get('limit_price', mark_price)
-    take_profit_val = round(base_p * 1.009, 6) if side == 'buy' else round(base_p * 0.991, 6)
-    stop_loss_val = round(base_p * 0.945, 6) if side == 'buy' else round(base_p * 1.055, 6)
+    stop_loss_val = round(base_p * 0.975, 6) if side == 'buy' else round(base_p * 1.025, 6)
+    take_profit_val = 0.0  # Dynamic Moonshot Escalator governs the exit!
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
 

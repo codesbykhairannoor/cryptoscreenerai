@@ -6,8 +6,9 @@ if hasattr(sys.stdout, 'reconfigure'):
     try: sys.stdout.reconfigure(encoding='utf-8')
     except Exception: pass
 
-# Load 48 coins spot dataset
-with open("spot_backtest_cache.pkl", "rb") as f:
+import os
+CACHE_FILE = "spot_backtest_cache.pkl" if os.path.exists("spot_backtest_cache.pkl") else os.path.join(os.path.dirname(__file__), "spot_backtest_cache.pkl")
+with open(CACHE_FILE, "rb") as f:
     raw_dataset = pickle.load(f)
 
 # Build pre-computed candle arrays
@@ -18,6 +19,19 @@ for idx, df in enumerate(raw_dataset):
     bb_std = df['close'].rolling(20).std()
     bb_lower = bb_mid - (bb_std * 2.0)
     ema50 = df['close'].ewm(span=50, adjust=False).mean()
+
+    # Volume Velocity: 1h / 24h
+    vol_1h = df['baseVol'].rolling(4).sum()
+    vol_24h = df['baseVol'].rolling(96).sum()
+    vol_vel = vol_1h / (vol_24h + 1e-9)
+
+    # CMO
+    diff = df['close'].diff()
+    up = diff.clip(lower=0)
+    down = (-diff).clip(lower=0)
+    sum_up = up.rolling(14).sum()
+    sum_down = down.rolling(14).sum()
+    cmo = 100 * (sum_up - sum_down) / (sum_up + sum_down + 1e-9)
 
     coins_data.append({
         'id': idx,
@@ -34,6 +48,8 @@ for idx, df in enumerate(raw_dataset):
         'ema50': ema50.to_numpy(dtype=float),
         'trend_bull': df['trend_bullish'].to_numpy(dtype=bool),
         'chg': df['chg_24h'].to_numpy(dtype=float),
+        'v_vel': vol_vel.to_numpy(dtype=float),
+        'cmo': cmo.to_numpy(dtype=float),
         'length': len(df)
     })
 
@@ -108,7 +124,32 @@ def run_simulation(strat_name, strat_config):
             exit_price = 0.0
             exit_reason = ""
 
-            if not strat_config.get('is_hybrid', False):
+            if strat_config.get('type') == 'PREDATOR_ESCALATOR':
+                peak_pct = (pos['peak_price'] - avg_e) / avg_e * 100.0
+                if peak_pct >= 35.0:
+                    pos['sl_price'] = max(pos['sl_price'], avg_e * 1.25)
+                elif peak_pct >= 18.0:
+                    pos['sl_price'] = max(pos['sl_price'], avg_e * 1.12)
+                elif peak_pct >= 10.0:
+                    pos['sl_price'] = max(pos['sl_price'], avg_e * 1.07)
+                elif peak_pct >= 5.5:
+                    pos['sl_price'] = max(pos['sl_price'], avg_e * 1.032)
+                elif peak_pct >= 2.5:
+                    pos['sl_price'] = max(pos['sl_price'], avg_e * 1.005)
+
+                if peak_pct >= 50.0:
+                    pos['sl_price'] = max(pos['sl_price'], pos['peak_price'] * 0.92)
+
+                if l <= pos['sl_price']:
+                    exit_price = pos['sl_price']
+                    exit_reason = "ESCALATOR_LOCK" if pos['sl_price'] > avg_e else "INITIAL_SL"
+                    is_exit = True
+                elif pos['hold_candles'] >= strat_config.get('timeout_candles', 48):
+                    exit_price = c
+                    exit_reason = "TIMEOUT"
+                    is_exit = True
+
+            elif not strat_config.get('is_hybrid', False):
                 if h >= avg_e * (1 + tp_pct):
                     exit_price = avg_e * (1 + tp_pct)
                     exit_reason = "TP"
@@ -214,6 +255,13 @@ def run_simulation(strat_name, strat_config):
                     if -5.0 < chg < 15.0 and (rsi <= 35 or c <= bb_low * 1.005) and wick >= 1.2 and rvol >= 1.3:
                         signal = True
                         score = (35 - rsi) * 2 + rvol * 5
+
+                elif strat_type == "PREDATOR_ESCALATOR":
+                    v_vel = cd['v_vel'][t]
+                    cmo_val = cd['cmo'][t]
+                    if bull and rvol >= 1.8 and v_vel >= 0.12 and cmo_val >= 35 and 0.5 <= chg <= 18.0:
+                        signal = True
+                        score = rvol * 10 + cmo_val + (v_vel * 100)
 
                 if signal and score > best_score:
                     best_score = score
@@ -359,6 +407,16 @@ strategies = [
             'sl_pct': 0.030,
             'be_trigger': 0.040,
             'timeout_candles': 72
+        }
+    ),
+    (
+        "8. Predator Moonshot Escalator (All-in $100, Dynamic Trail)",
+        {
+            'type': "PREDATOR_ESCALATOR",
+            'use_dca': False,
+            'tp_pct': 0.50,
+            'sl_pct': 0.025,
+            'timeout_candles': 48
         }
     )
 ]
