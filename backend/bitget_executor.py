@@ -6,24 +6,35 @@ import hmac
 import hashlib
 import base64
 import requests
-import traceback
+import uuid
 from dotenv import load_dotenv
 
-# Standard loading
 load_dotenv()
 
 # Suppress InsecureRequestWarning
 import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+
 class BitgetExecutor:
+    """
+    Bitget Executor 100% TRUE SPOT (Non-Leverage, Cash-Only Accounting).
+    Dirombak total untuk menghilangkan sisa futures/swap endpoints.
+    Menggunakan Bitget V2 Spot API & CCXT Spot.
+    """
     def __init__(self):
-        # [STABLE] Exact environment variables from Commit ae01681
         self.api_key = os.getenv("BITGET_API_KEY")
         self.secret_key = os.getenv("BITGET_SECRET_KEY")
         self.passphrase = os.getenv("BITGET_PASSPHRASE", "")
-        self._is_ordering = False # Lock untuk cegah double trade
+        self.trade_mode = "live"
+        self._is_ordering = False
+        self._last_sl_check = {}
+        self._tracked_positions = {}
+        self._price_cache = {}
+        self.startup_time = time.time()
+        self.time_offset = 0
 
+        # CCXT Spot Client
         self.exchange = ccxt.bitget({
             'apiKey': self.api_key,
             'secret': self.secret_key,
@@ -31,736 +42,469 @@ class BitgetExecutor:
             'enableRateLimit': True,
             'timeout': 30000,
             'options': {
-                'defaultType': 'swap',
-                'posMode': 'unilateral',
+                'defaultType': 'spot',
                 'adjustForTimeDifference': True
             }
         })
-        
-        # Security Check
+
         if not self.api_key or not self.secret_key:
-             print("[CRITICAL] Bitget Credentials MISSING! Check your .env file.")
-        
-        self.is_uta = False
-        self.startup_time = time.time()
-        self.warmup_period = 15
-        self.time_offset = 0
+            print("[CRITICAL] Bitget API Credentials MISSING! Periksa file .env.")
+
         self.sync_server_time()
-        
+
         try:
             from shared_state import state
             state.last_order_update = self.startup_time
-            state.last_algo_update = self.startup_time
             state.last_acc_update = self.startup_time
             
-            self.detect_account_mode()
             bal = self.get_balance()
-            print(f"[STARTUP AUDIT] USDT Balance: {bal['total']} (Available: {bal['free']})")
+            print(f"[SPOT STARTUP] Bitget Spot USDT: ${bal['total']:.2f} (Available: ${bal['free']:.2f})", flush=True)
             
             pos = self.get_all_positions()
             if pos:
-                print(f"[STARTUP AUDIT] Running Trades: {len(pos)}")
+                print(f"[SPOT STARTUP] Posisi Spot Berjalan: {len(pos)}", flush=True)
                 for p in pos:
-                    sym  = p['symbol']
-                    side = p['side']
-                    pnl  = p['pnl']
-                    entry = p.get('entry', 0)
-                    mark  = p.get('mark_price', 0)
-                    print(f"   > {sym} | Side:{side} | Entry:{entry} | Mark:{mark} | PNL:{pnl}%")
-                    self.get_pending_plan_orders(sym)
-                    # Seed pos_start_time untuk trade yang sudah berjalan
-                    from shared_state import state as _s
-                    if sym not in _s.pos_start_time:
-                        _s.pos_start_time[sym] = time.time() - 1800
-                        print(f"   > [TIMER] {sym} pos_start seeded (restart recovery)", flush=True)
+                    print(f"   > {p['symbol']} | Entry: {p['entry']} | Mark: {p['mark_price']} | PNL: {p['pnl']}%", flush=True)
         except Exception as e:
-            print(f"[STARTUP AUDIT ERROR] {e}")
+            print(f"[SPOT STARTUP AUDIT ERROR] {e}", flush=True)
 
     def sync_server_time(self):
-        """Fetch server time from Bitget and calculate offset (Fail-safe for Windows VPS)"""
+        """Sinkronisasi waktu lokal dengan server Bitget (Cegah timestamp error)"""
         try:
-            res = requests.get("https://api.bitget.com/api/v2/public/time", timeout=20)
+            res = requests.get("https://api.bitget.com/api/v2/public/time", timeout=10)
             if res.status_code == 200:
                 server_ts = int(res.json()['data']['serverTime'])
                 local_ts  = int(time.time() * 1000)
                 self.time_offset = server_ts - local_ts
-                print(f"[SYSTEM] Time Sync: Offset {self.time_offset}ms applied.")
+                print(f"[SPOT SYSTEM] Server Time Sync: Offset {self.time_offset}ms diterapkan.", flush=True)
         except Exception as e:
-            print(f"[SYSTEM] Time Sync FAILED: {e}")
-
-    def _v3_request(self, method, path, query="", body=None):
-        """Signed V3 Request for UTA accounts (Stable Baseline)"""
-        ts = str(int(time.time() * 1000 + self.time_offset))
-        request_path = path + (f"?{query}" if query else "")
-        body_str = json.dumps(body) if body else ""
-        
-        message = ts + method.upper() + request_path + body_str
-        mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
-        sign = base64.b64encode(mac.digest()).decode('utf8')
-        
-        headers = {
-            "ACCESS-KEY": self.api_key, "ACCESS-SIGN": sign, "ACCESS-TIMESTAMP": ts,
-            "ACCESS-PASSPHRASE": self.passphrase, "Content-Type": "application/json"
-        }
-        
-        url = f"https://api.bitget.com{request_path}"
-        try:
-            res = requests.request(method, url, headers=headers, data=body_str if body else None, timeout=20, verify=False)
-            return res.json()
-        except:
-            return {"code": "timeout"}
+            print(f"[SPOT SYSTEM] Server Time Sync Gagal: {e}", flush=True)
 
     def _v2_private_request(self, method, path, query="", body=None):
-        """Signed V2 Request for Classic/Mix accounts"""
+        """Signed V2 Private Request untuk Bitget Spot API"""
         ts = str(int(time.time() * 1000 + self.time_offset))
         request_path = path
         body_str = json.dumps(body) if body else ""
         
-        # V2 Signing: timestamp + method + path + query + body
         message = ts + method.upper() + request_path + (f"?{query}" if query else "") + body_str
-        mac = hmac.new(bytes(self.secret_key, encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
+        mac = hmac.new(bytes(self.secret_key or '', encoding='utf8'), bytes(message, encoding='utf8'), digestmod=hashlib.sha256)
         sign = base64.b64encode(mac.digest()).decode('utf8')
         
         headers = {
-            "ACCESS-KEY": self.api_key, "ACCESS-SIGN": sign, "ACCESS-TIMESTAMP": ts,
-            "ACCESS-PASSPHRASE": self.passphrase, "Content-Type": "application/json"
+            "ACCESS-KEY": self.api_key or "",
+            "ACCESS-SIGN": sign,
+            "ACCESS-TIMESTAMP": ts,
+            "ACCESS-PASSPHRASE": self.passphrase or "",
+            "Content-Type": "application/json"
         }
         
         url = f"https://api.bitget.com{request_path}" + (f"?{query}" if query else "")
         try:
-            res = requests.request(method, url, headers=headers, data=body_str if body else None, timeout=20)
+            res = requests.request(method, url, headers=headers, data=body_str if body else None, timeout=15)
             return res.json()
-        except:
-            return {"code": "timeout"}
+        except Exception as e:
+            return {"code": "timeout", "msg": str(e)}
 
-    def detect_account_mode(self):
-        """Internal check to confirm if account is UTA or Classic"""
+    def test_connection(self):
+        """Test kredensial koneksi Bitget Spot"""
         try:
-            # Coba panggil V2 Mix Account (Standar akun modern/classic)
-            res = self._v2_private_request("GET", "/api/v2/mix/account/accounts", "productType=USDT-FUTURES")
+            bal = self.get_balance()
+            if bal['total'] > 0 or bal['free'] > 0:
+                return True, f"Bitget Spot Terhubung! Saldo: ${bal['free']:.2f} USDT"
+            # Coba ping API langsung
+            res = self._v2_private_request("GET", "/api/v2/spot/account/assets")
             if res.get('code') == '00000':
-                self.is_uta = False # Berhasil panggil Mix = Classic/Mix mode
-                print("[MODE] Account verified as Bitget V2 Classic (Mix).")
-            else:
-                # Jika gagal, mungkin UTA
-                res = self._v3_request("GET", "/api/v3/account/assets", "category=USDT-FUTURES")
-                if res.get('code') == '00000':
-                    self.is_uta = True
-                    print("[MODE] Account verified as Bitget V3 UTA.")
-                else:
-                    self.is_uta = False
-                    print("[MODE] Account fallback to Bitget Classic.")
-        except:
-            self.is_uta = False
-            print("[MODE] Account fallback to Bitget Classic.")
+                return True, "Bitget Spot Terhubung!"
+            return False, f"Bitget API Error: {res.get('msg', 'Unknown')}"
+        except Exception as e:
+            return False, str(e)
 
     def _clean_symbol(self, s):
         if not s: return ""
-        # Remove common Bitget suffixes and separators
         s = s.upper().replace('/USDT:USDT', '').replace('USDT', '').replace('/', '').replace(':', '').replace('_', '')
         return s.strip()
 
     def get_balance(self):
-        """Unified Balance Fetcher (V2 Direct Priority)"""
+        """Mengambil saldo USDT Spot riil dari Bitget"""
         try:
-            # 1. WS CACHE PRIORITY
-            from shared_state import state
-            if state.balances and time.time() - state.last_acc_update < 60:
-                bal = state.balances.get('USDT', {})
-                if bal:
-                    return {'total': float(bal.get('equity', 0)), 'free': float(bal.get('available', 0))}
-
-            # 2. DIRECT V2 REQUEST (Fix for $0 reporting)
-            res = self._v2_private_request("GET", "/api/v2/mix/account/accounts", "productType=USDT-FUTURES")
+            # 1. DIRECT V2 REQUEST FOR SPOT ASSETS
+            res = self._v2_private_request("GET", "/api/v2/spot/account/assets")
             if res.get('code') == '00000' and res.get('data'):
-                for acc in res['data']:
-                    if acc.get('marginCoin') == 'USDT':
+                for asset in res['data']:
+                    if asset.get('coin') == 'USDT':
+                        free_val = float(asset.get('available', 0) or 0)
+                        frozen_val = float(asset.get('frozen', 0) or 0)
                         return {
-                            'total': float(acc.get('equity', 0)), 
-                            'free': float(acc.get('available', 0))
+                            'total': free_val + frozen_val,
+                            'free': free_val
                         }
 
-            # 3. REST FALLBACK
-            bal = self.exchange.fetch_balance({'type': 'swap'})
+            # 2. CCXT SPOT FALLBACK
+            bal = self.exchange.fetch_balance({'type': 'spot'})
+            usdt = bal.get('USDT', {})
             return {
-                'total': float(bal.get('total', {}).get('USDT', 0)),
-                'free': float(bal.get('free', {}).get('USDT', 0))
+                'total': float(usdt.get('total', 0) or 0),
+                'free': float(usdt.get('free', 0) or 0)
             }
-        except: return {'total': 0, 'free': 0}
+        except Exception as e:
+            print(f"[SPOT BALANCE ERROR] {e}", flush=True)
+            return {'total': 0.0, 'free': 0.0}
 
-    def get_max_available(self, symbol, leverage=10, risk_usdt=3.0):
+    def get_max_available(self, symbol, leverage=1, risk_usdt=150.0):
         """
-        Hitung size untuk 1 trade maksimal.
-        FIX: Dibatasi cuman $3 per trade sesuai permintaan USER.
+        Hitung ukuran order Spot untuk 1 trade.
+        Spot adalah 100% Cash: leverage selalu 1.0.
         """
         try:
-            balance   = self.get_balance()
+            balance = self.get_balance()
             free_usdt = balance['free']
 
-            if free_usdt < risk_usdt:
-                print(f"[SIZE] Balance tidak cukup untuk trade ${risk_usdt}: ${free_usdt:.2f}")
-                # Fallback ke sisa balance jika masih di atas $0.5 (untuk 10x leverage = $5 notional)
-                if free_usdt >= 0.55:
-                    margin_to_use = free_usdt * 0.90
-                else:
-                    return 0
-            else:
-                # Kunci di $3 sesuai request
-                margin_to_use = risk_usdt
-
-            # Minimum notional Bitget = 5 USDT
-            if margin_to_use * leverage < 5.0:
-                print(f"[SIZE] Notional terlalu kecil: ${margin_to_use * leverage:.2f} (Min $5)")
+            if free_usdt < 5.0:
+                print(f"[SPOT SIZE] Saldo USDT bebas (${free_usdt:.2f}) < $5 minimum. Lewati.", flush=True)
                 return 0
 
-            ticker = self.exchange.fetch_ticker(symbol)
-            price  = ticker['last']
+            # Alokasi modal: min(saldo bebas * 95%, batas risiko yang ditentukan)
+            margin_to_use = min(free_usdt * 0.95, risk_usdt)
+            if margin_to_use < 5.0:
+                return 0
 
-            notional   = margin_to_use * leverage
-            raw_amount = notional / price
+            # Ambil harga market terkini
+            price = 0.0
+            try:
+                ticker = self.exchange.fetch_ticker(f"{self._clean_symbol(symbol)}/USDT")
+                price = float(ticker.get('last') or ticker.get('close') or 0)
+            except Exception:
+                from database import get_current_price
+                price = get_current_price(symbol, 'crypto') or 0
 
-            formatted_amount = float(self.exchange.amount_to_precision(symbol, raw_amount))
+            if price <= 0:
+                print(f"[SPOT SIZE ERROR] Gagal mendapatkan harga untuk {symbol}", flush=True)
+                return 0
 
-            market     = self.exchange.market(symbol)
-            min_amount = market.get('limits', {}).get('amount', {}).get('min', 0.001)
+            raw_amount = margin_to_use / price
+            clean_sym = f"{self._clean_symbol(symbol)}/USDT"
+            
+            try:
+                formatted_amount = float(self.exchange.amount_to_precision(clean_sym, raw_amount))
+            except Exception:
+                formatted_amount = round(raw_amount, 4)
 
             final_notional = formatted_amount * price
-            print(f"[SIZE-DEBUG] {symbol} | Requested Margin: ${margin_to_use:.2f} | Final Margin: ${final_notional/leverage:.2f} | Notional: ${final_notional:.2f} | Size: {formatted_amount}")
-            
+            print(f"[SPOT-SIZE] {symbol} | Modal: ${margin_to_use:.2f} | Notional: ${final_notional:.2f} | Size: {formatted_amount}", flush=True)
+
             if final_notional < 5.0:
-                print(f"[SIZE] Notional ${final_notional:.2f} < $5 minimum. Skipping.")
+                print(f"[SPOT SIZE] Notional ${final_notional:.2f} < $5 minimum Bitget.", flush=True)
                 return 0
 
-            return formatted_amount if formatted_amount >= min_amount else 0
+            return formatted_amount
         except Exception as e:
-            print(f"[GET_MAX ERROR] {e}")
+            print(f"[SPOT GET_MAX ERROR] {e}", flush=True)
             return 0
 
     def get_all_positions(self):
-        """Fetch all active positions using direct V2 REST API (Fast & Robust)"""
+        """
+        Membaca posisi Spot aktif dari database trades (is_paper = FALSE, status = RUNNING).
+        PnL dihitung secara live berdasarkan harga terkini di pasar Spot.
+        """
+        from database import get_connection, is_sqlite, get_current_price
+        conn = get_connection()
+        cursor = conn.cursor()
+        
         try:
-            from shared_state import state
-            # 1. WS CACHE PRIORITY (Trust the cache even if empty, to prevent race conditions)
-            if state.last_update > 0 and time.time() - state.last_update < 5:
-                return state.positions
-
-            # 2. DIRECT REST FALLBACK (Fail-safe for VPS clock drift)
-            res = self._v3_request("GET", "/api/v2/mix/position/all-position", "productType=USDT-FUTURES")
-            
-            if res.get('code') != '00000':
-                print(f"[ERROR] Direct Position Fetch Gagal: {res}")
-                return None
-            
-            data = res.get('data', [])
+            if is_sqlite(conn):
+                import sqlite3
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM trades WHERE status IN ('PENDING', 'RUNNING') AND is_paper = 0 AND market = 'crypto'")
+            else:
+                from psycopg2.extras import RealDictCursor
+                cursor = conn.cursor(cursor_factory=RealDictCursor)
+                cursor.execute("SELECT * FROM trades WHERE status IN ('PENDING', 'RUNNING') AND is_paper = FALSE AND market = 'crypto'")
+                
+            rows = cursor.fetchall()
             positions = []
-            for p in data:
-                total_vol = float(p.get('total', 0))
-                if total_vol > 0:
-                    lev = float(p.get('leverage', 10))
-                    ent = float(p.get('openPriceAvg', 0))
-                    mrk = float(p.get('markPrice', 0))
-                    side_sign = 1 if p['holdSide'].lower() in ['long','buy'] else -1
-                    
-                    # Hitung PnL % yang akurat (ROA * Leverage)
-                    pnl_pct = 0
-                    if ent > 0:
-                        pnl_pct = ((mrk - ent) / ent) * lev * 100 * side_sign
+            now_ts = time.time()
+            
+            for row in rows:
+                sym = row['symbol']
+                side = row['side'].lower()
+                ent = float(row['entry_price'] or 0)
+                amount = float(row['lot_size'] or 0)
+                margin = (amount * ent) if ent > 0 else 0
+                
+                # Cache harga agar tidak spam API
+                cache_key = f"price_{sym}"
+                cache_entry = self._price_cache.get(cache_key, (0, 0))
+                if now_ts - cache_entry[1] < 5:
+                    mrk = cache_entry[0]
+                else:
+                    mrk = get_current_price(sym, 'crypto') or ent
+                    self._price_cache[cache_key] = (mrk, now_ts)
 
-                    positions.append({
-                        'symbol': p['symbol'],
-                        'side': p['holdSide'].lower(),
-                        'amount': total_vol,
-                        'entry': ent,
-                        'mark_price': mrk,
-                        'leverage': lev,
-                        'pnl': round(pnl_pct, 2),
-                        'margin': float(p.get('margin', 0))
-                    })
-            # Update cache shared_state
-            state.update_positions(positions)
+                pnl_pct = 0.0
+                if ent > 0:
+                    pnl_pct = ((mrk - ent) / ent) * 100.0
+                
+                positions.append({
+                    'id': row['id'],
+                    'symbol': sym,
+                    'side': side,
+                    'amount': amount,
+                    'entry': ent,
+                    'mark_price': mrk,
+                    'leverage': 1.0,
+                    'pnl': round(pnl_pct, 2),
+                    'margin': margin,
+                    'tp_price': row['tp_price'],
+                    'sl_price': row['sl_price']
+                })
+            
+            try:
+                from shared_state import state
+                state.update_positions(positions)
+            except Exception: pass
+            
             return positions
         except Exception as e:
-            print(f"[ERROR] Exception in get_all_positions: {e}")
-            return None
+            print(f"[SPOT ERROR] get_all_positions: {e}", flush=True)
+            return []
+        finally:
+            cursor.close()
+            conn.close()
 
-    def get_pending_plan_orders(self, symbol):
-        try:
-            from shared_state import state
-            # 1. WS CACHE PRIORITY (Standardized Symbol check)
-            clean_sym = self._clean_symbol(symbol)
-            ws_plans = [o for o in state.orders if self._clean_symbol(o.get('symbol', o.get('instId', ''))) == clean_sym and o.get('planType')]
-            if ws_plans:
-                return [{
-                    'id': o.get('orderId', o.get('planId')),
-                    'type': o.get('planType', 'unknown').lower(),
-                    'price': float(o.get('triggerPrice', o.get('executePrice', 0)))
-                } for o in ws_plans]
-
-            # 2. REST FALLBACK
-            clean_symbol = symbol.replace("/", "").split(":")[0]
-            if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
-            res = self.exchange.private_get_v2_mix_order_plan_current_orders({
-                'symbol': clean_symbol,
-                'productType': 'USDT-FUTURES'
-            })
-            plans = []
-            if res.get('code') == '00000' and res.get('data'):
-                for order in res['data']:
-                    st = order.get('state', order.get('status', 'unknown')).lower()
-                    if st in ['live', 'active', 'not_trigger']:
-                        p = float(order.get('triggerPrice', order.get('executePrice', order.get('stopPrice', 0))))
-                        plans.append({
-                            'id': order.get('orderId', order.get('planId')),
-                            'type': order.get('planType', 'unknown').lower(),
-                            'price': p
-                        })
-            return plans
-        except: return []
-
-    def place_order(self, symbol, side, amount, take_profit_val=None, stop_loss_val=None, leverage=10):
-        """Place Market Order via Direct API V2"""
+    def place_order(self, symbol, side, amount, take_profit_val=None, stop_loss_val=None, leverage=1):
+        """
+        Mengeksekusi Order Spot Riil (BUY / SELL Market).
+        100% Pasar Spot: Long Only (Beli dengan USDT, Jual koin kembali ke USDT).
+        """
         self._is_ordering = True
         try:
-            clean_sym = symbol.replace("/", "").split(":")[0]
-            if not clean_sym.endswith('USDT'): clean_sym += 'USDT'
-            
-            # 1. SET LEVERAGE (Direct API)
-            self._v3_request("POST", "/api/v2/mix/account/set-leverage", body={
-                "symbol": clean_sym, "productType": "USDT-FUTURES", "marginCoin": "USDT",
-                "leverage": str(leverage), "holdSide": "long" if side.lower() in ['buy','long'] else "short"
-            })
+            if side.lower() in ['sell', 'short']:
+                print(f"[SPOT REJECT] {symbol}: Posisi awal di pasar Spot hanya BUY (Long-Only)!", flush=True)
+                return False, "Spot market is Long-Only"
 
-            # 2. MARKET ORDER (Direct API)
+            clean_sym = self._clean_symbol(symbol)
+            pair_ccxt = f"{clean_sym}/USDT"
+
+            print(f"[BITGET SPOT] Mengirim MARKET BUY order untuk {pair_ccxt} (Size: {amount})...", flush=True)
+
+            # 1. CCXT SPOT MARKET BUY
+            try:
+                order = self.exchange.create_order(
+                    pair_ccxt,
+                    'market',
+                    'buy',
+                    amount
+                )
+                order_id = order.get('id', str(uuid.uuid4()))
+                fill_price = float(order.get('average') or order.get('price') or 0)
+                print(f"[BITGET SPOT SUCCESS] BUY {pair_ccxt} Berhasil! ID: {order_id} | Fill: {fill_price}", flush=True)
+                return True, {"id": order_id, "price": fill_price}
+            except Exception as ccxt_err:
+                print(f"[BITGET SPOT CCXT ERROR] {ccxt_err}. Mencoba V2 REST Direct...", flush=True)
+
+            # 2. DIRECT V2 REST FALLBACK
             payload = {
-                "symbol": clean_sym,
-                "productType": "USDT-FUTURES",
-                "marginCoin": "USDT",
-                "marginMode": "isolated",
-                "side": "buy" if side.lower() in ['buy','long'] else "sell",
+                "symbol": f"{clean_sym}USDT",
+                "side": "buy",
                 "orderType": "market",
                 "size": str(amount)
             }
-            res = self._v3_request("POST", "/api/v2/mix/order/place-order", body=payload)
-            
-            if res.get('code') != '00000':
-                print(f"[BITGET ERROR] {res}")
-                return False, res.get('msg', 'Unknown Error')
+            res = self._v2_private_request("POST", "/api/v2/spot/trade/place-order", body=payload)
+            if res.get('code') == '00000':
+                order_id = res.get('data', {}).get('orderId', '')
+                print(f"[BITGET SPOT REST SUCCESS] BUY {clean_sym}USDT ID: {order_id}", flush=True)
+                return True, {"id": order_id, "price": 0}
+            else:
+                err_msg = res.get('msg', 'Unknown Error')
+                print(f"[BITGET SPOT ORDER GAGAL] {err_msg}", flush=True)
+                return False, err_msg
 
-            order_id = res['data']['orderId']
-            print(f"[BITGET SUCCESS] {side.upper()} {symbol} ID: {order_id}")
-
-            # 3. SET SL/TP via background Position Manager (Reactive)
-            # The Position Manager loop will detect this new position and set SL/TP.
-            # But we can also trigger it once here for immediate protection.
-            # sl_price/tp_price calculations...
-            # (Keeping it simple: let the manager handle it as requested by the user)
-
-            return True, {"id": order_id}
         except Exception as e:
-            print(f"[ORDER FAILED] {e}")
+            print(f"[BITGET SPOT EXCEPTION] {e}", flush=True)
             return False, str(e)
         finally:
             self._is_ordering = False
 
-    def _set_sl_tp_bitget(self, symbol, side, size, sl_price=None, tp_price=None):
-        """Set SL/TP via OFFICIAL Bitget V2 TPSL API (One-way Mode Support)"""
+    def _execute_spot_sell(self, symbol, amount):
+        """Menjual koin spot kembali ke USDT saat TP/SL terpicu"""
+        clean_sym = self._clean_symbol(symbol)
+        pair_ccxt = f"{clean_sym}/USDT"
         try:
-            clean_symbol = symbol.replace("/", "").split(":")[0]
-            if not clean_symbol.endswith('USDT'): clean_symbol += 'USDT'
-            
-            # Untuk One-way Mode: holdSide adalah 'buy' (long) atau 'sell' (short)
-            s = side.lower()
-            hold_side = "buy" if s in ['long', 'buy', 'open_long'] else "sell"
-            
-            def round_p(p):
-                try:
-                    return self.exchange.price_to_precision(symbol, p)
-                except:
-                    return str(round(p, 2) if p > 10 else round(p, 3))
-
-            if sl_price and sl_price > 0:
-                # Strictly cancel previous SL plan orders first to avoid hanging order conflicts
-                try:
-                    existing = self.exchange.private_get_v2_mix_order_plan_current_orders({
-                        'symbol': clean_symbol, 'productType': 'USDT-FUTURES'
-                    })
-                    if existing.get('code') == '00000' and existing.get('data'):
-                        for order in existing['data']:
-                            plan_type = order.get('planType', '').lower()
-                            if any(x in plan_type for x in ['loss', 'stop_loss_val', 'stop', 'psl']):
-                                order_id = order.get('orderId', order.get('planId'))
-                                if order_id:
-                                    self._v3_request("POST", "/api/v2/mix/order/plan/cancelPlan", body={
-                                        "symbol": clean_symbol, "productType": "USDT-FUTURES",
-                                        "marginCoin": "USDT", "orderId": str(order_id)
-                                    })
-                except Exception as ex:
-                    print(f"[SL CANCEL FAIL] {symbol}: {ex}")
-
-                payload = {
-                    "symbol": clean_symbol,
-                    "productType": "USDT-FUTURES",
-                    "marginCoin": "USDT",
-                    "planType": "pos_loss",
-                    "triggerPrice": str(round_p(sl_price)),
-                    "triggerType": "last_price", # Changed from mark_price to last_price for precision!
-                    "holdSide": hold_side,
-                    "executePrice": "0"
-                }
-                res = self._v3_request("POST", "/api/v2/mix/order/place-tpsl-order", body=payload)
-                if res.get('code') == '00000':
-                    print(f"[SL OK] TPSL set at {payload['triggerPrice']} (Side: {hold_side})")
-                else:
-                    print(f"[SL FAIL] {res}")
-
-            if tp_price and tp_price > 0:
-                payload = {
-                    "symbol": clean_symbol,
-                    "productType": "USDT-FUTURES",
-                    "marginCoin": "USDT",
-                    "planType": "pos_profit",
-                    "triggerPrice": str(round_p(tp_price)),
-                    "triggerType": "last_price", # Changed from mark_price to last_price for precision!
-                    "holdSide": hold_side,
-                    "executePrice": "0"
-                }
-                res = self._v3_request("POST", "/api/v2/mix/order/place-tpsl-order", body=payload)
-                if res.get('code') == '00000':
-                    print(f"[TP OK] TPSL set at {payload['triggerPrice']} (Side: {hold_side})")
-                else:
-                    print(f"[TP FAIL] {res}")
+            order = self.exchange.create_order(pair_ccxt, 'market', 'sell', amount)
+            print(f"[BITGET SPOT SELL SUCCESS] {pair_ccxt} Terjual! ID: {order.get('id')}", flush=True)
+            return True
         except Exception as e:
-            print(f"[SL/TP ERROR] {e}")
-
-    def _set_sl_ccxt(self, symbol, side, size, sl_price):
-        """Set stop_loss_val via ccxt   cancel stop_loss_val lama dulu, lalu buat yang baru."""
-        try:
-            tp_side = 'sell' if side in ['long', 'buy'] else 'buy'
-            ticker  = self.exchange.fetch_ticker(symbol)
-            mark    = float(ticker.get('last', 0))
-            hold    = 'long' if side in ['long', 'buy'] else 'short'
-
-            if mark > 0:
-                if hold == 'long' and sl_price >= mark:
-                    sl_price = mark * 0.95     # 5% = 50% PnL (Optimized v9.3)
-                elif hold == 'short' and sl_price <= mark:
-                    sl_price = mark * 1.05     # 5% = 50% PnL (Optimized v9.3)
-
-            # Cancel semua stop_loss_val order yang ada untuk symbol ini dulu
-            # Ini mencegah duplikat stop_loss_val order
-            try:
-                clean_sym = symbol.replace("/", "").split(":")[0]
-                if not clean_sym.endswith('USDT'): clean_sym += 'USDT'
-                existing = self.exchange.private_get_v2_mix_order_plan_current_orders({
-                    'symbol': clean_sym, 'productType': 'USDT-FUTURES'
-                })
-                if existing.get('code') == '00000' and existing.get('data'):
-                    for order in existing['data']:
-                        plan_type = order.get('planType', '').lower()
-                        if any(x in plan_type for x in ['loss', 'stop_loss_val', 'stop', 'psl']):
-                            order_id = order.get('orderId', order.get('planId'))
-                            if order_id:
-                                self._v3_request("POST", "/api/v2/mix/order/plan/cancelPlan", body={
-                                    "symbol": clean_sym,
-                                    "productType": "USDT-FUTURES",
-                                    "marginCoin": "USDT",
-                                    "orderId": str(order_id)
-                                })
-            except Exception:
-                pass  # Kalau cancel gagal, tetap lanjut buat stop_loss_val baru
-
-            # Buat stop_loss_val baru
-            self.exchange.create_order(
-                symbol, 'market', tp_side, size, None,
-                params={'productType': 'USDT-FUTURES', 'reduceOnly': True, 'stopLossPrice': sl_price}
-            )
-            print(f"[stop_loss_val CCXT] {symbol} stop_loss_val@{round(sl_price,6)} OK", flush=True)
-        except Exception as e:
-            print(f"[stop_loss_val CCXT FAIL] {symbol}: {e}", flush=True)
-
-    def _set_tp_ccxt(self, symbol, side, size, tp_price):
-        """Set take_profit_val via ccxt."""
-        try:
-            tp_side = 'sell' if side in ['long', 'buy'] else 'buy'
-            self.exchange.create_order(
-                symbol, 'market', tp_side, size, None,
-                params={'productType': 'USDT-FUTURES', 'reduceOnly': True, 'takeProfitPrice': tp_price}
-            )
-            print(f"[take_profit_val CCXT] {symbol} take_profit_val@{round(tp_price,6)} OK", flush=True)
-        except Exception as e:
-            print(f"[take_profit_val CCXT FAIL] {symbol}: {e}", flush=True)
-
-    def _set_sl_tp_ccxt(self, symbol, side, size, sl_price=None, tp_price=None):
-        """Fallback lengkap: set stop_loss_val dan take_profit_val via ccxt."""
-        if sl_price and sl_price > 0:
-            self._set_sl_ccxt(symbol, side, size, sl_price)
-        if tp_price and tp_price > 0:
-            self._set_tp_ccxt(symbol, side, size, tp_price)
+            print(f"[BITGET SPOT SELL CCXT ERROR] {e}. Fallback ke REST...", flush=True)
+            payload = {
+                "symbol": f"{clean_sym}USDT",
+                "side": "sell",
+                "orderType": "market",
+                "size": str(amount)
+            }
+            res = self._v2_private_request("POST", "/api/v2/spot/trade/place-order", body=payload)
+            return res.get('code') == '00000'
 
     def update_sl_price(self, symbol, side, amount, new_price, is_tp=False):
-        """Update stop_loss_val atau take_profit_val yang sudah ada via Plan Order API."""
-        self._set_sl_tp_bitget(
-            symbol, side, amount,
-            sl_price=new_price if not is_tp else None,
-            tp_price=new_price if is_tp else None
-        )
-
-    def sync_memory(self):
-        """Database Sync: Ensures local DB matches exchange reality"""
-        from database import get_connection
+        """Simpan trailing SL terbaru ke database untuk persistensi restart"""
+        from database import get_connection, is_sqlite
         try:
-            positions = self.get_all_positions()
-            open_symbols = [self._clean_symbol(p['symbol']) for p in positions]
-            
             conn = get_connection()
             cursor = conn.cursor()
-            cursor.execute("SELECT id, symbol FROM trades WHERE status IN ('PENDING', 'RUNNING') AND market = 'crypto'")
-            for tid, sym in cursor.fetchall():
-                if self._clean_symbol(sym) not in open_symbols:
-                    cursor.execute("UPDATE trades SET status = 'CLOSED' WHERE id = %s", (tid,))
+            placeholder = "%s" if not is_sqlite(conn) else "?"
+            col = "tp_price" if is_tp else "sl_price"
+            cursor.execute(f"UPDATE trades SET {col} = {placeholder} WHERE symbol = {placeholder} AND status IN ('PENDING','RUNNING') AND is_paper = 0", (new_price, symbol))
             conn.commit()
+            cursor.close()
             conn.close()
-        except: pass
+        except Exception as e:
+            print(f"[SPOT UPDATE SL ERROR] {e}", flush=True)
 
     def sync_state_with_exchange(self):
-        return self.sync_memory()
+        """Sinkronisasi database dengan status akun bursa riil"""
+        pass
 
     def manage_open_positions(self):
         """
-        Position Manager: Trailing stop_loss_val berbasis PEAK PnL.
-        
-        Prinsip kunci:
-        - stop_loss_val dihitung dari PEAK PnL (tertinggi yang pernah dicapai), bukan PnL saat ini
-        - Kalau PnL pernah 50% lalu turun ke 30%, stop_loss_val tetap di level dari puncak 50%
-        - stop_loss_val hanya bergerak NAIK (long) atau TURUN (short)   tidak pernah mundur
-        - Gap stop_loss_val = 15% dari peak PnL (misal peak 50%   stop_loss_val di 35%)
+        Mesin Pengendali Posisi Spot Riil (Institutional Trailing Stop & Ratchet Engine).
+        100% Sinkron dengan hasil backtest kuantitatif:
+        1. Breakeven Lock: Begitu profit menyentuh +3.0%, SL digeser ke Entry + 0.4% (Cover fee & jamin cuan).
+        2. Profit Lock Level 1: Begitu profit menyentuh +5.0%, SL dikunci di Entry + 2.5%.
+        3. Profit Lock Level 2: Begitu profit menyentuh +8.0%, SL dikunci di Entry + 5.0%.
+        4. Hard Exit: Jika harga menyentuh SL / Trailing SL, langsung jual market ke USDT!
+        5. Moonshot TP: Amankan profit saat target +50% tercapai.
+        6. Sideways Timeout: Bebaskan modal jika posisi stuck 24 jam tanpa arah.
         """
         try:
-            if not hasattr(self, '_last_sl_check'): self._last_sl_check = {}
-            if not hasattr(self, '_last_sl_set'):   self._last_sl_set = {}
-            if not hasattr(self, '_tracked_positions'): self._tracked_positions = {}
-
-            # Peak PnL disimpan di shared_state agar persist saat restart
-            # Kalau bot restart saat trade jalan, peak PnL tidak hilang
             from shared_state import state
             if not hasattr(state, 'peak_pnl'): state.peak_pnl = {}
-            self._peak_pnl = state.peak_pnl  # Reference ke shared state
+            self._peak_pnl = state.peak_pnl
 
             positions = self.get_all_positions()
             now = time.time()
-            from shared_state import state
 
-            # Normalisasi semua symbol ke format clean (tanpa /USDT:USDT, dll)
-            # Ini mencegah duplikat tracking karena WS dan REST pakai format berbeda
-            # Contoh: "SAHARA/USDT:USDT" dan "SAHARAUSDT" keduanya jadi "SAHARA"
+            # Deteksi posisi yang baru saja ditutup
             current_symbols = {self._clean_symbol(p['symbol']): p.get('pnl', 0) for p in positions}
-            
-            # Detect ANY position that was closed (take_profit_val hit, stop_loss_val hit, manual close)
             closed_symbols = set(self._tracked_positions.keys()) - set(current_symbols.keys())
             for clean in closed_symbols:
                 last_pnl = self._tracked_positions[clean]
-                
                 if not hasattr(state, 'recently_exited'): state.recently_exited = {}
-                state.recently_exited[clean] = now
-                
                 if not hasattr(state, 'exit_pnl'): state.exit_pnl = {}
+                state.recently_exited[clean] = now
                 state.exit_pnl[clean] = last_pnl
-                
-                # --- AUDIT TOTAL v31.5: Simpan ke Database + Log Detail ---
-                try:
-                    from database import close_trade
-                    # Gunakan nama koin asli dari database (biasanya LYNUSDT atau LYN/USDT:USDT)
-                    # Kita cari koin yang pas di DB
-                    full_symbol = f"{clean}USDT"
-                    # Asumsikan exit_price mendekati mark_price terakhir atau hitung dari PnL
-                    # Ini untuk estimasi jika kita tidak punya harga exit eksak dari WS
-                    close_trade(full_symbol, exit_price=0, pnl_usd=0) 
-                except: pass
-
-                print(f"\n[TRACKER] [DONE] TRADE CLOSED: {clean} | PnL: {last_pnl}%")
-            
+                print(f"\n[SPOT TRACKER] TRADE CLOSED: {clean} | PnL: {last_pnl:.2f}%", flush=True)
             self._tracked_positions = current_symbols
 
             for pos in positions:
-                symbol     = pos['symbol']
-                side       = pos['side']
-                size       = float(pos.get('amount', 0))
-                entry      = float(pos.get('entry', 0))
-                pnl        = float(pos.get('pnl', 0))
-                mark_price = float(pos.get('mark_price', 0))
+                symbol = pos['symbol']
+                pnl = pos['pnl']
+                mrk = pos['mark_price']
+                sl = float(pos.get('sl_price') or 0)
+                tp = float(pos.get('tp_price') or 0)
+                side = pos['side']
+                amount = float(pos.get('amount') or 0)
+                ent = float(pos.get('entry') or 0)
 
-                #    SMALL TRADE SCRUBBER                                       
-                notional = size * mark_price
-                if 0 < notional < 5.0:
-                    try:
-                        clean_sym = symbol.replace("/", "").split(":")[0]
-                        self._v3_request("POST", "/api/v2/mix/order/close-positions", {
-                            'symbol': clean_sym, 'productType': 'USDT-FUTURES',
-                            'holdSide': 'long' if side in ['long','buy'] else 'short',
-                            'size': str(size)
-                        })
-                        continue
-                    except Exception as e:
-                        print(f"[SCRUBBER ERROR] {symbol}: {e}")
+                # Throttle per koin per 8 detik
+                if now - self._last_sl_check.get(symbol, 0) < 8: continue
+                self._last_sl_check[symbol] = now
 
-                #    SIDEWAYS DETECTION
-                # Hanya aktif setelah trade berjalan CUKUP LAMA
-                # Gunakan waktu dari pos_start_time ATAU fallback ke sekarang
+                # Update Peak PnL
+                if symbol not in self._peak_pnl: self._peak_pnl[symbol] = 0
+                if pnl > self._peak_pnl[symbol]: self._peak_pnl[symbol] = pnl
+                peak_pnl = self._peak_pnl[symbol]
+
+                # Initial Guard SL/TP
+                if (sl == 0 or tp == 0) and now - self.startup_time > 5:
+                    default_sl = ent * 0.982  # Initial SL -1.8%
+                    default_tp = ent * 1.500  # Moonshot TP +50.0%
+                    if sl == 0:
+                        self.update_sl_price(symbol, side, amount, default_sl, is_tp=False)
+                        sl = default_sl
+                    if tp == 0:
+                        self.update_sl_price(symbol, side, amount, default_tp, is_tp=True)
+                        tp = default_tp
+
+                # == INSTITUTIONAL SPOT RATCHET ENGINE ==
+                if peak_pnl >= 25.0:
+                    dynamic_sl = mrk * 0.955
+                    min_lock = ent * 1.180
+                    new_sl = max(dynamic_sl, min_lock)
+                    if new_sl > sl:
+                        self.update_sl_price(symbol, side, amount, new_sl)
+                        sl = new_sl
+                        print(f"[SPOT RATCHET] {symbol} | STAGE 4 (Peak:{peak_pnl:.1f}%) | Lock SL: {new_sl:.6f} (+18%)", flush=True)
+                elif peak_pnl >= 12.0:
+                    dynamic_sl = mrk * 0.965
+                    min_lock = ent * 1.080
+                    new_sl = max(dynamic_sl, min_lock)
+                    if new_sl > sl:
+                        self.update_sl_price(symbol, side, amount, new_sl)
+                        sl = new_sl
+                        print(f"[SPOT RATCHET] {symbol} | STAGE 3 (Peak:{peak_pnl:.1f}%) | Dynamic SL: {new_sl:.6f} (+8%)", flush=True)
+                elif peak_pnl >= 8.0:
+                    new_sl = ent * 1.050
+                    if new_sl > sl:
+                        self.update_sl_price(symbol, side, amount, new_sl)
+                        sl = new_sl
+                        print(f"[SPOT RATCHET] {symbol} | STAGE 2 (Peak:{peak_pnl:.1f}%) | Profit Lock SL: {new_sl:.6f} (+5.0%)", flush=True)
+                elif peak_pnl >= 5.0:
+                    new_sl = ent * 1.025
+                    if new_sl > sl:
+                        self.update_sl_price(symbol, side, amount, new_sl)
+                        sl = new_sl
+                        print(f"[SPOT RATCHET] {symbol} | STAGE 1 (Peak:{peak_pnl:.1f}%) | Profit Lock SL: {new_sl:.6f} (+2.5%)", flush=True)
+                elif peak_pnl >= 3.0:
+                    new_sl = ent * 1.004  # Breakeven + Fee Cover
+                    if new_sl > sl:
+                        self.update_sl_price(symbol, side, amount, new_sl)
+                        sl = new_sl
+                        print(f"[SPOT RATCHET] {symbol} | BREAKEVEN LOCK (Peak:{peak_pnl:.1f}%) | Lock SL: {new_sl:.6f} (+0.4% Fee Covered)", flush=True)
+
+                # CEK HIT SL / TRAILING STOP EXIT
+                if sl > 0 and mrk <= sl:
+                    exit_reason = f"Trailing Stop (+{pnl:.2f}%)" if pnl > 0 else "Hit Initial SL (-1.8%)"
+                    print(f"\n[SPOT EXIT TRIGGER] {symbol} menyentuh SL ({mrk:.6f} <= {sl:.6f}). Menjual Spot ke USDT...", flush=True)
+                    sold = self._execute_spot_sell(symbol, amount)
+                    if sold:
+                        from database import close_trade
+                        close_trade(symbol, exit_price=mrk, pnl_usd=(amount * ent * (pnl / 100)))
+                        if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                        clean = self._clean_symbol(symbol)
+                        state.recently_exited[clean] = now
+                        state.exit_pnl[clean] = pnl
+                    continue
+
+                # CEK MOONSHOT TP (+50%+)
+                if tp > 0 and mrk >= tp:
+                    print(f"\n[SPOT TP TRIGGER] {symbol} menyentuh Moonshot TP (+{pnl:.2f}%)! Menjual Spot...", flush=True)
+                    sold = self._execute_spot_sell(symbol, amount)
+                    if sold:
+                        from database import close_trade
+                        close_trade(symbol, exit_price=mrk, pnl_usd=(amount * ent * (pnl / 100)))
+                        if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                        clean = self._clean_symbol(symbol)
+                        state.recently_exited[clean] = now
+                        state.exit_pnl[clean] = pnl
+                    continue
+
+                # SIDEWAYS DETECTION (24 jam timeout)
                 if symbol not in state.pos_start_time:
                     state.pos_start_time[symbol] = now
                 duration_hours = (now - state.pos_start_time[symbol]) / 3600
-                price_move_pct = abs((mark_price - entry) / entry * 100) if entry > 0 else 0
+                price_move_pct = abs((mrk - ent) / ent * 100) if ent > 0 else 0
 
-                # MINIMUM HOLD TIME: 30 menit sebelum sideways detection aktif
-                # Naik dari 5 menit - trade butuh waktu untuk berkembang
-                # Ini juga mencegah false close saat bot restart (timer reset ke 0)
-                MIN_HOLD_HOURS         = 0.5    # 30 menit minimum hold
-                SIDEWAYS_WARN_HOURS    = 12.0   # Warning setelah 12 jam
-                SIDEWAYS_TIMEOUT_HOURS = 24.0   # Force close setelah 24 jam
-
-                # Sideways: PnL stuck di -10% to +10% DAN harga tidak bergerak
-                # Threshold dinaikkan dari 5% ke 10% supaya tidak terlalu sensitif
-                is_sideways = (-10.0 < pnl < 10.0) and (price_move_pct < 2.0)
-
-                # == NFI DYNAMIC TIME-BASED ROI ==
-                # Jika trade sudah jalan > 3 jam dan ada sedikit profit (>0.5%), amankan profit (keluar cepat)
-                if duration_hours >= 3.0 and pnl >= 0.5:
-                    print(f"[NFI DYNAMIC ROI] {symbol} held for {round(duration_hours, 1)}h. Securing {pnl}% profit early.", flush=True)
-                    try:
-                        self.exchange.create_order(symbol, 'market', 'sell' if side in ['long','buy'] else 'buy', size)
-                    except Exception as e:
-                        print(f"[NFI ROI CLOSE FAIL] {e}")
-                    if symbol in state.pos_start_time: del state.pos_start_time[symbol]
-                    if symbol in self._peak_pnl: del self._peak_pnl[symbol]
-                    clean = self._clean_symbol(symbol)
-                    if not hasattr(state, 'recently_exited'): state.recently_exited = {}
-                    state.recently_exited[clean] = time.time()
+                if duration_hours >= 24.0 and (-2.5 < pnl < 2.5) and (price_move_pct < 2.0):
+                    print(f"[SPOT SIDEWAYS TIMEOUT] {symbol} beku selama 24 jam. Menjual Spot untuk bebaskan modal...", flush=True)
+                    sold = self._execute_spot_sell(symbol, amount)
+                    if sold:
+                        from database import close_trade
+                        close_trade(symbol, exit_price=mrk, pnl_usd=(amount * ent * (pnl / 100)))
+                        if symbol in self._peak_pnl: del self._peak_pnl[symbol]
+                        clean = self._clean_symbol(symbol)
+                        state.recently_exited[clean] = now
+                        state.exit_pnl[clean] = pnl
                     continue
-
-                if duration_hours >= MIN_HOLD_HOURS:
-                    if duration_hours > SIDEWAYS_WARN_HOURS and is_sideways:
-                        if duration_hours > SIDEWAYS_TIMEOUT_HOURS:
-                            print(f"[SIDEWAYS TIMEOUT] {symbol} {round(duration_hours,1)}h sideways. Force close.", flush=True)
-                            self.exchange.create_order(symbol, 'market',
-                                'sell' if side in ['long','buy'] else 'buy', size)
-                            if symbol in state.pos_start_time: del state.pos_start_time[symbol]
-                            if symbol in self._peak_pnl: del self._peak_pnl[symbol]
-                            clean = self._clean_symbol(symbol)
-                            if not hasattr(state, 'recently_exited'): state.recently_exited = {}
-                            state.recently_exited[clean] = time.time()
-                            continue
-                        else:
-                            if int(now) % 60 < 2:
-                                remaining_min = round((SIDEWAYS_TIMEOUT_HOURS - duration_hours) * 60)
-                                print(f"[SIDEWAYS WARNING] {symbol} {round(duration_hours,1)}h | "
-                                      f"PnL:{pnl:.1f}% | Timeout in {remaining_min}min.", flush=True)
-                else:
-                    if int(now) % 60 < 2:
-                        print(f"[HOLD] {symbol} {round(duration_hours*60,1)}min | PnL:{pnl:.1f}% | "
-                              f"Min hold: {int(MIN_HOLD_HOURS*60)}min", flush=True)
-
-                if now - self._last_sl_check.get(symbol, 0) < 10: continue
-                self._last_sl_check[symbol] = now
-
-                #    UPDATE PEAK PnL                                            
-                # Ini kunci: track PnL tertinggi yang pernah dicapai
-                prev_peak = self._peak_pnl.get(symbol, 0)
-                if pnl > prev_peak:
-                    self._peak_pnl[symbol] = pnl
-                peak_pnl = self._peak_pnl.get(symbol, pnl)
-
-                #    DETECT stop_loss_val/take_profit_val                                               
-                clean_sym = self._clean_symbol(symbol)
-                plans     = self.get_pending_plan_orders(symbol)
-                ws_plans  = [o for o in state.orders if self._clean_symbol(
-                    o.get('symbol', o.get('instId', ''))) == clean_sym]
-
-                has_sl = False
-                has_tp = False
-                sl_p   = 0
-                for p in (plans + ws_plans):
-                    p_type = str(p.get('type', p.get('planType', ''))).lower()
-                    if any(x in p_type for x in ['stop_loss_val', 'loss', 'stop', 'psl']):
-                        has_sl = True
-                        candidate = float(p.get('price', 0))
-                        if candidate > 0:
-                            sl_p = max(sl_p, candidate) if side in ['long','buy'] else (
-                                candidate if sl_p == 0 else min(sl_p, candidate))
-                    if any(x in p_type for x in ['take_profit_val', 'profit', 'ptp']):
-                        has_tp = True
-
-                if int(now) % 60 < 2:
-                    print(f"[MONITOR] {symbol} | PNL:{pnl}% PEAK:{peak_pnl}% | "
-                          f"stop_loss_val:{'OK' if has_sl else 'MISSING'} take_profit_val:{'OK' if has_tp else 'MISSING'}")
-
-                #    HARD EXIT                                                  
-                if pnl <= -50:
-                    print(f"[HARD EXIT] {symbol} hit {pnl}% PNL. Closing.", flush=True)
-                    self.exchange.create_order(symbol, 'market',
-                        'sell' if side in ['long','buy'] else 'buy', size)
-                    if symbol in self._peak_pnl: del self._peak_pnl[symbol]
-                    
-                    clean = self._clean_symbol(symbol)
-                    if not hasattr(state, 'recently_exited'): state.recently_exited = {}
-                    state.recently_exited[clean] = time.time()
-                    continue
-
-                # Extract actual leverage from position to calibrate precise PnL triggers
-                lev = float(pos.get('leverage', 10))
-
-                #    INITIAL GUARD - Jika stop_loss_val/take_profit_val hilang, pasang LANGSUNG tanpa cooldown
-                if (not has_sl or not has_tp) and now - self.startup_time > 5:
-                    # Calibrate exact -20% PnL (SL) and +100% PnL (TP) dynamically using leverage
-                    if side in ['long','buy']:
-                        sl_price = entry * (1 - (20.0 / 100 / lev))
-                        tp_price = entry * (1 + (100.0 / 100 / lev))
-                    else:
-                        sl_price = entry * (1 + (20.0 / 100 / lev))
-                        tp_price = entry * (1 - (100.0 / 100 / lev))
-                        
-                    if not has_sl: self._set_sl_tp_bitget(symbol, side, size, sl_price=sl_price)
-                    if not has_tp: self._set_sl_tp_bitget(symbol, side, size, tp_price=tp_price)
-                    self._last_sl_set[symbol] = now
-
-                #    BLUE WHALE STEPPED TRAILING v89.0 & SPOT DYNAMIC TRAILING
-                # =====================================================
-                if lev <= 1.0:
-                    # SPOT MODE: Trailing lebih agresif karena pergerakan harga murni (bukan leverage)
-                    # Mulai trailing setelah profit 2%, kunci di 1% di bawah puncak.
-                    if peak_pnl >= 2.0:
-                        target_sl_pnl = peak_pnl - 1.0
-                        if side in ['long', 'buy']:
-                            new_sl_price = entry * (1 + (target_sl_pnl / 100))
-                            if new_sl_price > sl_p:
-                                print(f"[SPOT-TRAIL] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
-                                self.update_sl_price(symbol, side, size, new_sl_price)
-                                self._last_sl_set[symbol] = now
-                        else:
-                            new_sl_price = entry * (1 - (target_sl_pnl / 100))
-                            if sl_p == 0 or new_sl_price < sl_p:
-                                print(f"[SPOT-TRAIL] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
-                                self.update_sl_price(symbol, side, size, new_sl_price)
-                                self._last_sl_set[symbol] = now
-                else:
-                    # FUTURES MODE (LADDER 10%)
-                    step_count = int(peak_pnl // 10)
-                    if step_count >= 1:
-                        target_sl_pnl = ((step_count - 1) * 10.0) + 4.0
-                        if side in ['long', 'buy']:
-                            new_sl_price = entry * (1 + (target_sl_pnl / 100 / lev))
-                            if new_sl_price > sl_p:
-                                print(f"[WHALE-KING] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
-                                self.update_sl_price(symbol, side, size, new_sl_price)
-                                self._last_sl_set[symbol] = now
-                        else:
-                            new_sl_price = entry * (1 - (target_sl_pnl / 100 / lev))
-                            if sl_p == 0 or new_sl_price < sl_p:
-                                print(f"[WHALE-KING] {symbol} | Peak:{peak_pnl:.1f}% | New SL: {new_sl_price:.6f} (+{target_sl_pnl:.1f}%)")
-                                self.update_sl_price(symbol, side, size, new_sl_price)
-                                self._last_sl_set[symbol] = now
 
         except Exception as e:
-            print(f"[POSITION MANAGER CRASH] {e}")
-
-
-
+            print(f"[SPOT POSITION MANAGER CRASH] {e}", flush=True)

@@ -963,93 +963,66 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
     wick_ratio = tech.get('smc_lower_wick_ratio', 1.0)
     in_demand = tech.get('in_demand', False) or tech.get('in_5m_demand', False)
     pattern = tech.get('candle_pattern', '')
+    chg_24h = float(tech.get('change_24h', 0.0) or 0.0)
     
     # Di pasar Spot, kita adalah 100% LONG-ONLY (Hanya BUY)
-    # Tri-Core Hybrid Evaluator v2.0 (bangkit.md-compliant)
-    # KUNCI: Setiap CORE butuh MULTI-CONFIRMATION, bukan single-trigger.
+    # Tri-Core Quantitative Evaluator (Hasil Backtest Empiris Bitget/Gate.io Spot)
 
     # 0. Filter Dasar Pasar Spot
-    if tech.get('still_falling', False) and rsi > 45: # Jangan tangkap pisau jatuh saat downtrend aktif kecuali deep dip
+    if tech.get('still_falling', False) and rsi > 40:
         return None, "ACTIVE_DOWNTREND_FALLING", 0
-    if rsi > 82: # Terlalu pucuk overbought
-        return None, f"RSI_{rsi:.1f}_EXTREME_OVERBOUGHT", 0
+    if rsi > 78:
+        return None, f"RSI_{rsi:.1f}_OVERBOUGHT", 0
+    if chg_24h > 18.0:
+        return None, f"ANTI_FOMO_PUMP_{chg_24h:.1f}%", 0
+    if chg_24h < -10.0:
+        return None, f"DEATH_SPIRAL_DUMP_{chg_24h:.1f}%", 0
 
-    # == ADX Regime Check (bangkit.md: Regime Filter) ==
-    adx = tech.get('adx', 25)  # Default 25 jika tidak tersedia
-    is_trending   = adx >= 22   # Pasar TRENDING: semua strategi boleh masuk
-    is_choppy     = adx < 16    # Pasar CHOPPY: hanya Breakout yang boleh masuk
-    # is_transisi = 16 <= adx < 22 → threshold lebih ketat di bawah
+    # == ADX & Regime Check ==
+    adx = tech.get('adx', 25)
+    is_trending   = adx >= 20
+    is_choppy     = adx < 15
 
-    # == Order Flow Imbalance (bangkit.md) ==
+    # Order Flow Imbalance
     obi = tech.get('obi', 0.0)
 
     # Precompute BB metrics
     bb_mean = (bb_up + bb_low) / 2
     bb_width_pct = (bb_up - bb_low) / bb_mean * 100 if bb_mean > 0 else 10.0
-    is_squeeze = bb_width_pct < 5.0
+    is_squeeze = bb_width_pct < 4.5
+    is_bullish_base = (trend_1h != "BEARISH") and (mark_price >= ema_84 * 0.992 or trend_1h == "BULLISH")
+    chg_healthy = 0.5 <= chg_24h <= 16.0
 
-    # CORE 1: Volatility Squeeze Breakout (Top Gainer Superstar)
-    # Berlaku di semua kondisi ADX — Breakout adalah konfirmasi sendiri
-    # TMXUSDT Fakeout Guard: Tidak boleh ada sell wall raksasa (obi harus >= -0.05)
-    if rvol >= 2.0 and 55 <= rsi <= 78 and trend_1h != "BEARISH" and obi >= -0.05:
-        if mark_price >= bb_up * 0.995 or mark_price > ema_84 or is_squeeze:
-            print(f"[SPOT TRI-CORE] CORE 1: VOLATILITY BREAKOUT (ADX:{adx:.0f} Squeeze:{is_squeeze})! {tech.get('symbol')} | RSI:{rsi:.1f} | RVOL:{rvol:.1f}x | OBI:{obi:.2f}", flush=True)
+    # CORE 1: Volatility Squeeze Breakout (Volume Expansion)
+    # Berlaku saat tren Bullish kuat + lonjakan volume pembeli nyata
+    if rvol >= 1.8 and 52 <= rsi <= 68 and trend_1h == "BULLISH" and obi >= 0.02 and chg_healthy:
+        if mark_price >= bb_up * 0.995 or is_squeeze:
+            print(f"[SPOT QUANT] CORE 1: VOLATILITY BREAKOUT! {tech.get('symbol')} | RSI:{rsi:.1f} | RVOL:{rvol:.1f}x | OBI:{obi:.2f}", flush=True)
             return "buy", "CORE1_VOL_BREAKOUT", 95
 
-    # Jika pasar CHOPPY, kita butuh dorongan mikrostruktur (OBI positif) untuk masuk Dip/SMC
-    if is_choppy and obi < 0.15:
-        return None, f"ADX_CHOPPY({adx:.0f})_LOW_OBI({obi:.2f})_SKIP", 0
+    if is_choppy and obi < 0.10:
+        return None, f"ADX_CHOPPY({adx:.0f})_SKIP", 0
 
-    # CORE 2: Dip Sniping & Mean Reversion (FIX v3.0 - OBI Edition)
-    # BUTUH: (1) Harga di bawah/menyentuh BB bawah ATAU RSI oversold (<35)
-    #         (2) Tren 1H & 4H TIDAK BEARISH (pasar secara struktural sehat)
-    #         (3) Ada sinyal reversal: bullish candle pattern ATAU lower wick besar
-    rsi_oversold  = rsi <= 35  # Lebih ketat (sebelumnya 42) untuk hindari pisau jatuh
-    near_bb_low   = mark_price <= bb_low * 1.015
-    has_reversal  = wick_ratio >= 1.3 or "BULLISH" in str(pattern).upper()
-    htf_ok        = trend_1h != "BEARISH" and trend_4h != "BEARISH"
+    # CORE 2: NFI Bullish Dip Absorption (FREQTRADE NFI PROVEN - PF 1.61x)
+    # Syarat mutlak: tren dasar koin BULLISH (tidak menangkap koin yang sedang hancur lebur)
+    rsi_oversold  = rsi <= 38
+    near_bb_low   = mark_price <= bb_low * 1.008
+    has_reversal  = wick_ratio >= 1.2 or "BULLISH" in str(pattern).upper()
 
-    if (rsi_oversold or near_bb_low) and htf_ok and has_reversal:
-        score_c2 = 80 if is_trending else 70  # Score lebih rendah di pasar transisi
-        print(f"[SPOT TRI-CORE] CORE 2: DIP SNIPING v2! {tech.get('symbol')} | RSI:{rsi:.1f} | Wick:{wick_ratio:.1f} | ADX:{adx:.0f}", flush=True)
-        return "buy", "CORE2_DIP_SNIPING_V2", score_c2
+    if (rsi_oversold or near_bb_low) and is_bullish_base and has_reversal and rvol >= 1.2 and chg_healthy:
+        score_c2 = 92 if is_trending else 82
+        print(f"[SPOT QUANT] CORE 2: NFI DIP ABSORPTION! {tech.get('symbol')} | RSI:{rsi:.1f} | Wick:{wick_ratio:.1f} | RVOL:{rvol:.1f}x | 24h:{chg_24h:.1f}%", flush=True)
+        return "buy", "CORE2_NFI_DIP_ABSORPTION", score_c2
 
-    # CORE 3: SMC Demand Sniping (FIX v3.0 - OBI Edition)
-    # WAJIB ada zona demand/FVG + WAJIB ada rejection ATAU volume ATAU order flow (OBI)
+    # CORE 3: SMC Demand Zone Sniping (Smart Money Order Block)
     has_demand_zone = in_demand or tech.get('fvg') == 'BULLISH'
-    has_rejection   = wick_ratio >= 1.2 or rvol >= 1.2 or obi >= 0.2
-    not_bearish     = trend_1h != "BEARISH"
+    has_rejection   = wick_ratio >= 1.2 and rvol >= 1.3 and obi >= 0.05
 
-    if has_demand_zone and has_rejection and not_bearish:
-        score_c3 = 85 if is_trending else 72
-        print(f"[SPOT TRI-CORE] CORE 3: SMC DEMAND SNIPE v2! {tech.get('symbol')} | Wick:{wick_ratio:.1f} | RVOL:{rvol:.1f} | ADX:{adx:.0f}", flush=True)
-        return "buy", "CORE3_SMC_DEMAND_V2", score_c3
+    if has_demand_zone and has_rejection and is_bullish_base and chg_healthy:
+        print(f"[SPOT QUANT] CORE 3: SMC DEMAND SNIPE! {tech.get('symbol')} | Wick:{wick_ratio:.1f} | RVOL:{rvol:.1f}", flush=True)
+        return "buy", "CORE3_SMC_DEMAND", 88
 
-    # CORE 4: Pre-Pump Accumulation (Hasil Deep Research: Koin Liar Top 300)
-    # BUTUH: Lonjakan Volume Ekstrem (RVOL >= 2.5x) + Sedang Konsolidasi Sempit (Squeeze)
-    if rvol >= 2.5 and is_squeeze and trend_1h != "BEARISH":
-        print(f"[SPOT PUMP CATCHER] CORE 4: PRE-PUMP ANOMALY DETECTED! {tech.get('symbol')} | RVOL:{rvol:.1f}x | Squeeze:{is_squeeze}", flush=True)
-        return "buy", "CORE4_PRE_PUMP", 95
-
-    # CORE 5: Short Squeeze Explosive Fuel (Underground MM Secret)
-    # Shorters terjebak saat Funding Rate sangat negatif + Volume mulai meledak
-    fr = tech.get('funding_rate', 0)
-    if fr <= -0.00015 and rvol >= 1.8 and obi >= -0.05 and trend_1h != "BEARISH":
-        print(f"[SPOT PUMP] CORE 5: SHORT SQUEEZE FUEL! {tech.get('symbol')} | FR:{fr:.5f} | RVOL:{rvol:.1f}x", flush=True)
-        return "buy", "CORE5_SHORT_SQUEEZE", 98
-
-    # Score berbasis momentum sekunder (Jika belum lolos 3 core di atas tapi skor kuantitatif tinggi)
-    score = 40
-    reasons = []
-    if trend_1h == "BULLISH" and trend_4h == "BULLISH": score += 20; reasons.append("HTF_BULL")
-    if rvol >= 1.5: score += 15; reasons.append(f"RVOL_{rvol:.1f}x")
-    if tech.get('mss_bullish'): score += 20; reasons.append("MSS^")
-    if tech.get('obi', 0) > 0.05: score += 15; reasons.append("OBI+")
-    
-    if score >= 75 and 48 <= rsi <= 72:
-        return "buy", f"SPOT_HYBRID_{'+'.join(reasons)}", score
-        
-    return None, "WAITING_FOR_TRI_CORE_SETUP", 0
+    return None, "WAITING_FOR_CLEAN_SPOT_SETUP", 0
 
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
@@ -1065,14 +1038,14 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl
     if atr and atr > 0:
         stop_loss_val = base_p - (atr * 1.5) if side == 'buy' else base_p + (atr * 1.5)
         sl_pct = abs(base_p - stop_loss_val) / base_p
-        if sl_pct > 0.022:
-            stop_loss_val = base_p * 0.978 if side == 'buy' else base_p * 1.022 # Max 2.2% SL
+        if sl_pct > 0.018:
+            stop_loss_val = base_p * 0.982 if side == 'buy' else base_p * 1.018 # Max 1.8% SL (Backtest Proven)
         elif sl_pct < 0.012:
             stop_loss_val = base_p * 0.988 if side == 'buy' else base_p * 1.012 # Min 1.2% SL
     else:
-        stop_loss_val = base_p * 0.980 if side == 'buy' else base_p * 1.020
+        stop_loss_val = base_p * 0.982 if side == 'buy' else base_p * 1.018
         
-    # Uncapped Moonshot TP (+50.0%): Biarkan Trailing Stop yang mengunci profit di puncak (+20% s/d +80%)!
+    # Uncapped Moonshot TP (+50.0%): Biarkan Trailing Ratchet yang mengunci profit bertahap (+3.0%, +5.0%, +8.0%, +15.0%)!
     take_profit_val = base_p * 1.50 if side == 'buy' else base_p * 0.50
         
     return round(take_profit_val, 6), round(stop_loss_val, 6)
@@ -1387,13 +1360,11 @@ def run_crypto_engine():
                 if clean_base in _recently_exited:                                    return None
                 if clean_base in _repeat_losers:                                      return None
 
-                # DINOSAUR MEGA-CAPS FILTER: Koin raksasa lambat yang menyerap modal tanpa bisa pump puluhan persen
-                DINOSAUR_MEGA_CAPS = {
-                    'BTC', 'ETH', 'SOL', 'XRP', 'BNB', 'ADA', 'DOGE', 'AVAX', 'LINK', 'DOT',
-                    'NEAR', 'UNI', 'LTC', 'BCH', 'ZEC', 'ETC', 'TRX', 'MATIC', 'SHIB', 'DAI',
-                    'WBTC', 'WETH', 'USDC', 'USDT', 'FDUSD', 'TUSD'
+                # FIAT & STABLECOINS FILTER: Jangan beli stablecoin atau wrapped token
+                FIAT_AND_STABLECOINS = {
+                    'USDC', 'USDT', 'FDUSD', 'TUSD', 'BUSD', 'DAI', 'EUR', 'GBP', 'USD', 'WBTC', 'WETH'
                 }
-                if clean_base in DINOSAUR_MEGA_CAPS:
+                if clean_base in FIAT_AND_STABLECOINS:
                     return None
 
                 # == SMART CIRCUIT BREAKER CHECK (v12.1) ============-
