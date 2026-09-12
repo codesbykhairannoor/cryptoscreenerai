@@ -455,32 +455,32 @@ class BitgetExecutor:
                         sl = target_sl
                         print(f"[MOONSHOT ESCALATOR] {symbol} 💎 TIER 3 SUPER RUNNER (+{peak_pnl:.1f}%)! Locked +12.0% at {target_sl:.6f}", flush=True)
 
-                # Milestone 2: Expansion Lock (Peak >= +10.0%) -> Lock +7.0% profit
-                elif peak_pnl >= 10.0:
+                # Milestone 2: Expansion Lock (Peak >= +18.0%) -> Lock +12.0% profit
+                elif peak_pnl >= 18.0:
+                    target_sl = round(ent * 1.12, 6)
+                    if target_sl > sl:
+                        self.update_sl_price(symbol, side, amount, target_sl, is_tp=False)
+                        pos['sl_price'] = target_sl
+                        sl = target_sl
+                        print(f"[MOONSHOT ESCALATOR] {symbol} 💎 TIER 2 EXPANSION (+{peak_pnl:.1f}%)! Locked +12.0% at {target_sl:.6f}", flush=True)
+
+                # Milestone 1: Momentum Lock (Peak >= +7.0%) -> Lock +7.0% profit
+                elif peak_pnl >= 7.0:
                     target_sl = round(ent * 1.07, 6)
                     if target_sl > sl:
                         self.update_sl_price(symbol, side, amount, target_sl, is_tp=False)
                         pos['sl_price'] = target_sl
                         sl = target_sl
-                        print(f"[MOONSHOT ESCALATOR] {symbol} 🎯 TIER 2 EXPANSION (+{peak_pnl:.1f}%)! Locked +7.0% at {target_sl:.6f}", flush=True)
+                        print(f"[MOONSHOT ESCALATOR] {symbol} ✨ TIER 1 MOMENTUM (+{peak_pnl:.1f}%)! Locked +7.0% at {target_sl:.6f}", flush=True)
 
-                # Milestone 1: Momentum Lock (Peak >= +5.5%) -> Lock +3.2% profit
-                elif peak_pnl >= 5.5:
-                    target_sl = round(ent * 1.032, 6)
+                # Milestone 0: Breakeven Risk-Free Lock (Peak >= +4.0%) -> Lock +0.4% profit (covers CEX fee)
+                elif peak_pnl >= 4.0:
+                    target_sl = round(ent * 1.004, 6)
                     if target_sl > sl:
                         self.update_sl_price(symbol, side, amount, target_sl, is_tp=False)
                         pos['sl_price'] = target_sl
                         sl = target_sl
-                        print(f"[MOONSHOT ESCALATOR] {symbol} ✨ TIER 1 MOMENTUM (+{peak_pnl:.1f}%)! Locked +3.2% at {target_sl:.6f}", flush=True)
-
-                # Milestone 0: Breakeven Risk-Free Lock (Peak >= +2.5%) -> Lock +0.5% profit
-                elif peak_pnl >= 2.5:
-                    target_sl = round(ent * 1.005, 6)
-                    if target_sl > sl:
-                        self.update_sl_price(symbol, side, amount, target_sl, is_tp=False)
-                        pos['sl_price'] = target_sl
-                        sl = target_sl
-                        print(f"[MOONSHOT ESCALATOR] {symbol} 🛡️ BREAKEVEN LOCKED (+{peak_pnl:.1f}%)! Locked +0.5% at {target_sl:.6f} [RISK-FREE]", flush=True)
+                        print(f"[MOONSHOT ESCALATOR] {symbol} 🛡️ BREAKEVEN LOCKED (+{peak_pnl:.1f}%)! Locked +0.4% at {target_sl:.6f} [RISK-FREE]", flush=True)
 
                 # 1. CEK STOP LOSS / TRAILING SL TRIGGER
                 if sl > 0 and mrk <= sl:
@@ -509,14 +509,14 @@ class BitgetExecutor:
                         state.exit_pnl[clean] = pnl
                     continue
 
-                # SIDEWAYS DETECTION (24 jam timeout)
+                # SIDEWAYS / STAGNATION CAPITAL VELOCITY TIMEOUT (4 jam timeout)
                 if symbol not in state.pos_start_time:
                     state.pos_start_time[symbol] = now
                 duration_hours = (now - state.pos_start_time[symbol]) / 3600
                 price_move_pct = abs((mrk - ent) / ent * 100) if ent > 0 else 0
 
-                if duration_hours >= 24.0 and (-2.5 < pnl < 2.5) and (price_move_pct < 2.0):
-                    print(f"[SPOT SIDEWAYS TIMEOUT] {symbol} beku selama 24 jam. Menjual Spot untuk bebaskan modal...", flush=True)
+                if duration_hours >= 4.0 and (-2.5 < pnl < 2.5) and (price_move_pct < 2.0):
+                    print(f"[SPOT CAPITAL VELOCITY TIMEOUT] {symbol} beku selama 4 jam. Menjual Spot untuk bebaskan modal ke koin runner...", flush=True)
                     sold = self._execute_spot_sell(symbol, amount)
                     if sold:
                         from database import close_trade

@@ -975,13 +975,13 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
         return None, "ACTIVE_DOWNTREND_FALLING", 0
     if rsi > 80:
         return None, f"RSI_{rsi:.1f}_OVERBOUGHT", 0
-    if chg_24h > 18.0:
+    if chg_24h > 32.0:
         return None, f"ANTI_FOMO_PUMP_{chg_24h:.1f}%", 0
     if chg_24h < -10.0:
         return None, f"DEATH_SPIRAL_DUMP_{chg_24h:.1f}%", 0
 
     is_bullish_base = (trend_1h != "BEARISH") and (mark_price >= ema_84 * 0.992 or trend_1h == "BULLISH")
-    chg_healthy = 0.5 <= chg_24h <= 18.0
+    chg_healthy = 0.5 <= chg_24h <= 32.0
 
     # =========================================================================
     # 👑 PREDATOR 1: VOLUME VELOCITY & CMO MOONSHOT BREAKOUT (Top Alpha Quant)

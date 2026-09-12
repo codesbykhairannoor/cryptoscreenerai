@@ -10,6 +10,7 @@ import os
 CACHE_FILE = "spot_backtest_cache.pkl" if os.path.exists("spot_backtest_cache.pkl") else os.path.join(os.path.dirname(__file__), "spot_backtest_cache.pkl")
 with open(CACHE_FILE, "rb") as f:
     raw_dataset = pickle.load(f)
+raw_dataset = [df for df in raw_dataset if len(df) >= 700]
 
 # Build pre-computed candle arrays
 coins_data = []
@@ -124,21 +125,32 @@ def run_simulation(strat_name, strat_config):
             exit_price = 0.0
             exit_reason = ""
 
-            if strat_config.get('type') == 'PREDATOR_ESCALATOR':
+            if strat_config.get('type') in ('PREDATOR_ESCALATOR', 'PREDATOR_VELOCITY_V2'):
                 peak_pct = (pos['peak_price'] - avg_e) / avg_e * 100.0
-                if peak_pct >= 35.0:
-                    pos['sl_price'] = max(pos['sl_price'], avg_e * 1.25)
-                elif peak_pct >= 18.0:
-                    pos['sl_price'] = max(pos['sl_price'], avg_e * 1.12)
-                elif peak_pct >= 10.0:
-                    pos['sl_price'] = max(pos['sl_price'], avg_e * 1.07)
-                elif peak_pct >= 5.5:
-                    pos['sl_price'] = max(pos['sl_price'], avg_e * 1.032)
-                elif peak_pct >= 2.5:
-                    pos['sl_price'] = max(pos['sl_price'], avg_e * 1.005)
-
-                if peak_pct >= 50.0:
-                    pos['sl_price'] = max(pos['sl_price'], pos['peak_price'] * 0.92)
+                if strat_config.get('type') == 'PREDATOR_VELOCITY_V2':
+                    if peak_pct >= 50.0:
+                        pos['sl_price'] = max(pos['sl_price'], pos['peak_price'] * 0.92)
+                    elif peak_pct >= 35.0:
+                        pos['sl_price'] = max(pos['sl_price'], avg_e * 1.25)
+                    elif peak_pct >= 18.0:
+                        pos['sl_price'] = max(pos['sl_price'], avg_e * 1.12)
+                    elif peak_pct >= 7.0:
+                        pos['sl_price'] = max(pos['sl_price'], avg_e * 1.07)
+                    elif peak_pct >= 4.0:
+                        pos['sl_price'] = max(pos['sl_price'], avg_e * 1.004)
+                else:
+                    if peak_pct >= 35.0:
+                        pos['sl_price'] = max(pos['sl_price'], avg_e * 1.25)
+                    elif peak_pct >= 18.0:
+                        pos['sl_price'] = max(pos['sl_price'], avg_e * 1.12)
+                    elif peak_pct >= 10.0:
+                        pos['sl_price'] = max(pos['sl_price'], avg_e * 1.07)
+                    elif peak_pct >= 5.5:
+                        pos['sl_price'] = max(pos['sl_price'], avg_e * 1.032)
+                    elif peak_pct >= 2.5:
+                        pos['sl_price'] = max(pos['sl_price'], avg_e * 1.005)
+                    if peak_pct >= 50.0:
+                        pos['sl_price'] = max(pos['sl_price'], pos['peak_price'] * 0.92)
 
                 if l <= pos['sl_price']:
                     exit_price = pos['sl_price']
@@ -260,6 +272,13 @@ def run_simulation(strat_name, strat_config):
                     v_vel = cd['v_vel'][t]
                     cmo_val = cd['cmo'][t]
                     if bull and rvol >= 1.8 and v_vel >= 0.12 and cmo_val >= 35 and 0.5 <= chg <= 18.0:
+                        signal = True
+                        score = rvol * 10 + cmo_val + (v_vel * 100)
+
+                elif strat_type == "PREDATOR_VELOCITY_V2":
+                    v_vel = cd['v_vel'][t]
+                    cmo_val = cd['cmo'][t]
+                    if bull and rvol >= 1.8 and v_vel >= 0.12 and cmo_val >= 30 and 0.5 <= chg <= 32.0:
                         signal = True
                         score = rvol * 10 + cmo_val + (v_vel * 100)
 
@@ -417,6 +436,16 @@ strategies = [
             'tp_pct': 0.50,
             'sl_pct': 0.025,
             'timeout_candles': 48
+        }
+    ),
+    (
+        "9. Predator Velocity V2 (Capital Velocity, Ratchet Locks)",
+        {
+            'type': "PREDATOR_VELOCITY_V2",
+            'use_dca': False,
+            'tp_pct': 0.50,
+            'sl_pct': 0.025,
+            'timeout_candles': 16
         }
     )
 ]

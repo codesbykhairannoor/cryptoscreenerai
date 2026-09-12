@@ -366,32 +366,32 @@ class PaperExecutor:
                         sl = target_sl
                         print(f"[MOONSHOT ESCALATOR] {symbol} 💎 TIER 3 SUPER RUNNER (+{peak_pnl:.1f}%)! Locked +12.0% at {target_sl:.6f}", flush=True)
 
-                # Milestone 2: Expansion Lock (Peak >= +10.0%) -> Lock +7.0% profit
-                elif peak_pnl >= 10.0:
+                # Milestone 2: Expansion Lock (Peak >= +18.0%) -> Lock +12.0% profit
+                elif peak_pnl >= 18.0:
+                    target_sl = round(ent * 1.12, 6)
+                    if target_sl > sl:
+                        self.update_sl_price(symbol, side, pos['amount'], target_sl, is_tp=False)
+                        pos['sl_price'] = target_sl
+                        sl = target_sl
+                        print(f"[MOONSHOT ESCALATOR] {symbol} 💎 TIER 2 EXPANSION (+{peak_pnl:.1f}%)! Locked +12.0% at {target_sl:.6f}", flush=True)
+
+                # Milestone 1: Momentum Lock (Peak >= +7.0%) -> Lock +7.0% profit
+                elif peak_pnl >= 7.0:
                     target_sl = round(ent * 1.07, 6)
                     if target_sl > sl:
                         self.update_sl_price(symbol, side, pos['amount'], target_sl, is_tp=False)
                         pos['sl_price'] = target_sl
                         sl = target_sl
-                        print(f"[MOONSHOT ESCALATOR] {symbol} 🎯 TIER 2 EXPANSION (+{peak_pnl:.1f}%)! Locked +7.0% at {target_sl:.6f}", flush=True)
+                        print(f"[MOONSHOT ESCALATOR] {symbol} ✨ TIER 1 MOMENTUM (+{peak_pnl:.1f}%)! Locked +7.0% at {target_sl:.6f}", flush=True)
 
-                # Milestone 1: Momentum Lock (Peak >= +5.5%) -> Lock +3.2% profit
-                elif peak_pnl >= 5.5:
-                    target_sl = round(ent * 1.032, 6)
+                # Milestone 0: Breakeven Risk-Free Lock (Peak >= +4.0%) -> Lock +0.4% profit (covers CEX fee)
+                elif peak_pnl >= 4.0:
+                    target_sl = round(ent * 1.004, 6)
                     if target_sl > sl:
                         self.update_sl_price(symbol, side, pos['amount'], target_sl, is_tp=False)
                         pos['sl_price'] = target_sl
                         sl = target_sl
-                        print(f"[MOONSHOT ESCALATOR] {symbol} ✨ TIER 1 MOMENTUM (+{peak_pnl:.1f}%)! Locked +3.2% at {target_sl:.6f}", flush=True)
-
-                # Milestone 0: Breakeven Risk-Free Lock (Peak >= +2.5%) -> Lock +0.5% profit
-                elif peak_pnl >= 2.5:
-                    target_sl = round(ent * 1.005, 6)
-                    if target_sl > sl:
-                        self.update_sl_price(symbol, side, pos['amount'], target_sl, is_tp=False)
-                        pos['sl_price'] = target_sl
-                        sl = target_sl
-                        print(f"[MOONSHOT ESCALATOR] {symbol} 🛡️ BREAKEVEN LOCKED (+{peak_pnl:.1f}%)! Locked +0.5% at {target_sl:.6f} [RISK-FREE]", flush=True)
+                        print(f"[MOONSHOT ESCALATOR] {symbol} 🛡️ BREAKEVEN LOCKED (+{peak_pnl:.1f}%)! Locked +0.4% at {target_sl:.6f} [RISK-FREE]", flush=True)
 
                 # 1. CEK STOP LOSS / TRAILING SL TRIGGER
                 if sl > 0 and mrk <= sl:
@@ -409,7 +409,7 @@ class PaperExecutor:
                     if symbol in self._peak_pnl: del self._peak_pnl[symbol]
                     continue
 
-                # 3. SIDEWAYS / STAGNATION DETECTION (12 jam timeout)
+                # 3. SIDEWAYS / STAGNATION CAPITAL VELOCITY DETECTION (4 jam timeout)
                 try:
                     from shared_state import state
                     if symbol not in state.pos_start_time:
@@ -417,11 +417,11 @@ class PaperExecutor:
                     duration_hours = (now - state.pos_start_time[symbol]) / 3600
                     price_move_pct = abs((mrk - ent) / ent * 100) if ent > 0 else 0
 
-                    SIDEWAYS_TIMEOUT_HOURS = 12.0 # Bebaskan modal $100 jika koin beku 12 jam
-                    is_sideways = (-1.5 < pnl < 1.5) and (price_move_pct < 1.5)
+                    SIDEWAYS_TIMEOUT_HOURS = 4.0 # Bebaskan modal $100 jika koin beku 4 jam untuk Capital Velocity
+                    is_stagnant = (-2.5 < pnl < 2.5) and (price_move_pct < 2.0)
 
-                    if duration_hours >= SIDEWAYS_TIMEOUT_HOURS and is_sideways:
-                        self._close_paper_position(pos, mrk, reason="Sideways Timeout (12h)")
+                    if duration_hours >= SIDEWAYS_TIMEOUT_HOURS and is_stagnant:
+                        self._close_paper_position(pos, mrk, reason="Capital Velocity Timeout (4h)")
                         if symbol in state.pos_start_time: del state.pos_start_time[symbol]
                         if symbol in self._peak_pnl: del self._peak_pnl[symbol]
                         clean = self._clean_symbol(symbol)
