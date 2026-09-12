@@ -335,9 +335,9 @@ class PaperExecutor:
                 so_count = int(pos.get('so_count') or 0)
                 tot_cost = float(pos.get('total_cost') or (pos['amount'] * ent))
 
-                # Safety Order 1: Trigger saat harga turun >= 1.5% dari entry awal
-                if so_count == 0 and mrk <= (ent * 0.985):
-                    so_usd = 50.0 # Safety Order 1 ($50)
+                # Safety Order 1: Trigger saat harga turun >= 1.8% dari entry awal
+                if so_count == 0 and mrk <= (ent * 0.982):
+                    so_usd = 35.0 # Safety Order 1 ($35 pada modal $100)
                     free_bal = get_virtual_balance()
                     if free_bal >= so_usd:
                         so_lot = round(so_usd / mrk, 4)
@@ -349,7 +349,7 @@ class PaperExecutor:
 
                         update_virtual_balance(-so_usd)
                         update_trade_dca(pos['id'], new_entry, new_amount, new_cost, new_tp, new_sl, 1)
-                        print(f"\n[SMART DCA] {symbol} Executed SO1 at {mrk:.6f} (-1.5%)! New Avg Entry: {new_entry:.6f} | Lowered TP: {new_tp:.6f} (+0.9%)", flush=True)
+                        print(f"\n[SMART DCA] {symbol} Executed SO1 ($35) at {mrk:.6f} (-1.8%)! New Avg Entry: {new_entry:.6f} | Lowered TP: {new_tp:.6f} (+0.9%)", flush=True)
 
                         # Update current loop state
                         pos['entry'] = new_entry
@@ -364,9 +364,9 @@ class PaperExecutor:
                         sl = new_sl
                         pnl = round(((mrk - ent) / ent) * 100.0, 2)
 
-                # Safety Order 2: Trigger saat harga turun lagi >= 1.5% dari weighted entry SO1
-                elif so_count == 1 and mrk <= (ent * 0.985):
-                    so_usd = 65.0 # Safety Order 2 ($65)
+                # Safety Order 2: Trigger saat harga turun lagi >= 1.8% dari weighted entry SO1
+                elif so_count == 1 and mrk <= (ent * 0.982):
+                    so_usd = 40.0 # Safety Order 2 ($40 pada modal $100)
                     free_bal = get_virtual_balance()
                     if free_bal >= so_usd:
                         so_lot = round(so_usd / mrk, 4)
@@ -378,7 +378,7 @@ class PaperExecutor:
 
                         update_virtual_balance(-so_usd)
                         update_trade_dca(pos['id'], new_entry, new_amount, new_cost, new_tp, new_sl, 2)
-                        print(f"\n[SMART DCA] {symbol} Executed SO2 at {mrk:.6f} (-1.5%)! New Avg Entry: {new_entry:.6f} | Lowered TP: {new_tp:.6f} (+0.9%)", flush=True)
+                        print(f"\n[SMART DCA] {symbol} Executed SO2 ($40) at {mrk:.6f} (-1.8%)! New Avg Entry: {new_entry:.6f} | Lowered TP: {new_tp:.6f} (+0.9%)", flush=True)
 
                         # Update current loop state
                         pos['entry'] = new_entry

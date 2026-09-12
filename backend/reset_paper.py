@@ -6,7 +6,10 @@ import sqlite3
 import time
 import os
 
-VIRTUAL_BALANCE = float(os.getenv("VIRTUAL_BALANCE", "1000"))
+from dotenv import load_dotenv
+load_dotenv()
+
+VIRTUAL_BALANCE = float(os.getenv("VIRTUAL_BALANCE", "100"))
 
 for db_path in ["trading_bot.db", "trades.db"]:
     if not os.path.exists(db_path):

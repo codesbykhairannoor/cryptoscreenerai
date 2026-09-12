@@ -34,9 +34,9 @@ from bitget_executor import BitgetExecutor
 
 #  KONFIGURASI AGRESIF UNTUK PROFIT CEPAT
 #  KONFIGURASI SNIPER (v31.8)
-MAX_POSITIONS        = 3      # Spot Mode: up to 3 posisi aktif bersamaan
+MAX_POSITIONS        = 1      # Modal $100 Spot: 1 posisi fokus all-in (Base $25 + SO1 $35 + SO2 $40 = $100)
 RISK_PER_TRADE_USDT  = 0.50   
-FIXED_MARGIN_USDT    = 35.0   # Smart DCA Base Order: $35 base + $50 SO1 + $65 SO2 = $150 total per coin
+FIXED_MARGIN_USDT    = 25.0   # Base Order $25 untuk akun modal $100
 
 # PAPER MODE: lebih hemat CPU, lebih selektif masuk trade
 _IS_PAPER = os.getenv("TRADE_MODE", "live").lower() == "paper"
