@@ -770,7 +770,44 @@ def get_technical_indicators(symbol, interval="15m"):
         except Exception:
             market_regime = "UNKNOWN"
 
+        # =====================================================================
+        # 10. MOMENTUM INDICATORS (for SURF_MOMENTUM strategy - v28.0)
+        # EMA 9/21 crossover: fast > slow = bullish momentum confirmed
+        # OBV Rising: on-balance volume trending up = accumulation detected
+        # =====================================================================
+        ema_9  = float(df_cur['close'].ewm(span=9,  adjust=False).mean().iloc[-1])
+        ema_21 = float(df_cur['close'].ewm(span=21, adjust=False).mean().iloc[-1])
+        ema_9_prev  = float(df_cur['close'].ewm(span=9,  adjust=False).mean().iloc[-2]) if len(df_cur) > 2 else ema_9
+        ema_21_prev = float(df_cur['close'].ewm(span=21, adjust=False).mean().iloc[-2]) if len(df_cur) > 2 else ema_21
+
+        # Golden cross: EMA9 crosses above EMA21 OR already above
+        ema_bullish_cross = (ema_9 > ema_21)  # Simple: fast above slow
+        ema_fresh_cross   = (ema_9 > ema_21) and (ema_9_prev <= ema_21_prev)  # Just crossed
+
+        # OBV (On-Balance Volume): direction of money flow
+        obv_series = [0.0]
+        for i in range(1, len(df_cur)):
+            if df_cur['close'].iloc[i] > df_cur['close'].iloc[i-1]:
+                obv_series.append(obv_series[-1] + df_cur['vol'].iloc[i])
+            elif df_cur['close'].iloc[i] < df_cur['close'].iloc[i-1]:
+                obv_series.append(obv_series[-1] - df_cur['vol'].iloc[i])
+            else:
+                obv_series.append(obv_series[-1])
+        # OBV rising = last 3 values are increasing (accumulation)
+        obv_rising = len(obv_series) >= 4 and (
+            obv_series[-1] > obv_series[-2] > obv_series[-3]
+        )
+        # OBV slope over last 5 candles
+        obv_slope = (obv_series[-1] - obv_series[-5]) if len(obv_series) >= 5 else 0
+
+        # Price above VWAP (institutional bullish bias)
+        price_above_vwap = mark_price > vwap
+        # % gap between price and VWAP
+        vwap_gap_pct = round((mark_price - vwap) / vwap * 100, 2) if vwap > 0 else 0.0
+        # =====================================================================
+
         return {
+
             "mark_price": mark_price,
             "rsi": rsi_val,
             "rvol": round(prev_candle['vol'] / avg_vol, 2) if avg_vol > 0 else 1.0,
@@ -872,7 +909,18 @@ def get_technical_indicators(symbol, interval="15m"):
             "low_15m": low_15m,
             "oi_change": oi_change,
             "is_liquidation_event": is_liq_event,
+            # === MOMENTUM SURFING INDICATORS (v28.0) ===
+            "ema_9":             round(ema_9, 8),
+            "ema_21":            round(ema_21, 8),
+            "ema_bullish_cross": ema_bullish_cross,   # EMA9 > EMA21
+            "ema_fresh_cross":   ema_fresh_cross,     # Just crossed (new)
+            "obv_rising":        obv_rising,           # OBV trending up 3 bars
+            "obv_slope":         obv_slope,            # OBV slope value
+            "price_above_vwap":  price_above_vwap,    # Price > VWAP (institutional bias)
+            "vwap_gap_pct":      vwap_gap_pct,        # How far price is above VWAP
+            "vwap":              round(vwap, 8),       # VWAP value itself
         }
+
     except Exception as e:
         print(f"Error indicators for {symbol}: {e}")
 # THE FREQTRADE APPROACH: STRICT STATIC PAIRLIST

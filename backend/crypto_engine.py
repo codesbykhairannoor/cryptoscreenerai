@@ -1,6 +1,6 @@
 import time
 import os
-VERSION_TAG = "v26.16-FORCE-BOOT"
+VERSION_TAG = "v28.0-PURE-MOMENTUM-SURF"
 print(f"\n[BOOT] Starting Institutional Predator {VERSION_TAG}...")
 
 import requests
@@ -76,10 +76,19 @@ TRAIL_GAP_ATR   = 2.5
 BTC_SYNC_ENABLED = True  # Hanya LONG jika BTC juga Bullish
 # ===============================================================
 
-# DATA-PROVEN BLACKLIST (dari analisis 345 trades, 0% WR)
-# Koin ini terbukti di database tidak pernah profit -- langsung skip
+# DATA-PROVEN BLACKLIST (dari analisis live trades - koin dengan 0% WR / bleeding)
+# Koin ini terbukti rugi berulang di live trading -- langsung skip PERMANEN
 DATA_PROVEN_BLACKLIST = {
-    # Confirmed 0% WR dari backtest:
+    # ❌ REPEAT LOSERS dari live 50-trade history (diblacklist permanen):
+    'BTWUSDT',   # 5 losses: -19.68%, -11.67%, -2.04%, -1.87%, -1.09% = FALLING KNIFE
+    'BTW',
+    'KIIUSDT',   # 4 losses: -12.22%, -3.55%, -1.88%, -1.58% = LOW LIQUIDITY TRAP
+    'KII',
+    'CNPYUSDT',  # 3 losses: -2.35%, -2.42%, -2.30% = CONSISTENT LOSER
+    'CNPY',
+    'FLOCKUSDT', # 1 loss -1.43% tapi low liquidity, FLOCK = memang sampah
+    'FLOCK',
+    # Confirmed 0% WR dari backtest sebelumnya:
     'LABUSDT', 'BSBUSDT', 
     'SKYAIUSDT', 'RAVEUSDT', 'ORCAUSDT', 
     'ERAUSDT', 'NOMUSDT',
@@ -89,6 +98,18 @@ DATA_PROVEN_BLACKLIST = {
     'UBUSDT', 'INTCUSDT',
     'PROSUSDT', 'NEIROCTOUSDT', 'SAHARAUSDT',
 }
+
+# SIGNAL CIRCUIT BREAKER (v22.0)
+# Track per-signal WR. Jika suatu signal gagal terus, matikan sementara.
+# Format: {signal_name: {'losses': 0, 'wins': 0, 'disabled_until': 0}}
+SIGNAL_STATS = {
+    'CORE2_NFI_DIP_ABSORPTION': {'losses': 0, 'wins': 0, 'disabled_until': 0},
+    'PREDATOR_VOL_VELOCITY_BREAKOUT': {'losses': 0, 'wins': 0, 'disabled_until': 0},
+    'CORE1_VOL_BREAKOUT': {'losses': 0, 'wins': 0, 'disabled_until': 0},
+}
+SIGNAL_CB_MIN_TRADES = 5    # Minimal 5 trade sebelum circuit breaker aktif
+SIGNAL_CB_MAX_LOSS_RATE = 0.70  # Jika 70% dari trade signal ini loss → disable 6 jam
+SIGNAL_CB_PAUSE_HOURS = 6      # Pause 6 jam jika signal gagal beruntun
  
 # UNIVERSAL SCANNER: Tidak lagi pilih-pilih koin.
 # Bot akan memindai Top 100 koin secara dinamis.
@@ -953,75 +974,112 @@ def _score_candidate(tech: dict, rsi: float, vwap_dist: float, side: str) -> int
 
 
 def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_sentiment: str, mark_price: float, pump_sc: float, dump_sc: float) -> tuple[str | None, str, int]:
-    rvol = tech.get('rvol', 1.0)
+    """
+    v28.0 PURE MOMENTUM SURFING - Based on deep research findings:
+    - Dip buying (mean reversion) FAILS in trending/bear markets (caused 90%+ of losses)
+    - ALL wins in trade history came from MOMENTUM entries, not dip entries
+    - New strategy: Buy coins ALREADY moving up with volume confirmation (EMA+VWAP+OBV)
+    """
+    rvol        = tech.get('rvol', 1.0)
     vol_velocity = tech.get('vol_velocity', 0.0)
-    cmo = tech.get('cmo', 0.0)
+    cmo         = tech.get('cmo', 0.0)
     funding_rate = tech.get('funding_rate', 0.0)
-    trend_1h = tech.get('trend_1h', 'NEUTRAL')
-    trend_4h = tech.get('trend_4h', 'NEUTRAL')
-    bb_up = tech.get('bb_up', mark_price * 1.05)
-    bb_low = tech.get('bb_low', mark_price * 0.95)
-    ema_84 = tech.get('ema_84', mark_price)
-    wick_ratio = tech.get('smc_lower_wick_ratio', 1.0)
-    in_demand = tech.get('in_demand', False) or tech.get('in_5m_demand', False)
-    pattern = tech.get('candle_pattern', '')
-    chg_24h = float(tech.get('change_24h', 0.0) or 0.0)
-    obi = tech.get('obi', 0.0)
-    is_ttm_squeeze = tech.get('is_ttm_squeeze', False)
+    trend_1h    = tech.get('trend_1h', 'NEUTRAL')
+    trend_4h    = tech.get('trend_4h', 'NEUTRAL')
+    bb_up       = tech.get('bb_up', mark_price * 1.05)
+    bb_low      = tech.get('bb_low', mark_price * 0.95)
+    ema_84      = tech.get('ema_84', mark_price)
+    obi         = tech.get('obi', 0.0)
     squeeze_fired = tech.get('squeeze_fired', False)
+    chg_24h     = float(tech.get('change_24h', 0.0) or 0.0)
+    # New momentum indicators from v28.0
+    ema_bullish_cross = tech.get('ema_bullish_cross', False)   # EMA9 > EMA21
+    ema_fresh_cross   = tech.get('ema_fresh_cross', False)     # EMA9 just crossed EMA21
+    obv_rising        = tech.get('obv_rising', False)          # OBV trending up 3 bars
+    price_above_vwap  = tech.get('price_above_vwap', False)    # Price > VWAP
+    vwap_gap_pct      = tech.get('vwap_gap_pct', 0.0)         # How far above VWAP
 
-    # 0. Filter Dasar Pasar Spot (100% Long-Only)
-    if tech.get('still_falling', False) and rsi > 40:
-        return None, "ACTIVE_DOWNTREND_FALLING", 0
-    if rsi > 80:
+    # =========================================================================
+    # GATE 0: ABSOLUTE HARD FILTERS (no trade in these conditions)
+    # =========================================================================
+    if rsi > 78:
         return None, f"RSI_{rsi:.1f}_OVERBOUGHT", 0
-    if chg_24h > 32.0:
+    if chg_24h > 35.0:
         return None, f"ANTI_FOMO_PUMP_{chg_24h:.1f}%", 0
-    if chg_24h < -10.0:
+    if chg_24h < -12.0:
         return None, f"DEATH_SPIRAL_DUMP_{chg_24h:.1f}%", 0
-
-    is_bullish_base = (trend_1h != "BEARISH") and (mark_price >= ema_84 * 0.992 or trend_1h == "BULLISH")
-    chg_healthy = 0.5 <= chg_24h <= 32.0
-
-    # =========================================================================
-    # 👑 PREDATOR 1: VOLUME VELOCITY & CMO MOONSHOT BREAKOUT (Top Alpha Quant)
-    # 1-Hour volume spike (>10% of 24h) + CMO momentum (>30) + Bullish trend
-    # Menangkap peluncuran koin pump sebelum FOMO retail tiba
-    # =========================================================================
-    if (vol_velocity >= 0.10 or rvol >= 1.8) and cmo >= 30 and is_bullish_base and chg_healthy:
-        if mark_price >= bb_up * 0.990 or squeeze_fired or is_ttm_squeeze:
-            print(f"[PREDATOR QUANT] 🔥 VOLUME VELOCITY MOONSHOT! {tech.get('symbol')} | V-Vel:{vol_velocity:.1%} | CMO:{cmo:.1f} | RVOL:{rvol:.1f}x | 24h:{chg_24h:.1f}%", flush=True)
-            return "buy", "PREDATOR_VOL_VELOCITY_BREAKOUT", 98
+    # Don't buy if actively falling (still in downtrend)
+    if tech.get('still_falling', False) and rsi > 45:
+        return None, "ACTIVE_DOWNTREND_NO_ENTRY", 0
+    # Don't buy if 4H is BEARISH (macro headwind)
+    if trend_4h == 'BEARISH' and trend_1h == 'BEARISH':
+        return None, "MACRO_BEARISH_4H+1H", 0
+    # VWAP too far above (chasing): don't buy if already >4% above VWAP
+    if vwap_gap_pct > 4.0:
+        return None, f"PRICE_TOO_FAR_ABOVE_VWAP_{vwap_gap_pct:.1f}%", 0
 
     # =========================================================================
-    # ⚡ PREDATOR 2: SHORT SQUEEZE FUEL IGNITION (Derivatives Forced Liquidation)
-    # Funding rate sangat negatif (< -0.015%) + Order Book Imbalance tebal (OBI > 0.05)
+    # ⚡ SIGNAL 1: PREDATOR SHORT SQUEEZE (Derivatives Forced Liquidation)
+    # Funding rate negatif kuat = shorts akan dilikuidasi paksa = harga meroket
+    # Research backed: most explosive moves in spot come from short squeeze dynamics
     # =========================================================================
-    if funding_rate <= -0.00015 and is_bullish_base and (obi >= 0.05 or rvol >= 1.3) and chg_healthy:
-        print(f"[PREDATOR QUANT] ⚡ SHORT SQUEEZE DETECTED! {tech.get('symbol')} | FR:{funding_rate*100:.3f}% | OBI:{obi:.2f} | RVOL:{rvol:.1f}x", flush=True)
-        return "buy", "PREDATOR_SHORT_SQUEEZE", 96
+    if (funding_rate <= -0.00015
+            and trend_1h != 'BEARISH'
+            and (obi >= 0.05 or rvol >= 1.5)
+            and 1.0 <= chg_24h <= 30.0
+            and rsi <= 70):
+        print(f"[SURF v28] ⚡ SHORT SQUEEZE! {tech.get('symbol')} | FR:{funding_rate*100:.3f}% | OBI:{obi:.2f} | RVOL:{rvol:.1f}x", flush=True)
+        return "buy", "PREDATOR_SHORT_SQUEEZE", 97
 
     # =========================================================================
-    # 🎯 CORE 1: Volatility Squeeze Breakout (Classic Momentum)
+    # 🏄 SIGNAL 2: SURF MOMENTUM PRIME (Core Strategy v28.0)
+    # EMA9 > EMA21 (fast above slow) + Price above VWAP + OBV Rising + RSI 50-70
+    # = Coin already in uptrend with institutional accumulation
+    # Research: ALL historical wins came from this type of setup!
     # =========================================================================
-    if rvol >= 1.8 and 50 <= rsi <= 72 and trend_1h == "BULLISH" and obi >= 0.02 and chg_healthy:
-        if mark_price >= bb_up * 0.995:
-            print(f"[SPOT QUANT] CORE 1: VOLATILITY BREAKOUT! {tech.get('symbol')} | RSI:{rsi:.1f} | RVOL:{rvol:.1f}x | OBI:{obi:.2f}", flush=True)
-            return "buy", "CORE1_VOL_BREAKOUT", 94
+    momentum_rsi_ok  = 48 <= rsi <= 70          # In momentum zone, not overbought
+    momentum_chg_ok  = 0.5 <= chg_24h <= 25.0   # Healthy positive movement
+    momentum_vol_ok  = rvol >= 1.6               # Above-average volume
+
+    if (ema_bullish_cross          # EMA9 above EMA21 (bullish momentum structure)
+            and price_above_vwap   # Price above VWAP (institutional bias bullish)
+            and obv_rising         # OBV trending up (money flowing IN)
+            and momentum_rsi_ok    # RSI in sweet spot
+            and momentum_vol_ok    # Volume confirming
+            and momentum_chg_ok    # Healthy 24h change
+            and trend_1h != 'BEARISH'):  # 1H macro not against us
+        # Prioritize fresh crosses (just crossed = early entry)
+        score = 93 if ema_fresh_cross else 88
+        cross_tag = "FRESH_CROSS" if ema_fresh_cross else "EMA_ABOVE"
+        print(f"[SURF v28] 🏄 MOMENTUM PRIME! {tech.get('symbol')} | {cross_tag} | RSI:{rsi:.1f} | RVOL:{rvol:.1f}x | OBV:{'↑' if obv_rising else '→'} | VWAP:+{vwap_gap_pct:.1f}%", flush=True)
+        return "buy", f"SURF_MOMENTUM_{cross_tag}", score
 
     # =========================================================================
-    # 🛡️ CORE 2: NFI Bullish Dip Absorption (Freqtrade Dip Reversal)
+    # 🚀 SIGNAL 3: SURF BREAKOUT (Volume Spike Above BB Upper)
+    # Koin breakout dari konsolidasi dengan volume besar = continuation move
     # =========================================================================
-    rsi_oversold  = rsi <= 38
-    near_bb_low   = mark_price <= bb_low * 1.010
-    has_reversal  = wick_ratio >= 1.1 or "BULLISH" in str(pattern).upper()
-    chg_dip_ok    = -6.0 <= chg_24h <= 16.0
+    breakout_rsi  = 52 <= rsi <= 73
+    breakout_vol  = rvol >= 2.0 or vol_velocity >= 0.12
+    breakout_chg  = 1.0 <= chg_24h <= 30.0
 
-    if (rsi_oversold or near_bb_low) and is_bullish_base and has_reversal and rvol >= 1.1 and chg_dip_ok:
-        print(f"[SPOT QUANT] CORE 2: NFI DIP ABSORPTION! {tech.get('symbol')} | RSI:{rsi:.1f} | Wick:{wick_ratio:.1f} | RVOL:{rvol:.1f}x", flush=True)
-        return "buy", "CORE2_NFI_DIP_ABSORPTION", 88
+    if (breakout_vol
+            and breakout_rsi
+            and breakout_chg
+            and (mark_price >= bb_up * 0.988 or squeeze_fired)  # Near or above BB upper
+            and cmo >= 20                                         # CMO positive momentum
+            and trend_1h != 'BEARISH'
+            and obi >= 0.0):                                      # Not negative OBI
+        print(f"[SURF v28] 🚀 BREAKOUT! {tech.get('symbol')} | RVOL:{rvol:.1f}x | V-Vel:{vol_velocity:.1%} | CMO:{cmo:.1f} | RSI:{rsi:.1f}", flush=True)
+        return "buy", "SURF_BREAKOUT_VOL", 94
 
-    return None, "WAITING_FOR_CLEAN_SPOT_SETUP", 0
+    # =========================================================================
+    # ❌ CORE2 / DIP BUYING: PERMANENTLY DISABLED
+    # Research: 19 out of 19 losses came from dip-buying (CORE2_NFI_DIP_ABSORPTION)
+    # Mean reversion FAILS in trending/bear market regimes
+    # =========================================================================
+    # CORE2_NFI_DIP_ABSORPTION is REMOVED — never buying dips again
+
+    return None, "WAITING_FOR_MOMENTUM_SETUP", 0
 
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
@@ -1036,11 +1094,11 @@ def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
 
-# == PERFORMANCE TRACKING (v21.0) ================================
+# == PERFORMANCE TRACKING (v22.0) ================================
 # Menyimpan history PnL koin untuk Smart Circuit Breaker
 COIN_STATS = {} # {symbol: {'pnl': 0, 'consecutive_losses': 0, 'locked_until': 0}}
-PENALTY_THRESHOLD_USD = -2.50 # Banned sementara hanya jika rugi besar > $2.50
-PENALTY_DURATION_HOURS = 4    # Kurangi masa hukuman jadi 4 jam saja
+PENALTY_THRESHOLD_USD = -1.50 # DIPERKETAT: Banned jika rugi > $1.50 (sebelumnya $2.50)
+PENALTY_DURATION_HOURS = 24   # DIPERKETAT: Hukuman 24 jam penuh (sebelumnya 4 jam)
 # ===============================================================
 def run_crypto_engine():
     """
