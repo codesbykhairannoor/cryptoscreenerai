@@ -1311,13 +1311,26 @@ def run_crypto_engine():
             global_btc_vol = _mws_state.rt_volume.get("BTCUSDT", 0)
             global_btc_change = _mws_state.rt_change.get("BTCUSDT", 0)
 
-            #  9. SCAN & EVALUATE CANDIDATES PARALLEL (DIRECT MODE)
-            raw_data   = fetch_all_tickers()
-            candidates = analyze_and_sort(raw_data)
+            #  9. INSTITUTIONAL QUANT ALPHA ENGINE (WorldQuant 101 Alphas & Cross-Sectional Ranking)
+            # Sumber Resmi: Kakushadze, Z. (2016) arXiv:1601.00991 & Avellaneda-Stoikov (2008)
+            candidates = []
+            try:
+                from institutional_alpha import get_top_institutional_candidates
+                quant_pack = get_top_institutional_candidates(limit=30)
+                candidates = quant_pack.get("data", [])
+                universe_sz = quant_pack.get("universe_size", 0)
+                if candidates and int(now) % 60 < 15:
+                    print(f"[QUANT UNIVERSE] 🏛️ Universe Scanned: {universe_sz} Spot Coins | Top Decile #1: {candidates[0]['symbol']} (Score: {candidates[0]['quant_score']})", flush=True)
+            except Exception as qe:
+                print(f"[QUANT SCAN ERROR] {qe}", flush=True)
 
             if not candidates:
-                if int(now) % 15 == 0: # Lapor tiap 15 detik biar tidak sepi
-                    print(f"[CRYPTO] Scanning {len(raw_data) if raw_data else 40} coins... Heartbeat OK.", flush=True)
+                raw_data   = fetch_all_tickers()
+                candidates = analyze_and_sort(raw_data)
+
+            if not candidates:
+                if int(now) % 15 == 0:
+                    print(f"[CRYPTO] Scanning universe... Heartbeat OK.", flush=True)
                 time.sleep(SCAN_INTERVAL)
                 continue
 
@@ -1425,24 +1438,43 @@ def run_crypto_engine():
                 if sym_key in DATA_PROVEN_BLACKLIST or clean_base in DATA_PROVEN_BLACKLIST:
                     return None
 
-                pump_sc = float(coin.get('pump_score', 0))
-                dump_sc = float(coin.get('dump_score', 0))
-                best_sc = max(pump_sc, dump_sc)
-                if best_sc < MIN_PUMP_SCORE:
-                    return None
+                has_quant = 'quant_score' in coin
+                if has_quant:
+                    quant_score = float(coin['quant_score'])
+                    decile = str(coin.get('decile', 'Q1'))
+                    # WorldQuant 101 Criteria: Only top decile (Q1/Q2) with multi-factor score >= 60.0
+                    if quant_score < 60.0 or decile not in ('Q1', 'Q2'):
+                        return None
+                    pump_sc = quant_score
+                else:
+                    pump_sc = float(coin.get('pump_score', 0))
+                    dump_sc = float(coin.get('dump_score', 0))
+                    best_sc = max(pump_sc, dump_sc)
+                    if best_sc < MIN_PUMP_SCORE:
+                        return None
 
                 # Heavy indicators (API calls)
                 tech = get_technical_indicators(symbol)
                 if not tech: return None
 
-                mark_price = tech.get('mark_price', 0) or float(coin.get('lastPrice', 0))
+                mark_price = tech.get('mark_price', 0) or float(coin.get('last_price', coin.get('lastPrice', 0)))
                 rsi       = tech.get('rsi', 50)
                 vwap_dist = tech.get('vwap_dist', 0.0)
 
-                # == ANALISA LOGIK (v26.85) ==
-                tech_score = 0
-                side, reason, tech_score = _determine_trade_side(tech, rsi, vwap_dist, market_sentiment, mark_price, pump_sc, dump_sc)
-                combined_score = round((pump_sc * 0.5) + (tech_score * 0.5))
+                # == ANALISA LOGIK BERDASARKAN RISET QUANT ==
+                if has_quant:
+                    side = "buy"
+                    q_score = round(coin['quant_score'], 1)
+                    a101 = float(coin.get('alpha_101_rank', 0.5))
+                    a54 = float(coin.get('alpha_54_rank', 0.5))
+                    skew = float(coin.get('stoikov_skew_pct', 0.0))
+                    reason = f"WORLDQUANT_ALPHA_Q1(Score:{q_score:.1f}|A101:{a101:.2f}|A54:{a54:.2f}|Skew:{skew:+.1f}%)"
+                    combined_score = int(q_score)
+                    tech_score = int(q_score)
+                else:
+                    tech_score = 0
+                    side, reason, tech_score = _determine_trade_side(tech, rsi, vwap_dist, market_sentiment, mark_price, pump_sc, dump_sc)
+                    combined_score = round((pump_sc * 0.5) + (tech_score * 0.5))
 
                 # WS GLOBAL BOOST
                 global_boost = 0
@@ -1543,13 +1575,15 @@ def run_crypto_engine():
 
                 if side is None:
                     reject = "NO_SIDE"
-                elif market_sentiment == "PENDING" and tech_score < 50:
+                elif has_quant and combined_score < 60:
+                    reject = f"QUANT_SCORE_LOW({combined_score}<60)"
+                elif not has_quant and market_sentiment == "PENDING" and tech_score < 50:
                     reject = "SENTIMENT_PENDING"
-                elif combined_score < current_min_momentum:
+                elif not has_quant and combined_score < current_min_momentum:
                     reject = f"SCORE_LOW({combined_score}<{current_min_momentum})"
-                elif tech_score < current_min_tech:
+                elif not has_quant and tech_score < current_min_tech:
                     reject = f"TECH_LOW({tech_score}<{current_min_tech})"
-                elif "NONE" in reason and combined_score < 80:
+                elif not has_quant and "NONE" in reason and combined_score < 80:
                     reject = "SMC_REQUIRED"
                 else:
                     # TREND ALIGNMENT FILTER (v64.0 - KEY improvement for Win Rate)
