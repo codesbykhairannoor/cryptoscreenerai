@@ -1,4 +1,4 @@
-﻿annotated-doc==0.0.4
+annotated-doc==0.0.4
 annotated-types==0.7.0
 anyio==4.12.1
 certifi==2026.1.4
@@ -34,4 +34,5 @@ pytz
 ccxt
 feedparser
 openai
-
+mem0ai>=2.1.0
+qdrant-client>=1.12.0

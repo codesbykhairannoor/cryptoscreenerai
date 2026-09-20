@@ -225,6 +225,16 @@ class PaperExecutor:
                 final_status = "WIN"
             else:
                 final_status = "LOSS"
+                try:
+                    from buku_dosa import BukuDosaJudge
+                    BukuDosaJudge.record_loss_sin(p['symbol'], pnl_pct, pnl_usd, reason)
+                except Exception: pass
+
+            # Mem0 Autonomous Vector Learning
+            try:
+                from mem0_buku_dosa import record_trade_memory
+                record_trade_memory(p['symbol'], p['side'], pnl_pct, pnl_usd, reason, f"Entry: {ent}, Exit: {current_price}")
+            except Exception: pass
 
             cursor.execute(f'''
                 UPDATE trades

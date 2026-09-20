@@ -1,0 +1,88 @@
+{
+  "version": "1.0-REFLEXION-SHIELD",
+  "last_updated": 1789879049,
+  "permanent_blacklist": [
+    "BTWUSDT",
+    "KIIUSDT",
+    "CNPYUSDT",
+    "FLOCKUSDT"
+  ],
+  "loss_quarantine_hours": 48,
+  "quarantine_registry": {},
+  "sins_catalog": [
+    {
+      "id": "DOSA_01_FALLING_KNIFE",
+      "name": "Menangkap Pisau Jatuh (Dip Buying di Tren Turun)",
+      "description": "Membeli koin hanya karena RSI oversold (<35) saat EMA9 < EMA21 atau Trend 1h Bearish. Di altcoin, RSI rendah bukan diskon, tapi tanda koin sedang dibuang bandar.",
+      "rule": "HARAM BUY jika EMA9 < EMA21 ATAU Trend 1H Bearish ATAU Harga di bawah VWAP."
+    },
+    {
+      "id": "DOSA_02_ILLIQUID_SHITCOIN",
+      "name": "Trading di Koin Zombie / Illiquid Tanpa Orderbook Tebal",
+      "description": "Membeli koin micin dengan spread lebar (>0.15%) atau volume harian < $3M. Begitu market turun, Stop Loss loncat dan slippage tembus -15% s/d -20%.",
+      "rule": "HARAM trading koin yang spread > 0.15% atau volume 24h < $3,000,000 USDT."
+    },
+    {
+      "id": "DOSA_03_ALL_IN_POSITION_SIZING",
+      "name": "All-In Ukuran Posisi ($95 dari Modal $100)",
+      "description": "Memakai margin $95 (95% saldo) untuk 1 koin. Zero room for error. Sekali kena gap down, modal langsung musnah.",
+      "rule": "Maksimal alokasi per trade adalah 20% dari modal (max $20 per trade jika saldo $100)."
+    },
+    {
+      "id": "DOSA_04_DEAD_VOLUME_ENTRY",
+      "name": "Masuk Saat Volume Mati (RVOL < 1.2)",
+      "description": "Masuk koin yang tidak ada pembeli institusional riil. Harga tersendat sideways lalu tergerus time-decay dan fee.",
+      "rule": "RVOL (Relative Volume) wajib >= 1.4 untuk konfirmasi partisipasi pasar aktif."
+    },
+    {
+      "id": "DOSA_05_REVENGE_CHURNING",
+      "name": "Revenge Trade pada Koin yang Sama",
+      "description": "Membeli ulang koin yang barusan bikin rugi (contoh BTWUSDT dibeli 4 kali dan rugi 4 kali).",
+      "rule": "Koin yang rugi otomatis di-BAN selama 48 jam dari seluruh scanner."
+    }
+  ],
+  "historical_losses": [
+    {
+      "symbol": "BTWUSDT",
+      "loss_pct": -19.68,
+      "reason": "Illiquid dump, trailing SL slippage",
+      "sin": "DOSA_01_FALLING_KNIFE & DOSA_02_ILLIQUID_SHITCOIN"
+    },
+    {
+      "symbol": "KIIUSDT",
+      "loss_pct": -12.22,
+      "reason": "Dip sniping v2 failed, orderbook collapse",
+      "sin": "DOSA_01_FALLING_KNIFE"
+    },
+    {
+      "symbol": "BTWUSDT",
+      "loss_pct": -11.67,
+      "reason": "Re-entered dip buying, dumped harder",
+      "sin": "DOSA_05_REVENGE_CHURNING"
+    },
+    {
+      "symbol": "CNPYUSDT",
+      "loss_pct": -2.42,
+      "reason": "Fake bounce on dead volume",
+      "sin": "DOSA_04_DEAD_VOLUME_ENTRY"
+    },
+    {
+      "symbol": "CNPYUSDT",
+      "loss_pct": -2.35,
+      "reason": "Hit strict stop loss",
+      "sin": "DOSA_01_FALLING_KNIFE"
+    },
+    {
+      "symbol": "RAYUSDT",
+      "loss_pct": -2.21,
+      "reason": "Hit SL on market chop",
+      "sin": "DOSA_01_FALLING_KNIFE"
+    },
+    {
+      "symbol": "KIIUSDT",
+      "loss_pct": -1.88,
+      "reason": "Strict SL hit",
+      "sin": "DOSA_01_FALLING_KNIFE"
+    }
+  ]
+}

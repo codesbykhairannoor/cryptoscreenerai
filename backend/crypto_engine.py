@@ -32,10 +32,10 @@ from database import log_trade
 from notifier import send_telegram_message, format_trade_message
 from bitget_executor import BitgetExecutor
 
-#  KONFIGURASI AGRESIF UNTUK PROFIT CEPAT
-MAX_POSITIONS        = 1      # Modal $100 Spot: 1 posisi tunggal fokus (Predator Moonshot)
-RISK_PER_TRADE_USDT  = 2.50   # Maksimal risiko $2.50 (2.5% dari modal $100)
-FIXED_MARGIN_USDT    = 95.0   # $95 deployment per trade (full firepower untuk koin pump terpilih)
+#  KONFIGURASI BUKU DOSA: ANTI-ALL-IN & ANTI-BLEED
+MAX_POSITIONS        = 2      # Modal $100 Spot: Max 2 posisi terukur
+RISK_PER_TRADE_USDT  = 1.00   # Maksimal risiko $1.00 per trade (1% dari modal $100)
+FIXED_MARGIN_USDT    = 20.0   # $20 per trade (max 20% modal, patuhi Buku Dosa Rule 3)
 
 # PAPER MODE: lebih hemat CPU, lebih selektif masuk trade
 _IS_PAPER = os.getenv("TRADE_MODE", "live").lower() == "paper"
@@ -1707,18 +1707,15 @@ def run_crypto_engine():
                     rvol = getattr(_ws_st, 'rt_rvol', {}).get(sym_ws, 1.0)
                 except: pass
                 
-                # 1. FAST MOMENTUM Confirmation (EMA 9/21)
+                # 1. FAST MOMENTUM Confirmation (EMA 9/21 - Buku Dosa Rule 1: No Falling Knives)
                 ema_9 = tech.get('ema_9', mark_price)
                 ema_21 = tech.get('ema_21', mark_price)
                 if side == "buy" and ema_9 < ema_21:
-                    # Di SPOT, kita sering melakukan Dip Sniping saat oversold (RSI < 40)
-                    if combined_score < 80 and rsi >= 40: 
-                        print(f"  [SKIP] {clean_base} EMA 9 < 21 (Confirmation Fail & Not Oversold)", flush=True)
-                        continue
+                    print(f"  [BUKU DOSA SKIP] {clean_base} EMA 9 < 21 (Downtrend / Falling Knife Ditolak)", flush=True)
+                    continue
                 if side == "sell" and ema_9 > ema_21:
-                    if combined_score < 80 and rsi <= 60:
-                        print(f"  [SKIP] {clean_base} EMA 9 > 21 (Confirmation Fail & Not Overbought)", flush=True)
-                        continue
+                    print(f"  [BUKU DOSA SKIP] {clean_base} EMA 9 > 21 (Confirmation Fail)", flush=True)
+                    continue
 
                 # 2. JUNK FILTER: ATR > 5% Price (Volatility Guard)
                 atr = tech.get('atr', 0)
@@ -1726,10 +1723,9 @@ def run_crypto_engine():
                     print(f"  [SKIP] {clean_base} ATR {atr} too high (>5% price)", flush=True)
                     continue
 
-                # 3. BALANCED THRESHOLD (v41.0)
-                # v41.0: Gunakan threshold yang sama dengan evaluator (0.4)
-                if rvol < 0.4: 
-                    print(f"  [SKIP] {clean_base} RVOL {rvol} < 0.4 (Secondary Check)", flush=True)
+                # 3. BALANCED THRESHOLD (Buku Dosa Rule 4: Anti Dead Volume)
+                if rvol < 1.2: 
+                    print(f"  [BUKU DOSA SKIP] {clean_base} RVOL {rvol:.2f} < 1.2 (Volume Mati Ditolak)", flush=True)
                     continue
                     
                 # --- 4. META-LABELING RISK BOARD (Lapisan 4) ---
@@ -1768,6 +1764,37 @@ def run_crypto_engine():
                     f5m = tech.get('zone_freshness_5m', 'N/A')
                     print(f"  5M     : Signal:{e5m} | Quality:{q5m}/100 | Zone:{f5m}")
                     print(f"{'='*60}\n")
+
+                    # --- 1. BUKU DOSA PRE-TRADE AUDIT ---
+                    try:
+                        from buku_dosa import BukuDosaJudge
+                        vbal = 100.0
+                        try:
+                            from database import get_virtual_balance
+                            vbal = get_virtual_balance()
+                        except: pass
+                        is_clean, sin_reason, sin_code = BukuDosaJudge.audit_candidate(
+                            symbol, tech, mark_price, side, 
+                            proposed_usd=base_order_usd, 
+                            current_balance=vbal
+                        )
+                        if not is_clean:
+                            print(f"\n[BUKU DOSA BLOCKED] 🚫 {clean_base} DITOLAK KERAS OLEH HAKIM REFLEXION!")
+                            print(f"  Penyebab: {sin_reason} ({sin_code})\n", flush=True)
+                            continue
+                    except Exception as bde:
+                        print(f"[BUKU DOSA AUDIT ERROR] {bde}")
+
+                    # --- 2. MEM0 AUTONOMOUS AGENT MEMORY AUDIT (Official GitHub Library) ---
+                    try:
+                        from mem0_buku_dosa import search_trade_risk
+                        is_safe, warn_msg, mems = search_trade_risk(clean_base, side, reason, tech)
+                        if not is_safe:
+                            print(f"\n[MEM0 AI VETO] 🧠 Mem0 Vector Memory Menolak {clean_base}!")
+                            print(f"  Peringatan Memori Otonom: {warn_msg}\n", flush=True)
+                            continue
+                    except Exception as me:
+                        print(f"[MEM0 AUDIT ERROR] {me}")
 
                     # Eksekusi (v12.0: Update Penalty Box on fail)
                     order_success = False
