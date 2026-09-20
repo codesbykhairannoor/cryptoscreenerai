@@ -1084,13 +1084,13 @@ def _determine_trade_side(tech: dict, rsi: float, vwap_dist: float, market_senti
 
 def _calc_tp_sl(mark_price: float, side: str, tech: dict, tp_m: float = None, sl_m: float = None) -> tuple[float, float]:
     """
-    v90.0: DYNAMIC MOONSHOT ESCALATOR TP/SL
-    - Initial Hard SL: -2.5% ($2.37 risk on $95 capital)
-    - Take Profit: 0.0 (Managed dynamically by the Moonshot Escalator: Breakeven at +2.5%, locking profit at +3.5%, +8%, +14%, +25%, trailing up to +50%+)
+    v91.0: INSTITUTIONAL QUANT ESCALATOR TP/SL (WorldQuant 101 Optimized)
+    - Initial Hard SL: -2.0% ($0.40 risk on $20 allocation)
+    - Take Profit: 0.0 (Managed dynamically by Escalator Trailing Stop triggered at +5.0% profit)
     """
     base_p = tech.get('limit_price', mark_price)
-    stop_loss_val = round(base_p * 0.975, 6) if side == 'buy' else round(base_p * 1.025, 6)
-    take_profit_val = 0.0  # Dynamic Moonshot Escalator governs the exit!
+    stop_loss_val = round(base_p * 0.980, 6) if side == 'buy' else round(base_p * 1.020, 6)
+    take_profit_val = 0.0  # Dynamic Institutional Escalator governs the exit!
     return round(take_profit_val, 6), round(stop_loss_val, 6)
 
 
@@ -1760,8 +1760,8 @@ def run_crypto_engine():
                     continue
 
                 # 3. BALANCED THRESHOLD (Buku Dosa Rule 4: Anti Dead Volume)
-                if rvol < 1.2: 
-                    print(f"  [BUKU DOSA SKIP] {clean_base} RVOL {rvol:.2f} < 1.2 (Volume Mati Ditolak)", flush=True)
+                if rvol < 1.4: 
+                    print(f"  [BUKU DOSA SKIP] {clean_base} RVOL {rvol:.2f} < 1.4 (Buku Dosa Rule 4: Volume Mati Ditolak)", flush=True)
                     continue
                     
                 # --- 4. META-LABELING RISK BOARD (Lapisan 4) ---
@@ -1801,9 +1801,13 @@ def run_crypto_engine():
                         print(f"  [BALANCE GUARD] Saldo (${vbal:.2f}) di bawah minimum order bursa ($5.00). Menunggu top-up/reset.")
                     continue
 
+                # DYNAMIC COMPOUNDING SIZING (Fractional Kelly Reinvestment)
+                # Alokasi proporsional 25% dari saldo (bertumbuh otomatis saat saldo berkembang)
+                # Mematuhi Buku Dosa Rule 3 (maksimal 25-28% modal per koin, 2 posisi terbuka)
+                DYNAMIC_ALLOC_PCT = float(os.getenv("DYNAMIC_ALLOC_PCT", "0.25"))
                 _vt = _vt_multiplier if '_vt_multiplier' in dir() else 1.0
-                prop_size = min(FIXED_MARGIN_USDT, vbal * 0.20) * _vt
-                base_order_usd = max(5.0, round(prop_size, 2))
+                prop_size = max(5.0, vbal * DYNAMIC_ALLOC_PCT) * _vt
+                base_order_usd = round(min(prop_size, vbal * 0.28), 2)
 
                 # --- 1. BUKU DOSA PRE-TRADE AUDIT ---
                 try:

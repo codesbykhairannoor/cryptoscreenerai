@@ -72,6 +72,16 @@ try:
 except Exception as be:
     print(f"[RESET BUKU DOSA WARN] {be}")
 
+# 4. Bersihkan Mem0 vector memory cache jika ada
+try:
+    import shutil
+    qdrant_dir = os.path.join(backend_dir, "data", "mem0_qdrant")
+    if os.path.exists(qdrant_dir):
+        shutil.rmtree(qdrant_dir)
+        print("[RESET MEM0] Vector memory cache dibersihkan.")
+except Exception as me:
+    print(f"[RESET MEM0 WARN] {me}")
+
 print("\n[DONE] ✅ Paper Trading & Riwayat Transaksi siap dimulai ulang dari awal!")
 print(f"       Saldo: ${VIRTUAL_BALANCE:.2f}")
 

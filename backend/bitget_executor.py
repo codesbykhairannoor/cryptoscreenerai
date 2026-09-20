@@ -421,9 +421,9 @@ class BitgetExecutor:
                 peak_pnl = self._peak_pnl[symbol]
 
                 # == DYNAMIC MOONSHOT ESCALATOR TRAILING STOP ENGINE ==
-                # Initial Guard: SL -2.5% strictly enforced ($2.37 risk on $95)
+                # Initial Guard: SL -2.0% strictly enforced ($0.40 risk on $20 allocation)
                 if sl == 0 and now - self.startup_time > 5:
-                    default_sl = round(ent * 0.975, 6) # -2.5% strict Stop Loss
+                    default_sl = round(ent * 0.980, 6) # -2.0% strict Stop Loss
                     self.update_sl_price(symbol, side, amount, default_sl, is_tp=False)
                     pos['sl_price'] = default_sl
                     sl = default_sl
@@ -455,15 +455,6 @@ class BitgetExecutor:
                         sl = target_sl
                         print(f"[MOONSHOT ESCALATOR] {symbol} 💎 TIER 3 SUPER RUNNER (+{peak_pnl:.1f}%)! Locked +12.0% at {target_sl:.6f}", flush=True)
 
-                # Milestone 2: Expansion Lock (Peak >= +18.0%) -> Lock +12.0% profit
-                elif peak_pnl >= 18.0:
-                    target_sl = round(ent * 1.12, 6)
-                    if target_sl > sl:
-                        self.update_sl_price(symbol, side, amount, target_sl, is_tp=False)
-                        pos['sl_price'] = target_sl
-                        sl = target_sl
-                        print(f"[MOONSHOT ESCALATOR] {symbol} 💎 TIER 2 EXPANSION (+{peak_pnl:.1f}%)! Locked +12.0% at {target_sl:.6f}", flush=True)
-
                 # Milestone 1: Momentum Lock (Peak >= +7.0%) -> Lock +7.0% profit
                 elif peak_pnl >= 7.0:
                     target_sl = round(ent * 1.07, 6)
@@ -473,14 +464,23 @@ class BitgetExecutor:
                         sl = target_sl
                         print(f"[MOONSHOT ESCALATOR] {symbol} ✨ TIER 1 MOMENTUM (+{peak_pnl:.1f}%)! Locked +7.0% at {target_sl:.6f}", flush=True)
 
-                # Milestone 0: Breakeven Risk-Free Lock (Peak >= +4.0%) -> Lock +0.4% profit (covers CEX fee)
-                elif peak_pnl >= 4.0:
-                    target_sl = round(ent * 1.004, 6)
+                # Milestone 0.5: Institutional Champion Lock (Peak >= +5.0%) -> Lock 1.5% below peak
+                elif peak_pnl >= 5.0:
+                    target_sl = round(ent * (1.0 + (peak_pnl - 1.5) / 100.0), 6)
                     if target_sl > sl:
                         self.update_sl_price(symbol, side, amount, target_sl, is_tp=False)
                         pos['sl_price'] = target_sl
                         sl = target_sl
-                        print(f"[MOONSHOT ESCALATOR] {symbol} 🛡️ BREAKEVEN LOCKED (+{peak_pnl:.1f}%)! Locked +0.4% at {target_sl:.6f} [RISK-FREE]", flush=True)
+                        print(f"[MOONSHOT ESCALATOR] {symbol} 🏛️ INSTITUTIONAL LOCK (+{peak_pnl:.1f}%)! Locked at {target_sl:.6f} (1.5% trail)", flush=True)
+
+                # Milestone 0: Breakeven Risk-Free Lock (Peak >= +3.5%) -> Lock +0.5% profit (covers CEX fee)
+                elif peak_pnl >= 3.5:
+                    target_sl = round(ent * 1.005, 6)
+                    if target_sl > sl:
+                        self.update_sl_price(symbol, side, amount, target_sl, is_tp=False)
+                        pos['sl_price'] = target_sl
+                        sl = target_sl
+                        print(f"[MOONSHOT ESCALATOR] {symbol} 🛡️ BREAKEVEN LOCKED (+{peak_pnl:.1f}%)! Locked +0.5% at {target_sl:.6f} [RISK-FREE]", flush=True)
 
                 # 1. CEK STOP LOSS / TRAILING SL TRIGGER
                 if sl > 0 and mrk <= sl:
