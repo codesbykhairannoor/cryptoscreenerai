@@ -239,6 +239,26 @@ def get_early_signals_endpoint():
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
+@app.get("/api/institutional-quant")
+def get_institutional_quant_rankings(limit: int = 25):
+    """
+    WorldQuant 101 Formulaic Alphas + Avellaneda-Stoikov Inventory Skew Screener.
+    Cross-sectional normalized ranking over the entire active Spot universe.
+    Citations: Kakushadze (2016) arXiv:1601.00991; Avellaneda-Stoikov (2008).
+    """
+    try:
+        from institutional_alpha import run_cross_sectional_screener
+        result = run_cross_sectional_screener(limit=limit)
+        return result
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": str(e),
+            "data": [],
+            "universe_size": 0,
+            "citations": {}
+        }
+
 @app.get("/api/market-ws-status")
 def get_market_ws_status():
     """Status BitgetMarketWS: berapa symbol di-track, data freshness, BTC sample."""
@@ -287,6 +307,7 @@ def get_forex_status():
         return {"connected": success, "message": message}
     except Exception as e:
         return {"connected": False, "message": str(e)}
+
 
 @app.get("/api/top-coins")
 def get_top_coins(timeframe: str = "15m"):
