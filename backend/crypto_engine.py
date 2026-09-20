@@ -1108,10 +1108,14 @@ def run_crypto_engine():
     try:
         from main import get_bitget_executor
         executor = get_bitget_executor()
-    except ImportError:
+    except Exception:
         # Fallback if run standalone
-        from bitget_executor import BitgetExecutor
-        executor = BitgetExecutor()
+        if os.getenv("TRADE_MODE", "live").lower() == "paper":
+            from paper_executor import PaperExecutor
+            executor = PaperExecutor()
+        else:
+            from bitget_executor import BitgetExecutor
+            executor = BitgetExecutor()
 
     print("\n" + "="*50, flush=True)
     print("[CRYPTO SCALPER v5.1] INITIALIZING ENGINE...", flush=True)
@@ -1476,8 +1480,6 @@ def run_crypto_engine():
                         return None # Volume di bawah normal, jangan beli koin lesu
                 except Exception:
                     pass
-                except Exception:
-                    pass
 
                 combined_score += global_boost
 
@@ -1746,17 +1748,62 @@ def run_crypto_engine():
                 take_profit_val, stop_loss_val = 0.0, 0.0
                 take_profit_val, stop_loss_val = _calc_tp_sl(mark_price, side, tech, tp_m=tp_m, sl_m=sl_m)
 
-                # Hitung size (DCA Mode: 30% dari FIXED_MARGIN_USDT untuk Base Order)
-                # Volatility Targeting: Kurangi ukuran posisi saat pasar choppy (bangkit.md)
+                # Ambil saldo akun aktual (saldo Bitget Spot atau virtual balance)
+                vbal = 100.0
+                try:
+                    bal_dict = executor.get_balance()
+                    vbal = float(bal_dict.get('free', bal_dict.get('total', 100.0)))
+                except Exception:
+                    try:
+                        from database import get_virtual_balance
+                        vbal = get_virtual_balance()
+                    except Exception:
+                        vbal = 100.0
+
+                # SIZING PROPOSIONAL (Buku Dosa Rule 3: Max 20% modal, Capped di FIXED_MARGIN_USDT)
+                # Di bursa Spot, order minimal adalah 5.0 USDT (Notional Min)
+                if vbal < 5.0:
+                    if int(now) % 30 < 5:
+                        print(f"  [BALANCE GUARD] Saldo (${vbal:.2f}) di bawah minimum order bursa ($5.00). Menunggu top-up/reset.")
+                    continue
+
                 _vt = _vt_multiplier if '_vt_multiplier' in dir() else 1.0
-                base_order_usd = FIXED_MARGIN_USDT * _vt
+                prop_size = min(FIXED_MARGIN_USDT, vbal * 0.20) * _vt
+                base_order_usd = max(5.0, round(prop_size, 2))
+
+                # --- 1. BUKU DOSA PRE-TRADE AUDIT ---
+                try:
+                    from buku_dosa import BukuDosaJudge
+                    is_clean, sin_reason, sin_code = BukuDosaJudge.audit_candidate(
+                        symbol, tech, mark_price, side, 
+                        proposed_usd=base_order_usd, 
+                        current_balance=vbal
+                    )
+                    if not is_clean:
+                        print(f"\n[BUKU DOSA BLOCKED] 🚫 {clean_base} DITOLAK KERAS OLEH HAKIM REFLEXION!")
+                        print(f"  Penyebab: {sin_reason} ({sin_code})\n", flush=True)
+                        continue
+                except Exception as bde:
+                    print(f"[BUKU DOSA AUDIT ERROR] {bde}")
+
+                # --- 2. MEM0 AUTONOMOUS AGENT MEMORY AUDIT (Official GitHub Library) ---
+                try:
+                    from mem0_buku_dosa import search_trade_risk
+                    is_safe, warn_msg, mems = search_trade_risk(clean_base, side, reason, tech)
+                    if not is_safe:
+                        print(f"\n[MEM0 AI VETO] 🧠 Mem0 Vector Memory Menolak {clean_base}!")
+                        print(f"  Peringatan Memori Otonom: {warn_msg}\n", flush=True)
+                        continue
+                except Exception as me:
+                    print(f"[MEM0 AUDIT ERROR] {me}")
+
                 amount = executor.get_max_available(symbol, leverage=LEVERAGE, risk_usdt=base_order_usd)
                 if amount > 0:
                     print(f"\n{'='*60}")
                     print(f"[SCALPER v5.1] {clean_base} {side.upper()} | Score: {combined_score}/100")
                     print(f"  Reason : {reason}")
                     print(f"  Price  : {mark_price} | RSI: {rsi} | VWAP: {vwap_dist}%")
-                    print(f"  take_profit_val: {take_profit_val} | stop_loss_val: {stop_loss_val} | Amount: {amount}")
+                    print(f"  take_profit_val: {take_profit_val} | stop_loss_val: {stop_loss_val} | Amount: {amount} (Alloc: ${base_order_usd:.2f})")
                     print(f"  FRED   : {fred_bias} | Crypto:{fred_crypto_impact} | Fed:{fred_ctx.get('fed_rate')}%({fred_ctx.get('fed_trend')}) | DXY:{fred_ctx.get('dxy')}({fred_ctx.get('dxy_trend')})")
                     print(f"  DUNE   : {dune_trend} | Activity:{dune_activity} | Stable:{dune_stable_b}B | Whales:{dune_whale_count}/h | DEX:{dune_ctx.get('dex_volume_24h_b', 0)}B/24h")
                     e5m = tech.get('entry_signal_5m', 'N/A')
@@ -1764,37 +1811,6 @@ def run_crypto_engine():
                     f5m = tech.get('zone_freshness_5m', 'N/A')
                     print(f"  5M     : Signal:{e5m} | Quality:{q5m}/100 | Zone:{f5m}")
                     print(f"{'='*60}\n")
-
-                    # --- 1. BUKU DOSA PRE-TRADE AUDIT ---
-                    try:
-                        from buku_dosa import BukuDosaJudge
-                        vbal = 100.0
-                        try:
-                            from database import get_virtual_balance
-                            vbal = get_virtual_balance()
-                        except: pass
-                        is_clean, sin_reason, sin_code = BukuDosaJudge.audit_candidate(
-                            symbol, tech, mark_price, side, 
-                            proposed_usd=base_order_usd, 
-                            current_balance=vbal
-                        )
-                        if not is_clean:
-                            print(f"\n[BUKU DOSA BLOCKED] 🚫 {clean_base} DITOLAK KERAS OLEH HAKIM REFLEXION!")
-                            print(f"  Penyebab: {sin_reason} ({sin_code})\n", flush=True)
-                            continue
-                    except Exception as bde:
-                        print(f"[BUKU DOSA AUDIT ERROR] {bde}")
-
-                    # --- 2. MEM0 AUTONOMOUS AGENT MEMORY AUDIT (Official GitHub Library) ---
-                    try:
-                        from mem0_buku_dosa import search_trade_risk
-                        is_safe, warn_msg, mems = search_trade_risk(clean_base, side, reason, tech)
-                        if not is_safe:
-                            print(f"\n[MEM0 AI VETO] 🧠 Mem0 Vector Memory Menolak {clean_base}!")
-                            print(f"  Peringatan Memori Otonom: {warn_msg}\n", flush=True)
-                            continue
-                    except Exception as me:
-                        print(f"[MEM0 AUDIT ERROR] {me}")
 
                     # Eksekusi (v12.0: Update Penalty Box on fail)
                     order_success = False

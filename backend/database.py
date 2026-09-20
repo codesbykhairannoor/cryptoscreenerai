@@ -198,8 +198,8 @@ def close_trade(symbol, exit_price, pnl_usd=0, market='crypto'):
     entry = trade['entry_price']
     side = str(trade['side']).lower()
     
-    # 2. Hitung PnL % (ROI dengan asumsi leverage 10x)
-    leverage = 10.0
+    # 2. Hitung PnL % (Murni Spot 1.0x Non-Leverage)
+    leverage = 1.0
     pnl_pct = 0.0
     if entry > 0:
         if side in ['long', 'buy']:
@@ -259,9 +259,10 @@ def check_pending_trades():
         from psycopg2.extras import RealDictCursor
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         
+    # Jangan sentuh trade crypto spot is_paper=1 (di-manage penuh oleh PaperExecutor.manage_open_positions)
     cursor.execute(
         "SELECT id, symbol, entry_price, tp_price, sl_price, status, market "
-        "FROM trades WHERE status IN ('PENDING', 'RUNNING')"
+        "FROM trades WHERE status IN ('PENDING', 'RUNNING') AND (is_paper = 0 OR is_paper IS NULL)"
     )
     pending_trades = cursor.fetchall()
 
@@ -297,8 +298,8 @@ def check_pending_trades():
                     status = 'RUNNING'
 
             if status != current_status:
-                # Hitung PnL % (ROI dengan asumsi leverage 10x)
-                leverage = 10.0
+                # Hitung PnL % (Murni Spot 1.0x Non-Leverage)
+                leverage = 1.0
                 pnl_pct = 0.0
                 if entry > 0:
                     if is_long:
@@ -387,15 +388,21 @@ def get_trade_history(market=None, limit=50):
 # =========================================================================
 
 def get_virtual_balance():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT balance FROM virtual_account ORDER BY id ASC LIMIT 1")
-    row = cursor.fetchone()
-    cursor.close()
-    conn.close()
-    if row:
-        return float(row[0] if is_sqlite(conn) else row[0])
-    return 1000.0
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT balance FROM virtual_account ORDER BY id ASC LIMIT 1")
+        row = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        if row:
+            return float(row[0])
+    except Exception:
+        try:
+            init_db()
+        except Exception:
+            pass
+    return float(os.getenv("VIRTUAL_BALANCE", "100.0"))
 
 def update_virtual_balance(amount_change: float):
     """Menambah atau mengurangi saldo virtual."""

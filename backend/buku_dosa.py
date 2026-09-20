@@ -172,7 +172,9 @@ class BukuDosaJudge:
         # 5. CEK DOSA 03: OVERSIZED ALLOCATION
         if proposed_usd > 0 and current_balance > 0:
             allocation_pct = (proposed_usd / current_balance) * 100.0
-            if allocation_pct > 30.0:
+            # Jika saldo mencukupi (>= $25), alokasi tidak boleh melebihi 30%
+            # Namun jika order adalah batas minimal exchange Spot ($5.0 - $6.0 USDT), jangan diblokir
+            if allocation_pct > 30.0 and proposed_usd > 6.0:
                 return False, f"Ditolak Buku Dosa: Alokasi ${proposed_usd:.2f} ({allocation_pct:.1f}%) > 30% dari saldo ${current_balance:.2f}. Langgar batas risiko.", "DOSA_03_ALL_IN_POSITION_SIZING"
 
         # LOLOS SEMUA AUDIT DOSA

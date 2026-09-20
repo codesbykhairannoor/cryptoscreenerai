@@ -7,8 +7,11 @@ if hasattr(sys.stdout, 'reconfigure'):
     except Exception: pass
 
 def check_paper():
-    # Gunakan absolute atau relative path ke db
-    db_path = "trading_bot.db"
+    # Gunakan absolute path ke db di folder backend
+    backend_dir = os.path.dirname(os.path.abspath(__file__))
+    db_path = os.path.join(backend_dir, "trading_bot.db")
+    if not os.path.exists(db_path):
+        db_path = "trading_bot.db"
     if not os.path.exists(db_path):
         print(f"[!] Database {db_path} tidak ditemukan.")
         return
