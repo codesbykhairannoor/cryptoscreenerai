@@ -144,7 +144,8 @@ class BukuDosaJudge:
                 save_buku_dosa(registry)
 
         # 3. CEK DOSA 01: FALLING KNIFE (Pisau Jatuh di Spot)
-        # Di pasar SPOT, dilarang keras membeli koin yang tren 1H bearish atau EMA9 < EMA21
+        # Hanya BLOKIR jika SEMUA 3 kondisi negatif terpenuhi sekaligus (v29.0)
+        # Pasar sideways seringkali EMA9 < EMA21 padahal tren besar masih bullish.
         if side.lower() == "buy":
             ema_9 = float(tech.get('ema_9', mark_price))
             ema_21 = float(tech.get('ema_21', mark_price))
@@ -152,22 +153,22 @@ class BukuDosaJudge:
             vwap = float(tech.get('vwap', mark_price))
             rsi = float(tech.get('rsi', 50))
 
-            # Pelanggaran A: EMA9 < EMA21 (Downtrend jelas)
-            if ema_9 < ema_21:
-                return False, f"Ditolak Buku Dosa: EMA9 ({ema_9:.4f}) < EMA21 ({ema_21:.4f}). Downtrend terkonfirmasi.", "DOSA_01_FALLING_KNIFE"
+            _ema_down   = ema_9 < ema_21
+            _bear_1h    = "BEAR" in trend_1h
+            _below_vwap = vwap > 0 and mark_price < (vwap * 0.980)
 
-            # Pelanggaran B: Trend 1H Bearish
-            if "BEAR" in trend_1h:
-                return False, f"Ditolak Buku Dosa: Trend 1H adalah BEARISH ({trend_1h}). Dilarang melawan arus di Spot.", "DOSA_01_FALLING_KNIFE"
+            # Pelanggaran TRIPLE: semua 3 kondisi negatif = hard falling knife
+            if _ema_down and _bear_1h and _below_vwap:
+                return False, f"Ditolak Buku Dosa: TRIPLE FALLING KNIFE - EMA9({ema_9:.4f})<EMA21({ema_21:.4f}) + Bearish1H + Harga<VWAP*0.98.", "DOSA_01_FALLING_KNIFE"
 
-            # Pelanggaran C: Harga jauh di bawah VWAP
-            if vwap > 0 and mark_price < (vwap * 0.985):
-                return False, f"Ditolak Buku Dosa: Harga ({mark_price}) berada 1.5%+ di bawah VWAP ({vwap:.4f}). Selling pressure dominan.", "DOSA_01_FALLING_KNIFE"
+            # Pelanggaran GANDA: EMA down + Bearish 1H + RSI sangat lemah
+            if _ema_down and _bear_1h and rsi < 35:
+                return False, f"Ditolak Buku Dosa: EMA9<EMA21 + Bearish1H + RSI oversold ({rsi:.0f}). Downtrend kuat.", "DOSA_01_FALLING_KNIFE"
 
-        # 4. CEK DOSA 04: DEAD VOLUME (Volume Mati)
+        # 4. CEK DOSA 04: DEAD VOLUME (Volume Mati) -- threshold dilonggarkan ke 1.1
         rvol = float(tech.get('rvol', 1.0))
-        if rvol < 1.2:
-            return False, f"Ditolak Buku Dosa: RVOL {rvol:.2f} < 1.2 (Volume mati, rawan manipulasi/terjebak).", "DOSA_04_DEAD_VOLUME_ENTRY"
+        if rvol < 1.1:
+            return False, f"Ditolak Buku Dosa: RVOL {rvol:.2f} < 1.1 (Volume mati, rawan manipulasi/terjebak).", "DOSA_04_DEAD_VOLUME_ENTRY"
 
         # 5. CEK DOSA 03: OVERSIZED ALLOCATION
         if proposed_usd > 0 and current_balance > 0:

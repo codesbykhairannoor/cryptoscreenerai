@@ -1,6 +1,6 @@
 import time
 import os
-VERSION_TAG = "v28.0-PURE-MOMENTUM-SURF"
+VERSION_TAG = "v29.0-SMART-TRIPLE-FILTER"
 print(f"\n[BOOT] Starting Institutional Predator {VERSION_TAG}...")
 
 import requests
@@ -1743,15 +1743,26 @@ def run_crypto_engine():
                     rvol = getattr(_ws_st, 'rt_rvol', {}).get(sym_ws, 1.0)
                 except: pass
                 
-                # 1. FAST MOMENTUM Confirmation (EMA 9/21 - Buku Dosa Rule 1: No Falling Knives)
+                # 1. FAST MOMENTUM Confirmation (Smart Falling Knife Filter v29.0)
+                # DOSA_01 hanya aktif jika SEMUA 3 kondisi terpenuhi (bukan satu-satunya):
+                # A. EMA9 < EMA21 (short-term downtrend)
+                # B. Trend 1H = BEARISH
+                # C. Harga di bawah VWAP (sellers dominate)
                 ema_9 = tech.get('ema_9', mark_price)
                 ema_21 = tech.get('ema_21', mark_price)
-                if side == "buy" and ema_9 < ema_21:
-                    print(f"  [BUKU DOSA SKIP] {clean_base} EMA 9 < 21 (Downtrend / Falling Knife Ditolak)", flush=True)
-                    continue
-                if side == "sell" and ema_9 > ema_21:
-                    print(f"  [BUKU DOSA SKIP] {clean_base} EMA 9 > 21 (Confirmation Fail)", flush=True)
-                    continue
+                trend_1h_check = str(tech.get('trend_1h', 'NEUTRAL')).upper()
+                vwap_check = float(tech.get('vwap', mark_price))
+                if side == "buy":
+                    _ema_down = ema_9 < ema_21
+                    _bear_1h  = "BEAR" in trend_1h_check
+                    _below_vwap = vwap_check > 0 and mark_price < (vwap_check * 0.985)
+                    # Tolak HANYA jika SEMUA 3 sinyal negatif sekaligus (hard falling knife)
+                    if _ema_down and _bear_1h and _below_vwap:
+                        print(f"  [BUKU DOSA SKIP] {clean_base} TRIPLE FALLING KNIFE: EMA9<21 + Bearish1H + BelowVWAP", flush=True)
+                        continue
+                    # Soft warning (EMA9 < 21 saja) -- boleh lanjut tapi di-log
+                    if _ema_down and not _bear_1h:
+                        print(f"  [SOFT-WARN] {clean_base} EMA9<21 tapi 1H={trend_1h_check} (bukan full bearish, lanjut)", flush=True)
 
                 # 2. JUNK FILTER: ATR > 5% Price (Volatility Guard)
                 atr = tech.get('atr', 0)
@@ -1759,17 +1770,17 @@ def run_crypto_engine():
                     print(f"  [SKIP] {clean_base} ATR {atr} too high (>5% price)", flush=True)
                     continue
 
-                # 3. BALANCED THRESHOLD (Buku Dosa Rule 4: Anti Dead Volume)
-                if rvol < 1.4: 
-                    print(f"  [BUKU DOSA SKIP] {clean_base} RVOL {rvol:.2f} < 1.4 (Buku Dosa Rule 4: Volume Mati Ditolak)", flush=True)
+                # 3. BALANCED THRESHOLD (Buku Dosa Rule 4: Anti Dead Volume -- dilonggarkan ke 1.2)
+                if rvol < 1.2: 
+                    print(f"  [BUKU DOSA SKIP] {clean_base} RVOL {rvol:.2f} < 1.2 (Volume Mati Ditolak)", flush=True)
                     continue
                     
                 # --- 4. META-LABELING RISK BOARD (Lapisan 4) ---
                 try:
                     from ai_model import evaluate_meta_label
                     meta_prob = evaluate_meta_label(symbol, side, combined_score, tech)
-                    if meta_prob < 0.40:
-                        print(f"  [SKIP] {clean_base} Ditolak oleh Meta-Label Risk Board (Keyakinan: {meta_prob:.2f} < 0.40)", flush=True)
+                    if meta_prob < 0.35:
+                        print(f"  [SKIP] {clean_base} Ditolak oleh Meta-Label Risk Board (Keyakinan: {meta_prob:.2f} < 0.35)", flush=True)
                         continue
                     print(f"  [META-LABEL] {clean_base} disetujui (Keyakinan: {meta_prob:.2f})", flush=True)
                 except Exception as e:
